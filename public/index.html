@@ -6,19 +6,19 @@
     <title>台股回測比較</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // 字體放大方案 A（小幅放大，約 +1~2px）：只調整具名的 Tailwind 字級，
-      // 任意值的 text-[Npx] 類別（例如 text-[10px]）改在 src/App.js 內直接調整數值。
+      // 字體放大：在不超出欄位/容器寬度的前提下盡量放大具名的 Tailwind 字級，
+      // 高度(行高)可視需要一併加大；任意值的 text-[Npx] 類別改在 src/App.js 內直接調整數值。
       tailwind.config = {
         theme: {
           extend: {
             fontSize: {
-              xs: ['0.8125rem', { lineHeight: '1.15rem' }], // 12px -> 13px
-              sm: ['0.9375rem', { lineHeight: '1.35rem' }], // 14px -> 15px
-              lg: ['1.1875rem', { lineHeight: '1.7rem' }], // 18px -> 19px
-              xl: ['1.3125rem', { lineHeight: '1.75rem' }], // 20px -> 21px
-              '2xl': ['1.5625rem', { lineHeight: '2rem' }], // 24px -> 25px
-              '3xl': ['2rem', { lineHeight: '2.3rem' }], // 30px -> 32px
-              '4xl': ['2.375rem', { lineHeight: '2.6rem' }], // 36px -> 38px
+              xs: ['14.5px', { lineHeight: '20px' }], // 12px -> 14.5px
+              sm: ['16.5px', { lineHeight: '22px' }], // 14px -> 16.5px
+              lg: ['21px', { lineHeight: '28px' }], // 18px -> 21px
+              xl: ['23px', { lineHeight: '29px' }], // 20px -> 23px
+              '2xl': ['27px', { lineHeight: '32px' }], // 24px -> 27px
+              '3xl': ['35px', { lineHeight: '40px' }], // 30px -> 35px
+              '4xl': ['42px', { lineHeight: '46px' }], // 36px -> 42px
             },
           },
         },

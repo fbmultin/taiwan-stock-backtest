@@ -42,6 +42,8 @@ import {
   SkipForward,
   CheckCircle2,
   XCircle,
+  Star,
+  Save,
 } from 'lucide-react';
 
 const COLORS = [
@@ -133,6 +135,10 @@ const PRESETS = [
     stocks: ['0056', '00878', '00919', '00929', '00713', '00915'],
   },
 ];
+
+// 「我的常用標的」用瀏覽器 localStorage 記住使用者自己常用的標的組合，
+// 一鍵套用即可取代目前輸入,不用每次都重打;使用者也可隨時按「設為常用」更新這組合。
+const MY_PRESET_STORAGE_KEY = 'twBacktestMyPresetStocks';
 
 // --- 台灣證券交易所國定假日 / 休市日 ---
 // 整理自 TWSE 公告與財經媒體彙整的開休市日期表 (2025-2027)。
@@ -888,7 +894,7 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
                     <span>
                       {opt.label}
                       {opt.recommended && (
-                        <span className="ml-1.5 text-[12px] text-emerald-500">
+                        <span className="ml-1.5 text-[14px] text-emerald-500">
                           (建議)
                         </span>
                       )}
@@ -1018,6 +1024,23 @@ const App = () => {
   const [adjustStart, setAdjustStart] = useState('');
   const [adjustEnd, setAdjustEnd] = useState('');
 
+  // 我的常用標的(存在瀏覽器 localStorage,僅此裝置/瀏覽器有效)
+  const [myPresetStocks, setMyPresetStocks] = useState(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MY_PRESET_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMyPresetStocks(parsed);
+        }
+      }
+    } catch (e) {
+      // localStorage 不可用(例如無痕模式)時安靜忽略,不影響其餘功能
+    }
+  }, []);
+
   const handleApplyPreset = (presetStocks) => {
     const newInputs = [...presetStocks];
     while (newInputs.length < 6) newInputs.push('');
@@ -1042,6 +1065,37 @@ const App = () => {
 
     setEnabledInputs(newEnabled);
     setAllocations(newAllocations);
+  };
+
+  // 一鍵套用「我的常用標的」,取代目前輸入,不用每次重打
+  const handleApplyMyPreset = () => {
+    if (!myPresetStocks || myPresetStocks.length === 0) {
+      alert(
+        '尚未設定「我的常用標的」。請先輸入想要的標的組合,再按旁邊的「設為常用」儲存,之後就能一鍵套用。'
+      );
+      return;
+    }
+    handleApplyPreset(myPresetStocks);
+  };
+
+  // 將目前已啟用的標的組合儲存為「我的常用標的」(存在瀏覽器 localStorage)
+  const handleSaveMyPreset = () => {
+    const current = inputs.filter((s, i) => s !== '' && enabledInputs[i]);
+    if (current.length === 0) {
+      alert('目前沒有已啟用的標的可以儲存,請先輸入至少一檔標的。');
+      return;
+    }
+    try {
+      localStorage.setItem(MY_PRESET_STORAGE_KEY, JSON.stringify(current));
+      setMyPresetStocks(current);
+      alert(
+        `已將目前 ${current.length} 檔標的(${current.join(
+          '、'
+        )})設為常用組合,之後按「我的常用標的」即可一鍵套用。`
+      );
+    } catch (e) {
+      alert('儲存失敗,可能是瀏覽器不支援或已停用本機儲存功能。');
+    }
   };
 
   const toggleIndependentCycleMode = () => {
@@ -2239,7 +2293,7 @@ const App = () => {
                 {fetchStatusList.map((f) => (
                   <span
                     key={f.symbol}
-                    className={`text-[12px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-mono ${
+                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-mono ${
                       f.status === 'done'
                         ? 'border-emerald-700 text-emerald-400 bg-emerald-900/20'
                         : f.status === 'failed'
@@ -2264,12 +2318,12 @@ const App = () => {
             </div>
 
             {skipTriggered ? (
-              <div className="text-center text-[12.5px] text-amber-400 flex items-center justify-center gap-1">
+              <div className="text-center text-[14.5px] text-amber-400 flex items-center justify-center gap-1">
                 <Info className="w-3 h-3" /> 已跳過等待中項目，使用現有資料繼續計算...
               </div>
             ) : skipAvailable ? (
               <div className="text-center space-y-1.5">
-                <p className="text-[12.5px] text-slate-500">
+                <p className="text-[14.5px] text-slate-500">
                   部分項目回應較久，可手動跳過等待以加快速度
                 </p>
                 <button
@@ -2363,7 +2417,7 @@ const App = () => {
                     </div>
                     <button
                       onClick={setAllEnabledTo100W}
-                      className="bg-slate-700 hover:bg-slate-600 text-white text-[12px] px-2 rounded border border-slate-600 transition-colors whitespace-nowrap"
+                      className="bg-slate-700 hover:bg-slate-600 text-white text-[14px] px-2 rounded border border-slate-600 transition-colors whitespace-nowrap"
                       title="將所有已勾選的標的金額設為100萬"
                     >
                       全設
@@ -2371,7 +2425,7 @@ const App = () => {
                       100萬
                     </button>
                   </div>
-                  <div className="text-[12px] text-slate-500 text-right">
+                  <div className="text-[14px] text-slate-500 text-right">
                     = {Math.round(totalCapital).toLocaleString()} 元
                   </div>
                 </div>
@@ -2384,7 +2438,7 @@ const App = () => {
                       <button
                         key={t}
                         onClick={() => setTimeRange(t)}
-                        className={`py-2 text-[12px] rounded border font-bold ${
+                        className={`py-2 text-[14px] rounded border font-bold ${
                           timeRange === t
                             ? 'bg-emerald-600 border-emerald-500 text-white'
                             : 'bg-slate-800 border-slate-600 text-slate-400'
@@ -2439,6 +2493,24 @@ const App = () => {
                     <Database className="w-4 h-4 inline mr-1" />
                     快速套用:
                   </span>
+                  <button
+                    onClick={handleApplyMyPreset}
+                    title={
+                      myPresetStocks
+                        ? `套用我的常用標的: ${myPresetStocks.join('、')}`
+                        : '尚未設定,請先輸入標的後按右側「設為常用」儲存'
+                    }
+                    className="text-xs bg-amber-900/30 hover:bg-amber-600 hover:text-white text-amber-300 px-3 py-1.5 rounded-md transition-colors border border-amber-700/60 hover:border-amber-500 flex items-center gap-1 font-bold"
+                  >
+                    <Star className="w-3.5 h-3.5" /> 我的常用標的
+                  </button>
+                  <button
+                    onClick={handleSaveMyPreset}
+                    title="將目前輸入的標的組合儲存為「我的常用標的」"
+                    className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1.5 rounded-md transition-colors border border-slate-600 flex items-center gap-1"
+                  >
+                    <Save className="w-3.5 h-3.5" /> 設為常用
+                  </button>
                   {PRESETS.map((preset, idx) => (
                     <button
                       key={idx}
@@ -2510,7 +2582,7 @@ const App = () => {
                           className="w-full bg-slate-800 border border-slate-600 rounded-md py-1.5 pl-2 pr-2 text-sm text-white font-mono uppercase"
                         />
                         {stockNames[val] && (
-                          <div className="absolute left-0 -bottom-4 text-[11px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis w-full">
+                          <div className="absolute left-0 -bottom-4 text-[13px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis w-full">
                             {stockNames[val]}
                           </div>
                         )}
@@ -2547,7 +2619,7 @@ const App = () => {
                                 : 'text-white border-slate-700 focus:border-blue-500'
                             }`}
                           />
-                          <span className="absolute right-5 -top-3 text-[12px] text-slate-500">
+                          <span className="absolute right-5 -top-3 text-[14px] text-slate-500">
                             %
                           </span>
                         </div>
@@ -2558,13 +2630,13 @@ const App = () => {
                               onChange={(val) => handleAmountChange(idx, val)}
                               className={`w-full bg-slate-800 border rounded px-1 text-right font-mono text-xs focus:outline-none text-emerald-400 border-slate-600 focus:ring-1 focus:ring-emerald-500`}
                             />
-                            <span className="absolute right-0.5 -top-2.5 text-[11px] text-slate-500">
+                            <span className="absolute right-0.5 -top-2.5 text-[13px] text-slate-500">
                               萬
                             </span>
                           </div>
                           <button
                             onClick={() => handleAmountChange(idx, 100)}
-                            className="text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-1.5 py-1 rounded border border-slate-600 whitespace-nowrap flex items-center"
+                            className="text-[13px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-1.5 py-1 rounded border border-slate-600 whitespace-nowrap flex items-center"
                             title="設為100萬"
                           >
                             <MousePointerClick className="w-3 h-3 mr-0.5" /> 100
@@ -2601,9 +2673,9 @@ const App = () => {
                         }`}
                       ></div>
                     </div>
-                    <div className="text-[12px] sm:text-xs text-slate-300 leading-tight">
+                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
                       <div>依除息日對齊週期</div>
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-[13px] text-slate-500">
                         獨立計算每檔績效 (近12次)
                       </div>
                     </div>
@@ -2627,15 +2699,15 @@ const App = () => {
                         }`}
                       ></div>
                     </div>
-                    <div className="text-[12px] sm:text-xs text-slate-300 leading-tight">
+                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
                       <div>強制固定區間</div>
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-[13px] text-slate-500">
                         忽略除息對齊 (時間優先)
                       </div>
                     </div>
                   </label>
                   {independentCycleMode && !strictTimeMode && (
-                    <div className="text-[12px] sm:text-[12.5px] leading-snug text-purple-300 bg-purple-900/20 border border-purple-800/50 rounded-lg p-2 flex items-start gap-1.5">
+                    <div className="text-[14px] sm:text-[14.5px] leading-snug text-purple-300 bg-purple-900/20 border border-purple-800/50 rounded-lg p-2 flex items-start gap-1.5">
                       <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
                       <span>
                         此模式會以「配息次數最少 / 上市最晚」的標的為基準，用它近
@@ -2648,7 +2720,7 @@ const App = () => {
                     </div>
                   )}
                   {!independentCycleMode && !strictTimeMode && (
-                    <div className="text-[12px] sm:text-[12.5px] leading-snug text-slate-500 bg-slate-800/60 border border-slate-700 rounded-lg p-2 flex items-start gap-1.5">
+                    <div className="text-[14px] sm:text-[14.5px] leading-snug text-slate-500 bg-slate-800/60 border border-slate-700 rounded-lg p-2 flex items-start gap-1.5">
                       <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
                       <span>
                         一般模式:若執行時遇到標的資料起始日晚於指定日期、或除息日太靠近結束日等需要調整的情況，會直接跳出視窗詢問您要怎麼處理，不會自動靜默調整。
@@ -2722,7 +2794,7 @@ const App = () => {
                   {comparisonInfo && (
                     <>
                       <span className="hidden sm:inline">|</span>
-                      <span className="text-[12px] sm:text-xs text-slate-500 flex items-center gap-1 flex-wrap">
+                      <span className="text-[14px] sm:text-xs text-slate-500 flex items-center gap-1 flex-wrap">
                         <CalendarDays className="w-3 h-3" />
                         {comparisonInfo.startDate} ~ {comparisonInfo.endDate}
                         {comparisonInfo.mode === 'strict' && (
@@ -2821,7 +2893,7 @@ const App = () => {
                   >
                     取消
                   </button>
-                  <span className="text-slate-500 text-[12px] w-full sm:w-auto">
+                  <span className="text-slate-500 text-[14px] w-full sm:w-auto">
                     ※ 套用後系統仍會自動避開週末與國定假日
                   </span>
                 </div>
@@ -3132,14 +3204,14 @@ const App = () => {
                                 )}
                               </div>
                               {idx === 0 && (
-                                <span className="bg-yellow-500 text-slate-900 text-[12px] px-1.5 py-0.5 rounded font-bold">
+                                <span className="bg-yellow-500 text-slate-900 text-[14px] px-1.5 py-0.5 rounded font-bold">
                                   TOP 1
                                 </span>
                               )}
                               <div className="flex gap-1 flex-wrap">
                                 {(item.isShortHistory || item.isYoungStock) && (
                                   <span
-                                    className={`text-[12px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
                                       printMode
                                         ? 'text-amber-700 border-amber-200 bg-amber-50'
                                         : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
@@ -3151,7 +3223,7 @@ const App = () => {
                                 )}
                                 {item.snapToExDiv && (
                                   <span
-                                    className={`text-[12px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
                                       printMode
                                         ? 'text-purple-700 border-purple-200 bg-purple-50'
                                         : 'text-purple-400 border-purple-900/50 bg-purple-900/20'
@@ -3162,13 +3234,13 @@ const App = () => {
                                   </span>
                                 )}
                                 <span
-                                  className={`text-[12px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${riskColor}`}
+                                  className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${riskColor}`}
                                 >
                                   <RiskIcon className="w-3 h-3" />
                                   {riskLabel}
                                 </span>
                                 <span
-                                  className={`text-[12px] px-1.5 py-0.5 rounded border ${
+                                  className={`text-[14px] px-1.5 py-0.5 rounded border ${
                                     printMode
                                       ? 'text-emerald-700 border-emerald-200 bg-emerald-50'
                                       : 'text-emerald-400 border-emerald-900/50 bg-emerald-900/20'
@@ -3192,7 +3264,7 @@ const App = () => {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[15px]">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[17px]">
                             <div className="space-y-1">
                               <div className="flex justify-between">
                                 <span className={textClass.sub}>本金</span>
@@ -3274,11 +3346,11 @@ const App = () => {
                             </div>
                             <div className="space-y-0.5 sm:border-l border-slate-700/50 sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 flex flex-col justify-center">
                               <div
-                                className={`text-[15px] font-bold ${textClass.sub} mb-0.5`}
+                                className={`text-[17px] font-bold ${textClass.sub} mb-0.5`}
                               >
                                 除 {item.lastDivDate || '--'}
                               </div>
-                              <div className={`text-[15px] ${textClass.sub}`}>
+                              <div className={`text-[17px] ${textClass.sub}`}>
                                 配{' '}
                                 <span
                                   className={`font-mono ${textClass.highlight}`}
@@ -3301,7 +3373,7 @@ const App = () => {
                           </div>
 
                           <div
-                            className={`text-[13px] ${
+                            className={`text-[15px] ${
                               textClass.sub
                             } mt-2 border-t ${
                               printMode
@@ -3345,7 +3417,7 @@ const App = () => {
                                   className="group"
                                   open={independentCycleMode}
                                 >
-                                  <summary className="text-[13px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
+                                  <summary className="text-[15px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
                                     <Table2 className="w-3 h-3" /> 近{' '}
                                     {item.dividendDetails.length} 次配息明細
                                   </summary>
@@ -3356,7 +3428,7 @@ const App = () => {
                                         : 'border-slate-700/50'
                                     }`}
                                   >
-                                    <table className="w-full text-[11px] text-left">
+                                    <table className="w-full text-[13px] text-left">
                                       <thead
                                         className={`${
                                           printMode
@@ -3433,7 +3505,7 @@ const App = () => {
                                           <tr>
                                             <td
                                               colSpan="4"
-                                              className="p-1 text-[10px] text-center text-slate-500 italic bg-slate-800/50"
+                                              className="p-1 text-[12.5px] text-center text-slate-500 italic bg-slate-800/50"
                                             >
                                               <Info className="w-2 h-2 inline mr-0.5" />{' '}
                                               ⚠️ 本次除息不計入
@@ -3606,7 +3678,7 @@ const App = () => {
                             >
                               {stat.startDate}{' '}
                               {stat.isPartial && (
-                                <span className="text-[12px] opacity-70">
+                                <span className="text-[14px] opacity-70">
                                   (成立以來)
                                 </span>
                               )}
