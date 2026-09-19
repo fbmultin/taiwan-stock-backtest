@@ -2803,12 +2803,20 @@ const App = () => {
                         {comparisonInfo.mode === 'cycle' && (
                           <span className="text-purple-500">(除息對齊)</span>
                         )}
+                        {comparisonInfo.limitingStock && !strictTimeMode && comparisonInfo.mode !== 'cycle' && (
+                          <span
+                            className="text-amber-500 ml-1"
+                            title={`${comparisonInfo.limitingStock} 資料起始日較晚,限制了起始日`}
+                          >
+                            (起始日由 {comparisonInfo.limitingStock} 限制)
+                          </span>
+                        )}
                         {comparisonInfo.endDateLimiter && !strictTimeMode && (
                           <span
                             className="text-amber-500 ml-1"
                             title={`由 ${comparisonInfo.endDateLimiter} 近期除息限制截止日`}
                           >
-                            (由 {comparisonInfo.endDateLimiter} 限制)
+                            (截止日由 {comparisonInfo.endDateLimiter} 限制)
                           </span>
                         )}
                         <button
@@ -2976,6 +2984,12 @@ const App = () => {
                 {cycleInfoText && (
                   <span className="text-xs text-purple-400 bg-purple-900/20 px-2 py-0.5 rounded border border-purple-800/50">
                     {cycleInfoText}
+                  </span>
+                )}
+                {comparisonInfo?.limitingStock && !strictTimeMode && comparisonInfo?.mode !== 'cycle' && (
+                  <span className="text-xs text-amber-400 bg-amber-900/20 px-2 py-0.5 rounded border border-amber-800/50 flex items-center gap-1">
+                    <Info className="w-3 h-3" />
+                    起始日由 {comparisonInfo.limitingStock} 資料起始較晚限制
                   </span>
                 )}
                 {comparisonInfo?.endDateLimiter && !strictTimeMode && (
