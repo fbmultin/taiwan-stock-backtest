@@ -53,10 +53,10 @@ const COLORS = [
 
 // --- 內建常見 ETF 股名清單 ---
 const STATIC_STOCK_NAMES = {
-  '0050': '元大台灣50',
+  '0050': '元大台炇50',
   '006208': '富邦台50',
   '006203': '元大MSCI台灣',
-  '0057': '富邦摩台',
+  '0057': '富邦摸台',
   '006204': '永豐臺灣加權',
   '0056': '元大高股息',
   '00878': '國泰永續高股息',
@@ -74,11 +74,11 @@ const STATIC_STOCK_NAMES = {
   '00946': '群益科技高息成長',
   '00891': '中信關鍵半導體',
   '00892': '富邦台灣半導體',
-  '00881': '國泰台灣5G+',
-  '00935': '野村臺灣新科技50',
+  '00881': '國泰台7635G+',
+  '00935': '野村臺灣新科所50',
   '00757': '統一FANG+',
   '00830': '國泰費城半導體',
-  '00904': '新光臺灣半導體30',
+  '00904': '新光臺灣半導餃30',
   '00903': '富邦元宇宙',
   '00876': '元大未來關鍵科技',
   '00941': '中信上游半導體',
@@ -90,17 +90,17 @@ const STATIC_STOCK_NAMES = {
   '00982A': '主動群益台灣強棒',
   '00980A': '主動野村臺灣優選',
   '00984A': '主動安聯台灣高息',
-  '00985A': '主動野村台灣50',
+  '00985A': '主動野村台炇50',
   '00988A': '主動統一全球創新',
   '009805': '新光美國電力基建',
   '00662': '富邦NASDAQ',
-  '00924': '復華S&P500成長',
-  '009813': '貝萊德標普卓越50',
+  '00924': '復菎S&P500成長',
+  '009813': '貝莱德標普卓越50',
   '009815': '大華美國MAG7+',
   '00981T': '平衡凱基雙核收息',
-  '00679B': '元大美債20年',
+  '00679B': '元大美偡20年',
   '00687B': '國泰20年美債',
-  '00937B': '群益ESG投等債20+',
+  '00937B': '群益ESG投等偡20+',
   '00933B': '國泰10Y+金融債',
   '00945B': '凱基美國非投等債',
   '00953B': '群益優選非投等債',
@@ -110,10 +110,10 @@ const STATIC_STOCK_NAMES = {
   '00772B': '中信高評級公司債',
   '00751B': '元大AAA至A公司債',
   '00981B': '第一金優選非投債',
-  '00696B': '富邦美債20年',
+  '00696B': '富邦美偡20年',
   '00694B': '富邦美債1-3',
-  '00632R': '元大台灣50反1',
-  '00631L': '元大台灣50正2',
+  '00632R': '元大台炇50反1',
+  '00631L': '元大台炇50正2',
 };
 
 const PRESETS = [
@@ -130,6 +130,82 @@ const PRESETS = [
     stocks: ['0056', '00878', '00919', '00929', '00713', '00915'],
   },
 ];
+
+// --- 台灣證券交易所國定假日 / 休市日 ---
+// 整理自 TWSE 公告與財經媒體彙整的開休市日期表 (2025-2027)。
+// 2027 年之後遇到跨年份時，農曆假期等浮動假日需每年底依官方公告更新。
+// 週末已由 isWeekend 另行判斷，此表僅需列出「非週末」的休市日即可，
+// 但為求對照方便，仍將部分本身為週末的假日一併列出（不影響判斷結果）。
+const TW_MARKET_HOLIDAYS = {
+  // 2025（民國114年）
+  '2025-01-01': '元旦',
+  '2025-01-23': '春節調整假',
+  '2025-01-24': '春節調整假',
+  '2025-01-27': '春節',
+  '2025-01-28': '除夕',
+  '2025-01-29': '春節初一',
+  '2025-01-30': '春節初二',
+  '2025-01-31': '春節初三',
+  '2025-02-28': '和平紀念日',
+  '2025-04-03': '兒童節補假',
+  '2025-04-04': '清明節',
+  '2025-05-01': '勞動節',
+  '2025-05-30': '端午節',
+  '2025-09-29': '教師節補假',
+  '2025-10-06': '中秋節',
+  '2025-10-10': '國慶日',
+  '2025-10-24': '台灣光復節補假',
+  '2025-12-25': '行憑紀念日',
+  // 2026（民國115年）
+  '2026-01-01': '元旦',
+  '2026-02-12': '春節調整假',
+  '2026-02-13': '春節調整假',
+  '2026-02-16': '除夕前一日',
+  '2026-02-17': '除夕',
+  '2026-02-18': '春節初一',
+  '2026-02-19': '春節初二',
+  '2026-02-20': '春節初三',
+  '2026-02-27': '和平紀念日補假',
+  '2026-04-03': '兒童節補假',
+  '2026-04-05': '民族掃墓節',
+  '2026-04-06': '民族掃墓節補假',
+  '2026-05-01': '勞動節',
+  '2026-06-19': '端午節',
+  '2026-09-25': '中秋節',
+  '2026-09-28': '教師節',
+  '2026-10-09': '國慶日補假',
+  '2026-10-26': '台灣光復節補假',
+  '2026-12-25': '行憑紀念日',
+  // 2027（民國116年，暫為推估值，請於官方公告後校正）
+  '2027-01-01': '元旦',
+  '2027-02-02': '春節調整假',
+  '2027-02-03': '春節調整假',
+  '2027-02-04': '春節',
+  '2027-02-05': '除夕',
+  '2027-02-08': '春節初一',
+  '2027-02-09': '春節初二',
+  '2027-02-10': '春節初三',
+  '2027-03-01': '和平紀念日補假',
+  '2027-04-05': '清明節',
+  '2027-04-06': '兒童節補假',
+  '2027-04-30': '勞動節補假',
+  '2027-06-09': '端午節',
+  '2027-09-15': '中秋節',
+  '2027-09-28': '教師節',
+  '2027-10-11': '國慶日補假',
+  '2027-10-25': '台灣光復節',
+  '2027-12-24': '行憑紀念日補假',
+};
+
+const isWeekend = (date) => date.getDay() === 0 || date.getDay() === 6;
+
+const isTaiwanMarketHoliday = (date) => {
+  const dateStr = date.toISOString().split('T')[0];
+  return Boolean(TW_MARKET_HOLIDAYS[dateStr]);
+};
+
+// 非交易日 = 週末 或 台股國定假日/休市日
+const isNonTradingDay = (date) => isWeekend(date) || isTaiwanMarketHoliday(date);
 
 // --- 全域工具函式 ---
 
@@ -823,6 +899,13 @@ const App = () => {
   const [missingDataList, setMissingDataList] = useState([]);
   const [manualPriceData, setManualPriceData] = useState({});
 
+  // 假日自動迴避通知(系統將使用者選取的日期自動調整為最近交易日時顯示)
+  const [dateAdjustmentNote, setDateAdjustmentNote] = useState(null);
+  // 回測後日期調整 UI
+  const [showDateAdjustPanel, setShowDateAdjustPanel] = useState(false);
+  const [adjustStart, setAdjustStart] = useState('');
+  const [adjustEnd, setAdjustEnd] = useState('');
+
   const handleApplyPreset = (presetStocks) => {
     const newInputs = [...presetStocks];
     while (newInputs.length < 6) newInputs.push('');
@@ -992,7 +1075,7 @@ const App = () => {
     return () => window.removeEventListener('afterprint', afterPrint);
   }, []);
 
-  const runBacktest = async (overrideManualData = null) => {
+  const runBacktest = async (overrideManualData = null, dateOverride = null) => {
     setLoading(true);
     setResults(null);
     setPeriodStats(null);
@@ -1002,6 +1085,7 @@ const App = () => {
     setComparisonInfo(null);
     setFailedTickers([]);
     setMissingDataList([]);
+    setDateAdjustmentNote(null);
     setIsConfigExpanded(false);
     setProgress(0);
 
@@ -1015,7 +1099,19 @@ const App = () => {
     let rangeStart, rangeEnd;
     const now = new Date();
 
-    if (timeRange === 'custom') {
+    // 若由「回測後日期調整 UI」直接帶入指定區間,優先使用該區間
+    // (不透過 timeRange/customStart/customEnd 狀態,避免 setState 非同步造成的時序問題)
+    if (dateOverride && dateOverride.start && dateOverride.end) {
+      const d1 = new Date(dateOverride.start);
+      const d2 = new Date(dateOverride.end);
+      if (d1 > d2) {
+        rangeStart = d2;
+        rangeEnd = d1;
+      } else {
+        rangeStart = d1;
+        rangeEnd = d2;
+      }
+    } else if (timeRange === 'custom') {
       if (!customStart || !customEnd) {
         setErrorMsg('請選擇起始與結束日期');
         setLoading(false);
@@ -1044,13 +1140,21 @@ const App = () => {
             ? 6
             : timeRange === '12m'
             ? 12
-            : 36;
+            : timeRange === '3y'
+            ? 36
+            : timeRange === '5y'
+            ? 60
+            : 12;
         rangeStart.setMonth(rangeStart.getMonth() - months);
       }
     }
 
-    // 1. 如果結束日落在週末,往前推到週五
-    while (rangeEnd.getDay() === 0 || rangeEnd.getDay() === 6) {
+    // 記錄使用者實際請求的日期(調整前),供之後比對是否被自動迴避邏輯調整
+    const rawRequestedStart = new Date(rangeStart);
+    const rawRequestedEnd = new Date(rangeEnd);
+
+    // 1. 如果結束日落在非交易日(週末或國定假日),往前推到最近一個交易日
+    while (isNonTradingDay(rangeEnd)) {
       rangeEnd.setDate(rangeEnd.getDate() - 1);
     }
     // 2. 如果今天是交易日但盤中(下午 2 點前),也往前推一天
@@ -1058,16 +1162,34 @@ const App = () => {
     const rangeEndStr = rangeEnd.toISOString().split('T')[0];
     if (rangeEndStr === todayStr && now.getHours() < 14) {
       rangeEnd.setDate(rangeEnd.getDate() - 1);
-      // 推完再檢查一次是否落在週末
-      while (rangeEnd.getDay() === 0 || rangeEnd.getDay() === 6) {
+      // 推完再檢查一次是否落在非交易日
+      while (isNonTradingDay(rangeEnd)) {
         rangeEnd.setDate(rangeEnd.getDate() - 1);
       }
     }
-    // 起始日避週末:如果起始日落在週六/週日,往後推到週一
-    while (rangeStart.getDay() === 0 || rangeStart.getDay() === 6) {
+    // 起始日避開非交易日:如果起始日落在週末或國定假日,往後推到最近一個交易日
+    while (isNonTradingDay(rangeStart)) {
       rangeStart.setDate(rangeStart.getDate() + 1);
     }
     setRequestedStartDate(rangeStart);
+
+    // 若日期因假日迴避邏輯而被自動調整,記錄下來以便在 UI 上提示使用者
+    const adjustedStartStr = rangeStart.toISOString().split('T')[0];
+    const adjustedEndStr = rangeEnd.toISOString().split('T')[0];
+    const rawStartStr = rawRequestedStart.toISOString().split('T')[0];
+    const rawEndStr = rawRequestedEnd.toISOString().split('T')[0];
+    const startShifted = rawStartStr !== adjustedStartStr;
+    const endShifted = rawEndStr !== adjustedEndStr;
+    if (startShifted || endShifted) {
+      setDateAdjustmentNote({
+        originalStart: rawStartStr,
+        adjustedStart: adjustedStartStr,
+        originalEnd: rawEndStr,
+        adjustedEnd: adjustedEndStr,
+        startShifted,
+        endShifted,
+      });
+    }
 
     let fetchStart = new Date();
     fetchStart.setFullYear(fetchStart.getFullYear() - 5);
@@ -1106,7 +1228,7 @@ const App = () => {
         .filter((r) => r && r.data.length > 0);
 
       if (successfulData.length === 0) {
-        setErrorMsg('無法抓取任何有效數據，請檢查代碼或網路。');
+        setErrorMsg('無法抜取任何有效數據，請檢查代碼或網路。');
         setLoading(false);
         clearInterval(progressInterval);
         return;
@@ -1217,7 +1339,7 @@ const App = () => {
 
       let globalLatestDivDate = null;
       let globalCalcEndDate = rangeEnd;
-      // 修改 2:從所有 ETF 的最後一筆資料,找出共同覆蓋到的最後日期
+      // 修改 2：從所有 ETF 的最後一筆資料,找出共同覆蓋到的最後日期
       // 這樣可以自動處理國定假日 / ETF 個別休市的情況
       if (successfulData && successfulData.length > 0) {
         const lastDatesPerStock = successfulData
@@ -1887,8 +2009,8 @@ const App = () => {
                   <label className="text-xs text-slate-400 font-bold">
                     回測投資年限
                   </label>
-                  <div className="grid grid-cols-5 gap-1">
-                    {['ytd', '3m', '6m', '12m', '3y'].map((t) => (
+                  <div className="grid grid-cols-3 gap-1">
+                    {['ytd', '3m', '6m', '12m', '3y', '5y'].map((t) => (
                       <button
                         key={t}
                         onClick={() => setTimeRange(t)}
@@ -1905,8 +2027,10 @@ const App = () => {
                           : t === '6m'
                           ? '半年'
                           : t === '12m'
-                          ? '1年'
-                          : '3年'}
+                          ? '近1年'
+                          : t === '3y'
+                          ? '近3年'
+                          : '近5年'}
                       </button>
                     ))}
                   </div>
@@ -2110,7 +2234,7 @@ const App = () => {
                     <div className="text-[10px] sm:text-xs text-slate-300 leading-tight">
                       <div>依除息日對齊週期</div>
                       <div className="text-[9px] text-slate-500">
-                        獨立計算每檔績效 (近12次)
+                        狜立計算每檔績效 (近12次)
                       </div>
                     </div>
                   </label>
@@ -2169,83 +2293,148 @@ const App = () => {
 
           {!isConfigExpanded && (
             <div
-              className={`border p-3 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center animate-in fade-in slide-in-from-top-2 no-print gap-3 sm:gap-0 ${
+              className={`border p-3 rounded-lg flex flex-col gap-3 animate-in fade-in slide-in-from-top-2 no-print ${
                 printMode
                   ? 'bg-gray-50 border-gray-200'
                   : 'bg-slate-800/50 border-slate-700'
               }`}
             >
-              <div
-                className={`flex flex-wrap items-center gap-2 sm:gap-4 text-sm ${textClass.sub}`}
-              >
-                <span>
-                  本金:{' '}
-                  <span
-                    className={`font-mono font-bold ${textClass.highlight}`}
-                  >
-                    {Math.round(totalCapital / 10000)}萬
-                  </span>
-                </span>
-                <span className="hidden sm:inline">|</span>
-                <span>
-                  區間:{' '}
-                  {timeRange === 'custom'
-                    ? '自訂'
-                    : timeRange === 'ytd'
-                    ? '今年以來'
-                    : timeRange === '3m'
-                    ? '近3個月'
-                    : timeRange === '6m'
-                    ? '半年'
-                    : timeRange === '12m'
-                    ? '1年'
-                    : '3年'}
-                </span>
-                {comparisonInfo && (
-                  <>
-                    <span className="hidden sm:inline">|</span>
-                    <span className="text-[10px] sm:text-xs text-slate-500 flex items-center gap-1">
-                      <CalendarDays className="w-3 h-3" />
-                      {comparisonInfo.startDate} ~ {comparisonInfo.endDate}
-                      {comparisonInfo.mode === 'strict' && (
-                        <span className="text-orange-500">(強制固定)</span>
-                      )}
-                      {comparisonInfo.mode === 'cycle' && (
-                        <span className="text-purple-500">(除息對齊)</span>
-                      )}
-                      {comparisonInfo.endDateLimiter && !strictTimeMode && (
-                        <span
-                          className="text-amber-500 ml-1"
-                          title={`由 ${comparisonInfo.endDateLimiter} 近期除息限制截止日`}
-                        >
-                          (由 {comparisonInfo.endDateLimiter} 限制)
-                        </span>
-                      )}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-0">
+                <div
+                  className={`flex flex-wrap items-center gap-2 sm:gap-4 text-sm ${textClass.sub}`}
+                >
+                  <span>
+                    本金:{' '}
+                    <span
+                      className={`font-mono font-bold ${textClass.highlight}`}
+                    >
+                      {Math.round(totalCapital / 10000)}萬
                     </span>
-                  </>
-                )}
-                <span className="hidden sm:inline">|</span>
-                <span>
-                  標的:{' '}
-                  {inputs.filter((s, i) => s !== '' && enabledInputs[i]).length}
-                </span>
+                  </span>
+                  <span className="hidden sm:inline">|</span>
+                  <span>
+                    區間:{' '}
+                    {timeRange === 'custom'
+                      ? '自訂'
+                      : timeRange === 'ytd'
+                      ? '今年以來'
+                      : timeRange === '3m'
+                      ? '近3個月'
+                      : timeRange === '6m'
+                      ? '半年'
+                      : timeRange === '12m'
+                      ? '近1年'
+                      : timeRange === '3y'
+                      ? '近3年'
+                      : '近5年'}
+                  </span>
+                  {comparisonInfo && (
+                    <>
+                      <span className="hidden sm:inline">|</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 flex items-center gap-1 flex-wrap">
+                        <CalendarDays className="w-3 h-3" />
+                        {comparisonInfo.startDate} ~ {comparisonInfo.endDate}
+                        {comparisonInfo.mode === 'strict' && (
+                          <span className="text-orange-500">(強制固定)</span>
+                        )}
+                        {comparisonInfo.mode === 'cycle' && (
+                          <span className="text-purple-500">(除息對齊)</span>
+                        )}
+                        {comparisonInfo.endDateLimiter && !strictTimeMode && (
+                          <span
+                            className="text-amber-500 ml-1"
+                            title={`由 ${comparisonInfo.endDateLimiter} 近期除息限制截止日`}
+                          >
+                            (由 {comparisonInfo.endDateLimiter} 限制)
+                          </span>
+                        )}
+                        <button
+                          onClick={() => {
+                            setAdjustStart(comparisonInfo.startDate);
+                            setAdjustEnd(comparisonInfo.endDate);
+                            setShowDateAdjustPanel((v) => !v);
+                          }}
+                          className="ml-1 text-blue-400 hover:text-blue-300 underline decoration-dotted"
+                          title="手動調整此次回測實際使用的日期區間"
+                        >
+                          調整日期
+                        </button>
+                      </span>
+                    </>
+                  )}
+                  <span className="hidden sm:inline">|</span>
+                  <span>
+                    標的:{' '}
+                    {
+                      inputs.filter((s, i) => s !== '' && enabledInputs[i])
+                        .length
+                    }
+                  </span>
+                </div>
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={handlePrint}
+                    className="flex-1 sm:flex-none text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded flex justify-center items-center gap-1.5"
+                  >
+                    <Printer className="w-3 h-3" />{' '}
+                    <span className="sm:hidden">匯出</span>
+                    <span className="hidden sm:inline">匯出報告</span>
+                  </button>
+                  <button
+                    onClick={() => runBacktest()}
+                    className="flex-1 sm:flex-none text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded flex justify-center items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" /> 重算
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <button
-                  onClick={handlePrint}
-                  className="flex-1 sm:flex-none text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded flex justify-center items-center gap-1.5"
+
+              {showDateAdjustPanel && comparisonInfo && (
+                <div
+                  className={`flex flex-wrap items-center gap-2 text-xs pt-3 border-t ${
+                    printMode ? 'border-gray-200' : 'border-slate-700'
+                  }`}
                 >
-                  <Printer className="w-3 h-3" />{' '}
-                  <span className="sm:hidden">匯出</span>
-                  <span className="hidden sm:inline">匯出報告</span>
-                </button>
-                <button
-                  onClick={() => runBacktest()}
-                  className="flex-1 sm:flex-none text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded flex justify-center items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3 h-3" /> 重算
-                </button>
-              </div>
+                  <span className={`font-bold ${textClass.sub}`}>
+                    手動校正實際計算區間:
+                  </span>
+                  <input
+                    type="date"
+                    value={adjustStart}
+                    onChange={(e) => setAdjustStart(e.target.value)}
+                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white"
+                  />
+                  <span className={textClass.sub}>~</span>
+                  <input
+                    type="date"
+                    value={adjustEnd}
+                    onChange={(e) => setAdjustEnd(e.target.value)}
+                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!adjustStart || !adjustEnd) return;
+                      setCustomStart(adjustStart);
+                      setCustomEnd(adjustEnd);
+                      setTimeRange('custom');
+                      setShowDateAdjustPanel(false);
+                      runBacktest(null, { start: adjustStart, end: adjustEnd });
+                    }}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded font-bold"
+                  >
+                    套用並重新計算
+                  </button>
+                  <button
+                    onClick={() => setShowDateAdjustPanel(false)}
+                    className="text-slate-500 hover:text-slate-300 px-2"
+                  >
+                    取消
+                  </button>
+                  <span className="text-slate-500 text-[10px] w-full sm:w-auto">
+                    ※ 套用後系統仍會自動避開週末與國定假日
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2255,6 +2444,34 @@ const App = () => {
         {errorMsg && (
           <div className="bg-rose-900/30 text-rose-300 p-4 rounded-xl border border-rose-800 flex items-center gap-2 no-print">
             <AlertTriangle className="w-5 h-5" /> {errorMsg}
+          </div>
+        )}
+        {dateAdjustmentNote && results && (
+          <div className="bg-blue-900/30 text-blue-300 p-4 rounded-xl border border-blue-800 flex items-start gap-2 no-print text-sm">
+            <Info className="w-5 h-5 mt-0.5 shrink-0" />
+            <div>
+              <span className="font-bold">
+                系統已自動調整日期(避開週末/國定假日):
+              </span>
+              <div className="text-blue-300/90 mt-0.5 space-y-0.5">
+                {dateAdjustmentNote.startShifted && (
+                  <div>
+                    起始日 {dateAdjustmentNote.originalStart} →{' '}
+                    <span className="font-mono font-bold">
+                      {dateAdjustmentNote.adjustedStart}
+                    </span>
+                  </div>
+                )}
+                {dateAdjustmentNote.endShifted && (
+                  <div>
+                    結束日 {dateAdjustmentNote.originalEnd} →{' '}
+                    <span className="font-mono font-bold">
+                      {dateAdjustmentNote.adjustedEnd}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
         {failedTickers && failedTickers.length > 0 && (
