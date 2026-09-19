@@ -824,6 +824,101 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
   );
 };
 
+// 執行過程中遇到需要決定的狀況(例如標的資料起始日晚於指定日期、除息日太靠近結束日)時彈出的詢問視窗。
+// 取代先前「依除息日對齊週期/強制固定區間」這類事先勾選好的隱藏規則:改成當下發生了什麼、
+// 有哪些處理方式,直接列出來讓使用者選,選完才繼續往下算。
+const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
+  const [choices, setChoices] = useState(() => {
+    const initial = {};
+    situations.forEach((s) => {
+      const recommended = s.options.find((o) => o.recommended) || s.options[0];
+      initial[s.key] = recommended.value;
+    });
+    return initial;
+  });
+
+  const handleChoose = (key, value) => {
+    setChoices((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200">
+        <div className="flex items-center gap-3 mb-4 text-amber-400">
+          <div className="bg-amber-900/30 p-2 rounded-full">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold">執行中遇到需要您決定的狀況</h3>
+            <p className="text-xs opacity-80">
+              請選擇要怎麼處理,選完後會用您的選擇繼續計算
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4 mb-6 max-h-[55vh] overflow-y-auto pr-1">
+          {situations.map((s) => (
+            <div
+              key={s.key}
+              className="bg-slate-900/50 p-3 rounded-lg border border-slate-700"
+            >
+              <div className="font-bold text-white text-sm mb-1">
+                {s.title}
+              </div>
+              <p className="text-slate-400 text-xs mb-3 leading-relaxed">
+                {s.description}
+              </p>
+              <div className="space-y-1.5">
+                {s.options.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs ${
+                      choices[s.key] === opt.value
+                        ? 'border-emerald-500 bg-emerald-900/20 text-emerald-300'
+                        : 'border-slate-700 hover:bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name={s.key}
+                      className="mt-0.5 flex-shrink-0"
+                      checked={choices[s.key] === opt.value}
+                      onChange={() => handleChoose(s.key, opt.value)}
+                    />
+                    <span>
+                      {opt.label}
+                      {opt.recommended && (
+                        <span className="ml-1.5 text-[10px] text-emerald-500">
+                          (建議)
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+          >
+            取消回測
+          </button>
+          <button
+            onClick={() => onConfirm(choices)}
+            className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+          >
+            確認並繼續
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App = () => {
   const [printMode, setPrintMode] = useState(false);
 
@@ -909,6 +1004,12 @@ const App = () => {
 
   const [missingDataList, setMissingDataList] = useState([]);
   const [manualPriceData, setManualPriceData] = useState({});
+
+  // 執行過程中遇到需要決定的狀況(例如某標的資料起始日晚於指定日期、或除息日太靠近結束日)時,
+  // 在「一般模式」下(未勾選任何進階選項)改為暫停執行、主動詢問使用者要怎麼調整,
+  // 而不是套用事先設定好的規則靜默調整。進階選項(依除息日對齊週期/強制固定區間)維持原本自動行為。
+  const [pendingSituations, setPendingSituations] = useState(null);
+  const pendingRunArgsRef = useRef({ overrideManualData: null, dateOverride: null });
 
   // 假日自動迴避通知(系統將使用者選取的日期自動調整為最近交易日時顯示)
   const [dateAdjustmentNote, setDateAdjustmentNote] = useState(null);
@@ -1086,7 +1187,11 @@ const App = () => {
     return () => window.removeEventListener('afterprint', afterPrint);
   }, []);
 
-  const runBacktest = async (overrideManualData = null, dateOverride = null) => {
+  const runBacktest = async (
+    overrideManualData = null,
+    dateOverride = null,
+    situationResolutions = null
+  ) => {
     setLoading(true);
     setResults(null);
     setPeriodStats(null);
@@ -1096,6 +1201,7 @@ const App = () => {
     setComparisonInfo(null);
     setFailedTickers([]);
     setMissingDataList([]);
+    setPendingSituations(null);
     setDateAdjustmentNote(null);
     setIsConfigExpanded(false);
     setProgress(0);
@@ -1439,8 +1545,15 @@ const App = () => {
       }
       let endDateLimiter = null;
 
+      // 需要使用者決定的狀況清單。一般模式(未勾選任何進階選項)下,遇到需要調整日期
+      // 的情況不再依規則靜默套用,而是先收集起來、暫停執行,交由使用者確認怎麼處理。
+      // 進階選項(依除息日對齊週期/強制固定區間)維持原本的自動行為,不會被詢問。
+      const situations = [];
+
+      // 情況 A:某標的的除息日太靠近指定的結束日,除權息當天股價缺口可能影響比較公平性
       if (!strictTimeMode) {
         let maxDivTs = 0;
+        let candidateEndLimiter = null;
         analyzedStocks.forEach((s) => {
           const divsInRange = s.divDates.filter(
             (ts) => ts <= rangeEnd.getTime()
@@ -1451,15 +1564,56 @@ const App = () => {
               (rangeEnd.getTime() - lastDiv) / (1000 * 60 * 60 * 24);
             if (daysDiff <= 7 && lastDiv > maxDivTs) {
               maxDivTs = lastDiv;
-              endDateLimiter = s.symbol;
+              candidateEndLimiter = s.symbol;
             }
           }
         });
 
         if (maxDivTs > 0) {
-          globalLatestDivDate = new Date(maxDivTs);
-          globalCalcEndDate = new Date(maxDivTs);
-          globalCalcEndDate.setDate(globalCalcEndDate.getDate() - 1);
+          const pulledBackDate = new Date(maxDivTs);
+          pulledBackDate.setDate(pulledBackDate.getDate() - 1);
+          const applyPullback = () => {
+            globalLatestDivDate = new Date(maxDivTs);
+            globalCalcEndDate = pulledBackDate;
+            endDateLimiter = candidateEndLimiter;
+          };
+
+          if (independentCycleMode) {
+            // 進階選項「依除息日對齊週期」:維持原本自動行為,不詢問
+            applyPullback();
+          } else if (situationResolutions?.endDateNearDividend) {
+            if (situationResolutions.endDateNearDividend === 'pullback') {
+              applyPullback();
+            }
+            // 'keep' -> 保留使用者指定的結束日,不調整
+          } else {
+            situations.push({
+              key: 'endDateNearDividend',
+              title: `${candidateEndLimiter} 的除息日太靠近您指定的結束日`,
+              description: `${candidateEndLimiter} 的除息日為 ${
+                new Date(maxDivTs).toISOString().split('T')[0]
+              },距離您指定的結束日 ${
+                rangeEnd.toISOString().split('T')[0]
+              } 只差 ${Math.round(
+                (rangeEnd.getTime() - maxDivTs) / (1000 * 60 * 60 * 24)
+              )} 天。除息當天股價會出現除權息缺口,可能影響報酬率比較的公平性,要怎麼處理?`,
+              options: [
+                {
+                  value: 'pullback',
+                  label: `結束日往前調整到 ${
+                    pulledBackDate.toISOString().split('T')[0]
+                  }(除息日前一天)`,
+                  recommended: true,
+                },
+                {
+                  value: 'keep',
+                  label: `仍使用您指定的結束日 ${
+                    rangeEnd.toISOString().split('T')[0]
+                  }`,
+                },
+              ],
+            });
+          }
         }
       }
 
@@ -1552,23 +1706,89 @@ const App = () => {
         setCyclesUsed(commonCycles);
         finalStockList = [...finalCandidates, ...allExcluded];
       } else {
+        // 情況 B:某標的的資料起始日晚於指定的起始日(可能上市較晚,或資料庫尚未收錄更早資料)
+        let excludedSymbol = null;
         if (!strictTimeMode) {
           const validStocksForDate = successfulData.filter(
             (s) => s.data.length > 10
           );
+          let candidateStart = rangeStart;
+          let candidateLimiter = null;
           validStocksForDate.forEach((stock) => {
             const firstDate = new Date(stock.data[0].date);
-            if (firstDate > maxMinDate) {
-              maxMinDate = firstDate;
-              limitingStockSymbol = stock.symbol;
+            if (firstDate > candidateStart) {
+              candidateStart = firstDate;
+              candidateLimiter = stock.symbol;
             }
           });
           if (validStocksForDate.length === 0 && successfulData.length > 0) {
-            maxMinDate = new Date(successfulData[0].data[0].date);
+            candidateStart = new Date(successfulData[0].data[0].date);
+            candidateLimiter = successfulData[0].symbol;
+          }
+
+          if (
+            candidateLimiter &&
+            candidateStart.getTime() !== rangeStart.getTime()
+          ) {
+            const candidateStartStr = candidateStart
+              .toISOString()
+              .split('T')[0];
+            const rangeStartStr = rangeStart.toISOString().split('T')[0];
+            const resolution = situationResolutions?.startDateShortHistory;
+
+            if (resolution === 'pushForward') {
+              maxMinDate = candidateStart;
+              limitingStockSymbol = candidateLimiter;
+            } else if (resolution === 'exclude') {
+              excludedSymbol = candidateLimiter;
+              maxMinDate = rangeStart;
+            } else if (resolution === 'keepPartial') {
+              maxMinDate = rangeStart;
+            } else {
+              situations.push({
+                key: 'startDateShortHistory',
+                title: `${candidateLimiter} 的資料起始日晚於您指定的起始日`,
+                description: `${candidateLimiter} 最早的資料是 ${candidateStartStr},晚於您指定的起始日 ${rangeStartStr}(可能是上市較晚,或資料庫尚未收錄更早的資料),要怎麼處理?`,
+                options: [
+                  {
+                    value: 'pushForward',
+                    label: `全部標的統一從 ${candidateStartStr} 開始比較`,
+                    recommended: true,
+                  },
+                  {
+                    value: 'exclude',
+                    label: `排除 ${candidateLimiter},其餘標的維持從 ${rangeStartStr} 開始`,
+                  },
+                  {
+                    value: 'keepPartial',
+                    label: `維持 ${rangeStartStr},${candidateLimiter} 從其實際起始日開始比較(各標的起點不同)`,
+                  },
+                ],
+              });
+            }
           }
         }
-        finalStockList = successfulData;
+        finalStockList = excludedSymbol
+          ? successfulData.map((s) =>
+              s.symbol === excludedSymbol
+                ? {
+                    ...s,
+                    isExcluded: true,
+                    exclusionReason: '使用者選擇排除(資料起始日晚於指定起始日)',
+                  }
+                : s
+            )
+          : successfulData;
         setCycleInfoText('');
+      }
+
+      // 若有任何狀況需要使用者決定,暫停執行、彈出詢問視窗,等使用者確認後再繼續計算
+      if (situations.length > 0) {
+        pendingRunArgsRef.current = { overrideManualData, dateOverride };
+        setPendingSituations(situations);
+        setLoading(false);
+        finishLoading();
+        return;
       }
 
       setComparisonInfo({
@@ -1895,6 +2115,18 @@ const App = () => {
     setLoading(false);
   };
 
+  const handleResolveSituations = (choices) => {
+    const args = pendingRunArgsRef.current || {};
+    setPendingSituations(null);
+    runBacktest(args.overrideManualData, args.dateOverride, choices);
+  };
+
+  const handleCancelSituations = () => {
+    pendingRunArgsRef.current = { overrideManualData: null, dateOverride: null };
+    setPendingSituations(null);
+    setLoading(false);
+  };
+
   const chartData = useMemo(() => {
     if (!results || results.length === 0) return [];
     const validResults = results.filter((r) => !r.isExcluded);
@@ -1980,7 +2212,15 @@ const App = () => {
         />
       )}
 
-      {loading && missingDataList.length === 0 && (
+      {!missingDataList.length && pendingSituations && pendingSituations.length > 0 && (
+        <SituationDecisionModal
+          situations={pendingSituations}
+          onConfirm={handleResolveSituations}
+          onCancel={handleCancelSituations}
+        />
+      )}
+
+      {loading && missingDataList.length === 0 && !pendingSituations && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center backdrop-blur-sm no-print px-4">
           <div className="w-full max-w-xs sm:max-w-sm space-y-4">
             <div className="flex justify-between text-xs text-slate-400 mb-1 gap-2">
@@ -2404,6 +2644,14 @@ const App = () => {
                           可能大幅覆蓋您手動選擇的起訖日期
                         </span>
                         。若想強制使用您指定的日期區間，請改勾選下方「強制固定區間」，或執行後於報告上方用「調整日期」手動校正。
+                      </span>
+                    </div>
+                  )}
+                  {!independentCycleMode && !strictTimeMode && (
+                    <div className="text-[10px] sm:text-[11px] leading-snug text-slate-500 bg-slate-800/60 border border-slate-700 rounded-lg p-2 flex items-start gap-1.5">
+                      <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      <span>
+                        一般模式:若執行時遇到標的資料起始日晚於指定日期、或除息日太靠近結束日等需要調整的情況，會直接跳出視窗詢問您要怎麼處理，不會自動靜默調整。
                       </span>
                     </div>
                   )}
