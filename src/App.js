@@ -3192,7 +3192,7 @@ const App = () => {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[15px]">
                             <div className="space-y-1">
                               <div className="flex justify-between">
                                 <span className={textClass.sub}>本金</span>
@@ -3274,11 +3274,11 @@ const App = () => {
                             </div>
                             <div className="space-y-0.5 sm:border-l border-slate-700/50 sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 flex flex-col justify-center">
                               <div
-                                className={`text-[12px] font-bold ${textClass.sub} mb-0.5`}
+                                className={`text-[15px] font-bold ${textClass.sub} mb-0.5`}
                               >
                                 除 {item.lastDivDate || '--'}
                               </div>
-                              <div className={`text-[12px] ${textClass.sub}`}>
+                              <div className={`text-[15px] ${textClass.sub}`}>
                                 配{' '}
                                 <span
                                   className={`font-mono ${textClass.highlight}`}
@@ -3301,7 +3301,7 @@ const App = () => {
                           </div>
 
                           <div
-                            className={`text-[12px] ${
+                            className={`text-[13px] ${
                               textClass.sub
                             } mt-2 border-t ${
                               printMode
@@ -3345,7 +3345,7 @@ const App = () => {
                                   className="group"
                                   open={independentCycleMode}
                                 >
-                                  <summary className="text-[12px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
+                                  <summary className="text-[13px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
                                     <Table2 className="w-3 h-3" /> 近{' '}
                                     {item.dividendDetails.length} 次配息明細
                                   </summary>
