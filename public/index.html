@@ -5,6 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>台股回測比較</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // 字體放大方案 A（小幅放大，約 +1~2px）：只調整具名的 Tailwind 字級，
+      // 任意值的 text-[Npx] 類別（例如 text-[10px]）改在 src/App.js 內直接調整數值。
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontSize: {
+              xs: ['0.8125rem', { lineHeight: '1.15rem' }], // 12px -> 13px
+              sm: ['0.9375rem', { lineHeight: '1.35rem' }], // 14px -> 15px
+              lg: ['1.1875rem', { lineHeight: '1.7rem' }], // 18px -> 19px
+              xl: ['1.3125rem', { lineHeight: '1.75rem' }], // 20px -> 21px
+              '2xl': ['1.5625rem', { lineHeight: '2rem' }], // 24px -> 25px
+              '3xl': ['2rem', { lineHeight: '2.3rem' }], // 30px -> 32px
+              '4xl': ['2.375rem', { lineHeight: '2.6rem' }], // 36px -> 38px
+            },
+          },
+        },
+      };
+    </script>
   </head>
   <body>
     <div id="root"></div>
