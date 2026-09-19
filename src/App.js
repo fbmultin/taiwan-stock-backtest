@@ -39,6 +39,9 @@ import {
   Ban,
   Info,
   Database,
+  SkipForward,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 
 const COLORS = [
@@ -885,6 +888,14 @@ const App = () => {
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
+  // 執行狀態顯示:目前階段文字說明 + 每檔標的抓取進度,讓使用者知道卡在哪裡
+  const [loadingStage, setLoadingStage] = useState('');
+  const [fetchStatusList, setFetchStatusList] = useState([]);
+  // 卡住點跳過機制:等待超過門檻時間後開放「跳過等待」按鈕,由使用者手動決定是否放棄仍在等待中的項目、直接用現有資料繼續
+  const [skipAvailable, setSkipAvailable] = useState(false);
+  const [skipTriggered, setSkipTriggered] = useState(false);
+  const skipResolverRef = useRef(null);
+  const skipTimerRef = useRef(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [debugInfo, setDebugInfo] = useState('');
   const [requestedStartDate, setRequestedStartDate] = useState(null);
@@ -1088,13 +1099,42 @@ const App = () => {
     setDateAdjustmentNote(null);
     setIsConfigExpanded(false);
     setProgress(0);
+    setLoadingStage('準備回測參數...');
+    setFetchStatusList([]);
+    setSkipAvailable(false);
+    setSkipTriggered(false);
 
-    const progressInterval = setInterval(() => {
-      setProgress((old) => {
-        if (old >= 90) return 90;
-        return old + Math.random() * 15;
-      });
-    }, 300);
+    // 卡住點跳過機制:建立一個共用的「跳過訊號」。
+    // 等待超過門檻時間後會開放畫面上的「跳過等待」按鈕,使用者按下後
+    // 所有仍在等待中的網路請求(股價/配息、股票名稱、即時報價)會立刻視為放棄,
+    // 直接用當下已取得的資料繼續往下算,藉此手動加快執行速度。
+    const SKIP_MARKER = Symbol('skip');
+    let skipResolve;
+    const skipPromise = new Promise((resolve) => {
+      skipResolve = resolve;
+    });
+    skipResolverRef.current = () => {
+      setSkipTriggered(true);
+      setSkipAvailable(false);
+      skipResolve(SKIP_MARKER);
+    };
+    if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
+    skipTimerRef.current = setTimeout(() => setSkipAvailable(true), 6000);
+
+    const raceWithSkip = (promise) =>
+      Promise.race([promise, skipPromise]).then((res) => ({
+        value: res === SKIP_MARKER ? null : res,
+        wasSkipped: res === SKIP_MARKER,
+      }));
+
+    const finishLoading = () => {
+      if (skipTimerRef.current) {
+        clearTimeout(skipTimerRef.current);
+        skipTimerRef.current = null;
+      }
+      setSkipAvailable(false);
+      setLoadingStage('');
+    };
 
     let rangeStart, rangeEnd;
     const now = new Date();
@@ -1115,7 +1155,7 @@ const App = () => {
       if (!customStart || !customEnd) {
         setErrorMsg('請選擇起始與結束日期');
         setLoading(false);
-        clearInterval(progressInterval);
+        finishLoading();
         return;
       }
       const d1 = new Date(customStart);
@@ -1203,13 +1243,45 @@ const App = () => {
       .filter((item) => item.s !== '' && enabledInputs[item.idx]);
     if (activeStocks.length === 0) {
       setLoading(false);
-      clearInterval(progressInterval);
+      finishLoading();
       return;
     }
 
+    setFetchStatusList(
+      activeStocks.map((item) => ({ symbol: item.s, status: 'pending' }))
+    );
+    const updateFetchStatus = (symbol, status) => {
+      setFetchStatusList((prev) =>
+        prev.map((f) => (f.symbol === symbol ? { ...f, status } : f))
+      );
+    };
+
     try {
+      // 階段 1:抓取股價與配息資料(通常是整體耗時最久的步驟)。
+      // 每檔標的各自race「跳過訊號」,單一標的卡住不會拖住其他標的的顯示進度。
+      let fetchedCount = 0;
+      const totalStocks = activeStocks.length;
+      setLoadingStage(`正在抓取股價與配息資料 (0/${totalStocks})...`);
+      setProgress(5);
       const promises = activeStocks.map((item) =>
-        fetchStockData(item.s, fetchStart, rangeEnd)
+        raceWithSkip(fetchStockData(item.s, fetchStart, rangeEnd)).then(
+          ({ value, wasSkipped }) => {
+            fetchedCount++;
+            updateFetchStatus(
+              item.s,
+              wasSkipped
+                ? 'skipped'
+                : value && value.data.length > 0
+                ? 'done'
+                : 'failed'
+            );
+            setProgress(5 + (fetchedCount / totalStocks) * 55);
+            setLoadingStage(
+              `正在抓取股價與配息資料 (${fetchedCount}/${totalStocks})...`
+            );
+            return value;
+          }
+        )
       );
       const rawResults = await Promise.all(promises);
 
@@ -1230,18 +1302,23 @@ const App = () => {
       if (successfulData.length === 0) {
         setErrorMsg('無法抓取任何有效數據，請檢查代碼或網路。');
         setLoading(false);
-        clearInterval(progressInterval);
+        finishLoading();
         return;
       }
 
+      // 階段 2:查詢股票名稱(非關鍵資料,卡住時同樣可被「跳過」訊號放行)
+      setLoadingStage('正在查詢股票名稱...');
+      setProgress(65);
       await Promise.all(
         successfulData.map(async (stock) => {
           try {
             if (stockNames[stock.symbol]) {
               stock.stockName = stockNames[stock.symbol];
             } else {
-              const name = await getStockNameFromAPI(stock.symbol);
-              stock.stockName = name;
+              const { value: name } = await raceWithSkip(
+                getStockNameFromAPI(stock.symbol)
+              );
+              stock.stockName = name || '';
             }
           } catch (e) {
             stock.stockName = '';
@@ -1254,6 +1331,7 @@ const App = () => {
         if (s.stockName) newNamesMap[s.symbol] = s.stockName;
       });
       setStockNames((prev) => ({ ...prev, ...newNamesMap }));
+      setProgress(78);
 
       const targetEndDate = rangeEnd.toISOString().split('T')[0];
       const isEndingNearToday =
@@ -1261,6 +1339,8 @@ const App = () => {
       const allowRealtimeQuote =
         now.getHours() >= 14 || targetEndDate < todayStr;
 
+      // 階段 3:檢查即時報價(補當日尚未收盤的最新價,同樣可被跳過)
+      setLoadingStage('正在檢查即時報價...');
       await Promise.all(
         successfulData.map(async (stock) => {
           const lastData = stock.data[stock.data.length - 1];
@@ -1270,7 +1350,9 @@ const App = () => {
             lastData.date < targetEndDate
           ) {
             try {
-              const quote = await fetchQuoteData(stock.usedSymbol);
+              const { value: quote } = await raceWithSkip(
+                fetchQuoteData(stock.usedSymbol)
+              );
               if (quote && quote.date > lastData.date) {
                 stock.data.push({
                   date: quote.date,
@@ -1284,6 +1366,7 @@ const App = () => {
           }
         })
       );
+      setProgress(90);
 
       const currentManualData = overrideManualData || manualPriceData;
       successfulData.forEach((stock) => {
@@ -1528,9 +1611,12 @@ const App = () => {
       if (missingList.length > 0) {
         setMissingDataList(missingList);
         setLoading(false);
-        clearInterval(progressInterval);
+        finishLoading();
         return;
       }
+
+      setLoadingStage('正在計算績效與配息週期...');
+      setProgress(96);
 
       const periods = [3, 6, 12, 36, 60];
       const stats = periods.map((m) =>
@@ -1786,14 +1872,14 @@ const App = () => {
       });
 
       setResults(resultsWithValues);
-      clearInterval(progressInterval);
+      finishLoading();
       setProgress(100);
       setTimeout(() => setLoading(false), 500);
     } catch (err) {
       setErrorMsg('發生錯誤');
       console.error(err);
       setLoading(false);
-      clearInterval(progressInterval);
+      finishLoading();
     }
   };
 
@@ -1895,11 +1981,11 @@ const App = () => {
       )}
 
       {loading && missingDataList.length === 0 && (
-        <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center backdrop-blur-sm no-print">
-          <div className="w-64 space-y-4">
-            <div className="flex justify-between text-xs text-slate-400 mb-1">
-              <span>資料回測中...</span>
-              <span>{Math.round(progress)}%</span>
+        <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center backdrop-blur-sm no-print px-4">
+          <div className="w-full max-w-xs sm:max-w-sm space-y-4">
+            <div className="flex justify-between text-xs text-slate-400 mb-1 gap-2">
+              <span className="truncate">{loadingStage || '資料回測中...'}</span>
+              <span className="flex-shrink-0">{Math.round(progress)}%</span>
             </div>
             <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
               <div
@@ -1907,9 +1993,53 @@ const App = () => {
                 style={{ width: `${progress}%` }}
               />
             </div>
+
+            {fetchStatusList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 justify-center max-h-24 overflow-y-auto">
+                {fetchStatusList.map((f) => (
+                  <span
+                    key={f.symbol}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-mono ${
+                      f.status === 'done'
+                        ? 'border-emerald-700 text-emerald-400 bg-emerald-900/20'
+                        : f.status === 'failed'
+                        ? 'border-rose-700 text-rose-400 bg-rose-900/20'
+                        : f.status === 'skipped'
+                        ? 'border-slate-600 text-slate-400 bg-slate-800'
+                        : 'border-slate-600 text-slate-300 bg-slate-800 animate-pulse'
+                    }`}
+                  >
+                    {f.status === 'done' && <CheckCircle2 className="w-2.5 h-2.5" />}
+                    {f.status === 'failed' && <XCircle className="w-2.5 h-2.5" />}
+                    {f.status === 'skipped' && <SkipForward className="w-2.5 h-2.5" />}
+                    {f.status === 'pending' && <Clock className="w-2.5 h-2.5" />}
+                    {f.symbol}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <div className="text-center">
               <Loader2 className="w-6 h-6 text-emerald-500 animate-spin mx-auto opacity-70" />
             </div>
+
+            {skipTriggered ? (
+              <div className="text-center text-[11px] text-amber-400 flex items-center justify-center gap-1">
+                <Info className="w-3 h-3" /> 已跳過等待中項目，使用現有資料繼續計算...
+              </div>
+            ) : skipAvailable ? (
+              <div className="text-center space-y-1.5">
+                <p className="text-[11px] text-slate-500">
+                  部分項目回應較久，可手動跳過等待以加快速度
+                </p>
+                <button
+                  onClick={() => skipResolverRef.current && skipResolverRef.current()}
+                  className="inline-flex items-center gap-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-bold"
+                >
+                  <SkipForward className="w-3.5 h-3.5" /> 跳過等待，使用目前資料繼續
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -2264,6 +2394,19 @@ const App = () => {
                       </div>
                     </div>
                   </label>
+                  {independentCycleMode && !strictTimeMode && (
+                    <div className="text-[10px] sm:text-[11px] leading-snug text-purple-300 bg-purple-900/20 border border-purple-800/50 rounded-lg p-2 flex items-start gap-1.5">
+                      <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      <span>
+                        此模式會以「配息次數最少 / 上市最晚」的標的為基準，用它近
+                        12 次除息紀錄反推實際計算區間，
+                        <span className="font-bold text-purple-200">
+                          可能大幅覆蓋您手動選擇的起訖日期
+                        </span>
+                        。若想強制使用您指定的日期區間，請改勾選下方「強制固定區間」，或執行後於報告上方用「調整日期」手動校正。
+                      </span>
+                    </div>
+                  )}
                   <button
                     onClick={() => runBacktest()}
                     disabled={
