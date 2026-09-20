@@ -2531,8 +2531,24 @@ const App = () => {
         </div>
       )}
 
+      {/* 手機版初始設定頁的浮動按鈕:設定項目多、頁面拉很長,提供快速跳到最底部(開始回測按鈕)的捷徑 */}
+      {!results && !loading && !printMode && (
+        <button
+          onClick={() =>
+            window.scrollTo({
+              top: document.body.scrollHeight,
+              behavior: 'smooth',
+            })
+          }
+          className="sm:hidden fixed bottom-5 right-4 z-30 w-12 h-12 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-900/40 flex items-center justify-center no-print"
+          title="快速跳到最底"
+        >
+          <ChevronDown className="w-6 h-6" />
+        </button>
+      )}
+
       <header
-        className={`border-b shadow-xl sticky top-0 z-20 no-print ${
+        className={`border-b shadow-xl sm:sticky sm:top-0 z-20 no-print ${
           printMode
             ? 'bg-white border-slate-200'
             : 'bg-slate-800 border-slate-700'
