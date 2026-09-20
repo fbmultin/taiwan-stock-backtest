@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TW_STOCK_NAMES from './data/twStockNames';
+import TW_STOCK_SPLITS from './data/twStockSplits';
 import {
   LineChart,
   Line,
@@ -45,6 +46,7 @@ import {
   XCircle,
   Star,
   Save,
+  Scissors,
 } from 'lucide-react';
 
 const COLORS = [
@@ -593,6 +595,78 @@ const fetchStockData = async (symbol, startDate, endDate) => {
     }
   }
   return null;
+};
+
+// 依 src/data/twStockSplits.js 這份對照表,校正股票分割/反分割造成的股價斷點。
+// 不同資料源(FinMind、Yahoo)是否已經把歷史股價回溯調整過並不一致,
+// 所以不會無條件套用比例,而是先用「恢復買賣日前最後一筆價格」跟對照表的
+// 分割前/分割後參考價比對,比較接近哪一邊,再決定要不要校正、以及往哪個方向校正:
+//   - 接近分割後參考價(誤差 5% 內) → 資料源已經調整過,不再重複處理
+//   - 其餘情況(含誤差稍大者)→ 依對照表比例校正,並以對照表的官方數字為準
+//   - 兩邊都差很多(50% 以上) → 無法確認,不自動校正,只標記為「無法確認」讓卡片提示使用者
+// 除了股價,同一段期間內的除息金額也會用同一個比例換算,避免舊股本的配息
+// 相對校正後的新股本股價被放大或縮小,污染含息報酬率的計算。
+const applySplitAdjustments = (stock) => {
+  if (!stock.data || stock.data.length === 0) return [];
+  const pureSymbol = (stock.symbol || '').split('.')[0];
+  const events = TW_STOCK_SPLITS.filter((e) => e.symbol === pureSymbol);
+  if (events.length === 0) return [];
+
+  const notes = [];
+  events
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .forEach((event) => {
+      const priorPoints = stock.data.filter((d) => d.date < event.date);
+      const afterPoints = stock.data.filter((d) => d.date >= event.date);
+      if (priorPoints.length === 0 || afterPoints.length === 0) {
+        // 這次查詢的資料範圍沒有橫跨這次分割事件,跟這次回測無關
+        return;
+      }
+
+      const lastPre = priorPoints[priorPoints.length - 1];
+      const diffAfter =
+        Math.abs(lastPre.price - event.priceAfter) / event.priceAfter;
+      const diffBefore =
+        Math.abs(lastPre.price - event.priceBefore) / event.priceBefore;
+
+      if (diffAfter <= 0.05 && diffAfter < diffBefore) {
+        notes.push({ ...event, status: 'already_adjusted', observedPrice: lastPre.price });
+        return;
+      }
+
+      if (diffBefore > 0.5 && diffAfter > 0.5) {
+        notes.push({ ...event, status: 'ambiguous', observedPrice: lastPre.price });
+        return;
+      }
+
+      // 分割:股數變多、股價變小 → 除以倍數;反分割:股數變少、股價變大 → 乘以倍數
+      const factor = event.type === 'split' ? 1 / event.ratio : event.ratio;
+      const splitTs = new Date(event.date).getTime();
+
+      stock.data.forEach((d) => {
+        if (d.date < event.date) {
+          d.price = d.price * factor;
+        }
+      });
+
+      (stock.divDates || []).forEach((ts) => {
+        if (ts < splitTs) {
+          const keySec = Math.floor(ts / 1000);
+          const divInfo =
+            stock.dividendsMap[keySec.toString()] ||
+            stock.dividendsMap[keySec] ||
+            stock.dividendsMap[ts];
+          if (divInfo && typeof divInfo.amount === 'number') {
+            divInfo.amount = divInfo.amount * factor;
+          }
+        }
+      });
+
+      notes.push({ ...event, status: 'corrected', observedPrice: lastPre.price });
+    });
+
+  return notes;
 };
 
 const calculatePeriodStats = (
@@ -1504,6 +1578,12 @@ const App = () => {
         return;
       }
 
+      // 分割/反分割校正:若此標的在查詢區間內曾經分割過,依對照表判斷資料源是否已經
+      // 回溯調整、需要的話自動校正股價與除息金額,並記錄下來供卡片顯示說明徽章。
+      successfulData.forEach((stock) => {
+        stock.splitEvents = applySplitAdjustments(stock);
+      });
+
       // 階段 2:查詢股票名稱(非關鍵資料,卡住時同樣可被「跳過」訊號放行)
       // 沿用 fetchStatusList 顯示每檔的即時狀態,讓畫面能清楚指出「目前是哪一檔還在查」
       setLoadingStage('正在查詢股票名稱...');
@@ -2199,6 +2279,7 @@ const App = () => {
             dividendDetails: dividendDetails.reverse(),
             isDataLagging,
             actualEndDateStr,
+            splitEvents: stock.splitEvents || [],
           };
         })
         .filter((r) => r !== null);
@@ -3341,6 +3422,45 @@ const App = () => {
                                     週期對齊
                                   </span>
                                 )}
+                                {(item.splitEvents || []).map((ev) => {
+                                  const typeLabel =
+                                    ev.type === 'split' ? '分割' : '反分割';
+                                  const ratioLabel =
+                                    ev.type === 'split'
+                                      ? `1拆${ev.ratio}`
+                                      : `${ev.ratio}合1`;
+                                  const priceLabel = `${ev.priceBefore}→${ev.priceAfter}`;
+                                  let text, title, colorClass;
+                                  if (ev.status === 'corrected') {
+                                    text = `${ev.date} ${typeLabel} ${ratioLabel} (已校正)`;
+                                    title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n資料源尚未回溯調整，已依此比例自動校正 ${ev.date} 以前的股價與除息金額。`;
+                                    colorClass = printMode
+                                      ? 'text-teal-700 border-teal-200 bg-teal-50'
+                                      : 'text-teal-400 border-teal-900/50 bg-teal-900/20';
+                                  } else if (ev.status === 'already_adjusted') {
+                                    text = `${ev.date} ${typeLabel} ${ratioLabel} (資料已調整)`;
+                                    title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n資料源已經回溯調整過歷史股價，未再重複處理。`;
+                                    colorClass = printMode
+                                      ? 'text-slate-600 border-slate-300 bg-slate-100'
+                                      : 'text-slate-400 border-slate-600 bg-slate-800';
+                                  } else {
+                                    text = `${ev.date} 疑似${typeLabel} (未校正)`;
+                                    title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n實際資料價位與這兩個參考值都對不上，無法自動判斷是否已調整，故未自動校正，建議自行確認。`;
+                                    colorClass = printMode
+                                      ? 'text-amber-700 border-amber-200 bg-amber-50'
+                                      : 'text-amber-400 border-amber-900/50 bg-amber-900/20';
+                                  }
+                                  return (
+                                    <span
+                                      key={`${ev.symbol}-${ev.date}`}
+                                      title={title}
+                                      className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${colorClass}`}
+                                    >
+                                      <Scissors className="w-3 h-3" />
+                                      {text} {priceLabel}
+                                    </span>
+                                  );
+                                })}
                                 <span
                                   className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${riskColor}`}
                                 >
