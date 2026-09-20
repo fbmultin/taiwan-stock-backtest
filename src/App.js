@@ -2303,6 +2303,17 @@ const App = () => {
 
             const exDivPrice =
               rawIndex !== -1 ? stock.data[rawIndex].price : null;
+            // 兩種單次配息殖利率基準:
+            // costYieldPct  以「買進成本價」(這次回測起始價 initialPrice)為分母,
+            //               反映這筆配息相對於實際投入成本的報酬率。
+            // exDivYieldPct 以「除息前一日收盤價」(prePrice)為分母,
+            //               反映市場慣用、當次除息當下的殖利率水準。
+            const costYieldPct =
+              initialPrice > 0 ? (currentDivAmount / initialPrice) * 100 : null;
+            const exDivYieldPct =
+              prePrice && prePrice > 0
+                ? (currentDivAmount / prePrice) * 100
+                : null;
             dividendDetails.push({
               date: divDateStr,
               prePrice: prePrice,
@@ -2310,6 +2321,8 @@ const App = () => {
               amount: currentDivAmount,
               isFilled: isFilled,
               isExcludedDiv,
+              costYieldPct,
+              exDivYieldPct,
             });
           });
 
@@ -3803,6 +3816,12 @@ const App = () => {
                                           <th className="p-1 pl-2">除息日</th>
                                           <th className="p-1">前價</th>
                                           <th className="p-1">配息</th>
+                                          <th className="p-1 text-right" title="配息 ÷ 買進成本價(本次回測起始價)">
+                                            成本殖利率
+                                          </th>
+                                          <th className="p-1 text-right" title="配息 ÷ 除息前一日收盤價">
+                                            除息前殖利率
+                                          </th>
                                           <th className="p-1 pr-2 text-right">
                                             當日收
                                           </th>
@@ -3854,6 +3873,20 @@ const App = () => {
                                               ${d.amount}
                                             </td>
                                             <td
+                                              className={`p-1 font-mono text-right ${textClass.sub}`}
+                                            >
+                                              {d.costYieldPct != null
+                                                ? `${d.costYieldPct.toFixed(2)}%`
+                                                : '-'}
+                                            </td>
+                                            <td
+                                              className={`p-1 font-mono text-right ${textClass.sub}`}
+                                            >
+                                              {d.exDivYieldPct != null
+                                                ? `${d.exDivYieldPct.toFixed(2)}%`
+                                                : '-'}
+                                            </td>
+                                            <td
                                               className={`p-1 pr-2 font-mono text-right ${textClass.main}`}
                                             >
                                               {d.exDivPrice
@@ -3867,7 +3900,7 @@ const App = () => {
                                         ) && (
                                           <tr>
                                             <td
-                                              colSpan="4"
+                                              colSpan="6"
                                               className="p-1 text-[12.5px] text-center text-slate-500 italic bg-slate-800/50"
                                             >
                                               <Info className="w-2 h-2 inline mr-0.5" />{' '}
@@ -3900,6 +3933,26 @@ const App = () => {
                                                 ) * 100
                                             ) / 100}
                                           </td>
+                                          <td
+                                            className={`p-1 text-right ${textClass.highlight}`}
+                                          >
+                                            {item.initialPrice > 0
+                                              ? `${(
+                                                  (item.dividendDetails
+                                                    .filter(
+                                                      (d) => !d.isExcludedDiv
+                                                    )
+                                                    .reduce(
+                                                      (acc, curr) =>
+                                                        acc + curr.amount,
+                                                      0
+                                                    ) /
+                                                    item.initialPrice) *
+                                                  100
+                                                ).toFixed(2)}%`
+                                              : '-'}
+                                          </td>
+                                          <td className="p-1"></td>
                                           <td className="p-1"></td>
                                         </tr>
                                       </tbody>
