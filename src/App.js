@@ -578,6 +578,117 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
   }
 };
 
+// 證交所(TWSE)官方「個股日成交資訊」,作為 FinMind 失敗時的第二資料源:
+// 免金鑰、CORS 開放(可直接呼叫、不必透過代理伺服器),但只提供「上市」個股/ETF,
+// 且一次只能查一個月,長區間需要逐月分別呼叫再合併。日期欄位是民國年格式,
+// 需轉換成西元 YYYY-MM-DD 才能跟其他資料源的格式一致。
+const rocDateToISO = (rocDateStr) => {
+  const parts = String(rocDateStr).split('/');
+  if (parts.length !== 3) return null;
+  const year = parseInt(parts[0], 10) + 1911;
+  if (!Number.isFinite(year)) return null;
+  const mm = parts[1].padStart(2, '0');
+  const dd = parts[2].padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
+};
+
+const fetchTWSEMonth = async (symbol, year, month) => {
+  const dateParam = `${year}${String(month).padStart(2, '0')}01`;
+  const url = `https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=${dateParam}&stockNo=${symbol}`;
+  try {
+    const res = await fetchWithTimeout(url, {}, 10000);
+    const json = await res.json();
+    if (json.stat !== 'OK' || !Array.isArray(json.data)) return [];
+    return json.data
+      .map((row) => {
+        const dateStr = rocDateToISO(row[0]);
+        const close = parseFloat(String(row[6]).replace(/,/g, ''));
+        if (!dateStr || !Number.isFinite(close)) return null;
+        return {
+          date: dateStr,
+          timestamp: new Date(dateStr).getTime(),
+          price: close,
+          accumulatedDividend: 0,
+        };
+      })
+      .filter((r) => r !== null);
+  } catch (e) {
+    return [];
+  }
+};
+
+// TWSE 只有股價、沒有除息資訊,所以價格拿到後仍會盡量另外呼叫 FinMind 的
+// 除息端點補上除息資料(獨立呼叫、跟股價抓取互不影響);萬一連這個也失敗,
+// 就照實際拿到的股價回傳、除息視為 0,並標記 dividendDataIncomplete,
+// 讓卡片可以提醒使用者這次的配息資訊可能不完整。
+const fetchDividendsFromFinMindOnly = async (symbol, startDate, endDate) => {
+  const formatD = (d) => d.toISOString().split('T')[0];
+  try {
+    const divUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividendResult&data_id=${symbol}&start_date=${formatD(
+      startDate
+    )}&end_date=${formatD(endDate)}`;
+    const divRes = await fetchWithTimeout(divUrl, {}, 8000);
+    const divJson = await divRes.json();
+    if (divJson.msg !== 'success' || !divJson.data) return null;
+    const dividendsMap = {};
+    const divDates = [];
+    divJson.data.forEach((d) => {
+      const ts = new Date(d.date).getTime();
+      const amount =
+        d.stock_and_cache_dividend ||
+        d.cash_dividend ||
+        d.stock_dividend ||
+        0;
+      if (amount > 0) {
+        dividendsMap[ts] = { amount };
+        divDates.push(ts);
+      }
+    });
+    return { divDates: divDates.sort((a, b) => a - b), dividendsMap };
+  } catch (e) {
+    return null;
+  }
+};
+
+// 逐月上限:超長區間逐月呼叫 TWSE 太慢、也可能造成請求量過大,
+// 超過這個月數上限就直接放棄這個備援管道、改交給後面的 Yahoo 管道處理。
+const TWSE_MAX_MONTHS = 24;
+
+const fetchFromTWSE = async (symbol, startDate, endDate) => {
+  const months = [];
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  while (cursor <= last && months.length <= TWSE_MAX_MONTHS) {
+    months.push({ year: cursor.getFullYear(), month: cursor.getMonth() + 1 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  if (months.length === 0 || months.length > TWSE_MAX_MONTHS) return null;
+
+  const monthResults = await Promise.all(
+    months.map((m) => fetchTWSEMonth(symbol, m.year, m.month))
+  );
+  const data = monthResults
+    .flat()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (data.length === 0) return null;
+
+  const divResult = await fetchDividendsFromFinMindOnly(
+    symbol,
+    startDate,
+    endDate
+  );
+
+  return {
+    symbol,
+    data,
+    divDates: divResult ? divResult.divDates : [],
+    dividendsMap: divResult ? divResult.dividendsMap : {},
+    usedSymbol: symbol,
+    source: 'TWSE',
+    dividendDataIncomplete: !divResult,
+  };
+};
+
 // 資料快取:把最近成功抓到的股價/配息資料存進瀏覽器 localStorage,
 // 當即時資料源(FinMind、Yahoo)當下都抓不到某檔標的時,改用上次成功快取的
 // 資料當最後備援,讓使用者至少能看到「舊一點但還能用」的結果,而不是直接失敗。
@@ -637,7 +748,9 @@ const useCacheFallback = (symbol) => {
   }
 };
 
-const fetchStockData = async (symbol, startDate, endDate) => {
+// 即時資料的完整重試鏈(FinMind → Yahoo各種後綴/網域組合),失敗時回傳 null,
+// 不在這裡處理暫存備援,讓呼叫端(fetchStockData)決定何時該改用暫存。
+const attemptLiveFetch = async (symbol, startDate, endDate) => {
   const symbolContainsDot = (s) => s.includes('.');
   const pureSymbol = symbol.split('.')[0];
 
@@ -651,6 +764,14 @@ const fetchStockData = async (symbol, startDate, endDate) => {
       saveToDataCache(pureSymbol, finmindResult);
       return finmindResult;
     }
+
+    // FinMind 失敗時,先試證交所(TWSE)官方資料源(只有上市個股/ETF才查得到,
+    // 上櫃/興櫃代號會查不到、直接落到下面的 Yahoo 管道)。
+    const twseResult = await fetchFromTWSE(pureSymbol, startDate, endDate);
+    if (twseResult && twseResult.data.length > 0) {
+      saveToDataCache(pureSymbol, twseResult);
+      return twseResult;
+    }
   }
 
   if (symbolContainsDot(symbol)) {
@@ -659,7 +780,7 @@ const fetchStockData = async (symbol, startDate, endDate) => {
       saveToDataCache(symbol, dotResult);
       return dotResult;
     }
-    return useCacheFallback(symbol);
+    return null;
   }
 
   let targets = [`${pureSymbol}.TW`, `${pureSymbol}.TWO`];
@@ -676,7 +797,41 @@ const fetchStockData = async (symbol, startDate, endDate) => {
       return result;
     }
   }
-  return useCacheFallback(pureSymbol);
+  return null;
+};
+
+// 資料源正常時,即時資料通常 1 秒內就有回應,直接等待即可,跟先看暫存幾乎沒差別;
+// 但資料源卡住時,完整重試鏈(FinMind 逾時 + Yahoo 多組合逐一嘗試)最壞情況要跑
+// 一兩分鐘,使用者會等到很不耐煩。因此只要這檔「已經有暫存資料」,就讓即時抓取
+// 和一個較短的暫存逾時互相賽跑:短時間內沒回應就先用暫存頂上、讓畫面能往下走,
+// 即時抓取本身仍會在背景繼續跑,一旦成功會自動更新暫存供下次使用。
+// 完全沒有暫存可退的標的,才會照原本方式乖乖等到即時抓取跑完(或最終失敗)。
+const CACHE_RACE_TIMEOUT_MS = 4000;
+
+const fetchStockData = async (symbol, startDate, endDate) => {
+  const cached = useCacheFallback(symbol);
+  const livePromise = attemptLiveFetch(symbol, startDate, endDate);
+
+  if (!cached) {
+    return await livePromise;
+  }
+
+  const CACHE_RACE_TIMEOUT = Symbol('cache-race-timeout');
+  const timeoutPromise = new Promise((resolve) =>
+    setTimeout(() => resolve(CACHE_RACE_TIMEOUT), CACHE_RACE_TIMEOUT_MS)
+  );
+
+  const first = await Promise.race([livePromise, timeoutPromise]);
+  if (first !== CACHE_RACE_TIMEOUT) {
+    // 即時資料在時限內就有結果了(不論成功或失敗),優先採用最新資料;
+    // 若剛好在時限內就已確定失敗,再退回暫存。
+    return first || cached;
+  }
+
+  // 即時資料還沒回應,先用暫存頂上讓這次回測能往下走;
+  // 即時抓取繼續留在背景跑,成功的話 attemptLiveFetch 內部會自動更新暫存。
+  livePromise.catch(() => {});
+  return cached;
 };
 
 // 依 src/data/twStockSplits.js 這份對照表,校正股票分割/反分割造成的股價斷點。
@@ -2386,6 +2541,7 @@ const App = () => {
             ),
             usedCache: !!stock.usedCache,
             cachedAt: stock.cachedAt || null,
+            dividendDataIncomplete: !!stock.dividendDataIncomplete,
           };
         })
         .filter((r) => r !== null);
@@ -2563,7 +2719,7 @@ const App = () => {
                         ? 'border-slate-600 text-slate-400 bg-slate-800'
                         : 'border-slate-600 text-slate-300 bg-slate-800 animate-pulse'
                     }`}
-                    title={f.status === 'cached' ? '即時資料抓取失敗，改用先前快取的資料' : undefined}
+                    title={f.status === 'cached' ? '即時資料回應較慢或抓取失敗，已改用先前快取的資料' : undefined}
                   >
                     {f.status === 'done' && <CheckCircle2 className="w-2.5 h-2.5" />}
                     {f.status === 'cached' && <Database className="w-2.5 h-2.5" />}
@@ -3589,7 +3745,7 @@ const App = () => {
                                 })}
                                 {item.usedCache && (
                                   <span
-                                    title={`即時資料抓取失敗，此檔改用先前暫存的資料${
+                                    title={`即時資料回應較慢或抓取失敗，此檔已改用先前暫存的資料${
                                       item.cachedAt
                                         ? `\n暫存時間: ${new Date(
                                             item.cachedAt
@@ -3607,6 +3763,19 @@ const App = () => {
                                     {item.cachedAt
                                       ? ` (${item.cachedAt.split('T')[0]})`
                                       : ''}
+                                  </span>
+                                )}
+                                {item.dividendDataIncomplete && (
+                                  <span
+                                    title="這次改用證交所(TWSE)備援資料源取得股價,但除息資料同時也抓取失敗,配息與殖利率計算可能不完整,建議稍後重新整理再試一次"
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                      printMode
+                                        ? 'text-amber-700 border-amber-200 bg-amber-50'
+                                        : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
+                                    }`}
+                                  >
+                                    <AlertTriangle className="w-3 h-3" />
+                                    配息資料可能不完整
                                   </span>
                                 )}
                                 <span
