@@ -2279,7 +2279,14 @@ const App = () => {
             dividendDetails: dividendDetails.reverse(),
             isDataLagging,
             actualEndDateStr,
-            splitEvents: stock.splitEvents || [],
+            // 分割日必須落在「這次回測實際比較的區間」內才顯示徽章;
+            // 校正股價/除息金額時用的是完整抓取範圍(可能含前後緩衝資料),
+            // 但緩衝範圍內發生的分割跟這次回測結果無關,不需要在卡片上特別標註。
+            splitEvents: (stock.splitEvents || []).filter(
+              (ev) =>
+                ev.date >= startData.date &&
+                ev.date <= effectiveEndDate.toISOString().split('T')[0]
+            ),
           };
         })
         .filter((r) => r !== null);
