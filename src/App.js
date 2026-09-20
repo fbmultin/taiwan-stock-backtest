@@ -578,6 +578,65 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
   }
 };
 
+// 資料快取:把最近成功抓到的股價/配息資料存進瀏覽器 localStorage,
+// 當即時資料源(FinMind、Yahoo)當下都抓不到某檔標的時,改用上次成功快取的
+// 資料當最後備援,讓使用者至少能看到「舊一點但還能用」的結果,而不是直接失敗。
+// 每個標的只保留最新一次成功結果(不留歷史多筆版本),並限制最多保留最近用過
+// 的 60 檔標的,避免 localStorage 空間被無限占用。
+const DATA_CACHE_STORAGE_KEY = 'twBacktestDataCacheV1';
+const DATA_CACHE_MAX_SYMBOLS = 60;
+
+const loadDataCache = () => {
+  try {
+    const raw = localStorage.getItem(DATA_CACHE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+const saveToDataCache = (symbol, result) => {
+  try {
+    const cache = loadDataCache();
+    cache[symbol] = {
+      data: result.data,
+      divDates: result.divDates,
+      dividendsMap: result.dividendsMap,
+      usedSymbol: result.usedSymbol,
+      source: result.source || '',
+      cachedAt: new Date().toISOString(),
+    };
+    const entries = Object.entries(cache).sort(
+      (a, b) => new Date(b[1].cachedAt) - new Date(a[1].cachedAt)
+    );
+    localStorage.setItem(
+      DATA_CACHE_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(entries.slice(0, DATA_CACHE_MAX_SYMBOLS)))
+    );
+  } catch (e) {
+    // localStorage 不可用或空間不足時安靜忽略,不影響本次回測本身
+  }
+};
+
+const useCacheFallback = (symbol) => {
+  try {
+    const cached = loadDataCache()[symbol];
+    if (!cached || !cached.data || cached.data.length === 0) return null;
+    return {
+      symbol,
+      data: cached.data,
+      divDates: cached.divDates || [],
+      dividendsMap: cached.dividendsMap || {},
+      usedSymbol: cached.usedSymbol || symbol,
+      source: cached.source || '',
+      usedCache: true,
+      cachedAt: cached.cachedAt,
+    };
+  } catch (e) {
+    return null;
+  }
+};
+
 const fetchStockData = async (symbol, startDate, endDate) => {
   const symbolContainsDot = (s) => s.includes('.');
   const pureSymbol = symbol.split('.')[0];
@@ -589,12 +648,19 @@ const fetchStockData = async (symbol, startDate, endDate) => {
       endDate
     );
     if (finmindResult && finmindResult.data.length > 0) {
+      saveToDataCache(pureSymbol, finmindResult);
       return finmindResult;
     }
   }
 
-  if (symbolContainsDot(symbol))
-    return await fetchWithSuffix(symbol, symbol, startDate, endDate);
+  if (symbolContainsDot(symbol)) {
+    const dotResult = await fetchWithSuffix(symbol, symbol, startDate, endDate);
+    if (dotResult && dotResult.data.length > 0) {
+      saveToDataCache(symbol, dotResult);
+      return dotResult;
+    }
+    return useCacheFallback(symbol);
+  }
 
   let targets = [`${pureSymbol}.TW`, `${pureSymbol}.TWO`];
   for (const target of targets) {
@@ -606,10 +672,11 @@ const fetchStockData = async (symbol, startDate, endDate) => {
     );
     if (result && result.data.length > 0) {
       result.source = 'Yahoo';
+      saveToDataCache(pureSymbol, result);
       return result;
     }
   }
-  return null;
+  return useCacheFallback(pureSymbol);
 };
 
 // 依 src/data/twStockSplits.js 這份對照表,校正股票分割/反分割造成的股價斷點。
@@ -1558,6 +1625,8 @@ const App = () => {
               item.s,
               wasSkipped
                 ? 'skipped'
+                : value && value.usedCache
+                ? 'cached'
                 : value && value.data.length > 0
                 ? 'done'
                 : 'failed'
@@ -2302,6 +2371,8 @@ const App = () => {
                 ev.date >= startData.date &&
                 ev.date <= effectiveEndDate.toISOString().split('T')[0]
             ),
+            usedCache: !!stock.usedCache,
+            cachedAt: stock.cachedAt || null,
           };
         })
         .filter((r) => r !== null);
@@ -2471,14 +2542,18 @@ const App = () => {
                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-mono ${
                       f.status === 'done'
                         ? 'border-emerald-700 text-emerald-400 bg-emerald-900/20'
+                        : f.status === 'cached'
+                        ? 'border-amber-700 text-amber-400 bg-amber-900/20'
                         : f.status === 'failed'
                         ? 'border-rose-700 text-rose-400 bg-rose-900/20'
                         : f.status === 'skipped'
                         ? 'border-slate-600 text-slate-400 bg-slate-800'
                         : 'border-slate-600 text-slate-300 bg-slate-800 animate-pulse'
                     }`}
+                    title={f.status === 'cached' ? '即時資料抓取失敗，改用先前快取的資料' : undefined}
                   >
                     {f.status === 'done' && <CheckCircle2 className="w-2.5 h-2.5" />}
+                    {f.status === 'cached' && <Database className="w-2.5 h-2.5" />}
                     {f.status === 'failed' && <XCircle className="w-2.5 h-2.5" />}
                     {f.status === 'skipped' && <SkipForward className="w-2.5 h-2.5" />}
                     {f.status === 'pending' && <Clock className="w-2.5 h-2.5" />}
@@ -3499,6 +3574,28 @@ const App = () => {
                                     </span>
                                   );
                                 })}
+                                {item.usedCache && (
+                                  <span
+                                    title={`即時資料抓取失敗，此檔改用先前暫存的資料${
+                                      item.cachedAt
+                                        ? `\n暫存時間: ${new Date(
+                                            item.cachedAt
+                                          ).toLocaleString('zh-TW')}`
+                                        : ''
+                                    }`}
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                      printMode
+                                        ? 'text-amber-700 border-amber-200 bg-amber-50'
+                                        : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
+                                    }`}
+                                  >
+                                    <Database className="w-3 h-3" />
+                                    使用暫存資料
+                                    {item.cachedAt
+                                      ? ` (${item.cachedAt.split('T')[0]})`
+                                      : ''}
+                                  </span>
+                                )}
                                 <span
                                   className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${riskColor}`}
                                 >
