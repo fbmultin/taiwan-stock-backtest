@@ -1126,7 +1126,7 @@ const App = () => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
-  const [totalCapital, setTotalCapital] = useState(5000000);
+  const [totalCapital, setTotalCapital] = useState(6000000);
 
   const [allocations, setAllocations] = useState({
     0: 16.6666,
@@ -3804,7 +3804,7 @@ const App = () => {
                                         : 'border-slate-700/50'
                                     }`}
                                   >
-                                    <table className="w-full text-[13px] text-left">
+                                    <table className="w-full text-[16px] leading-normal text-left">
                                       <thead
                                         className={`${
                                           printMode
@@ -3813,16 +3813,16 @@ const App = () => {
                                         } text-slate-500`}
                                       >
                                         <tr>
-                                          <th className="p-1 pl-2">除息日</th>
-                                          <th className="p-1">前價</th>
-                                          <th className="p-1">配息</th>
-                                          <th className="p-1 text-right" title="配息 ÷ 買進成本價(本次回測起始價)">
+                                          <th className="py-2 pl-2">除息日</th>
+                                          <th className="py-2">前價</th>
+                                          <th className="py-2">配息</th>
+                                          <th className="py-2 text-right" title="配息 ÷ 買進成本價(本次回測起始價)">
                                             成本殖利率
                                           </th>
-                                          <th className="p-1 text-right" title="配息 ÷ 除息前一日收盤價">
+                                          <th className="py-2 text-right" title="配息 ÷ 除息前一日收盤價">
                                             除息前殖利率
                                           </th>
-                                          <th className="p-1 pr-2 text-right">
+                                          <th className="py-2 pr-2 text-right">
                                             當日收
                                           </th>
                                         </tr>
@@ -3846,7 +3846,7 @@ const App = () => {
                                             }`}
                                           >
                                             <td
-                                              className={`p-1 pl-2 font-mono ${
+                                              className={`py-2 pl-2 font-mono ${
                                                 textClass.sub
                                               } ${
                                                 d.isExcludedDiv
@@ -3857,14 +3857,14 @@ const App = () => {
                                               {d.date}
                                             </td>
                                             <td
-                                              className={`p-1 font-mono ${textClass.sub}`}
+                                              className={`py-2 font-mono ${textClass.sub}`}
                                             >
                                               {d.prePrice
                                                 ? d.prePrice.toFixed(2)
                                                 : '-'}
                                             </td>
                                             <td
-                                              className={`p-1 font-mono ${
+                                              className={`py-2 font-mono ${
                                                 d.isExcludedDiv
                                                   ? ''
                                                   : textClass.highlight
@@ -3873,21 +3873,21 @@ const App = () => {
                                               ${d.amount}
                                             </td>
                                             <td
-                                              className={`p-1 font-mono text-right ${textClass.sub}`}
+                                              className={`py-2 font-mono text-right ${textClass.sub}`}
                                             >
                                               {d.costYieldPct != null
                                                 ? `${d.costYieldPct.toFixed(2)}%`
                                                 : '-'}
                                             </td>
                                             <td
-                                              className={`p-1 font-mono text-right ${textClass.sub}`}
+                                              className={`py-2 font-mono text-right ${textClass.sub}`}
                                             >
                                               {d.exDivYieldPct != null
                                                 ? `${d.exDivYieldPct.toFixed(2)}%`
                                                 : '-'}
                                             </td>
                                             <td
-                                              className={`p-1 pr-2 font-mono text-right ${textClass.main}`}
+                                              className={`py-2 pr-2 font-mono text-right ${textClass.main}`}
                                             >
                                               {d.exDivPrice
                                                 ? d.exDivPrice.toFixed(2)
@@ -3901,7 +3901,7 @@ const App = () => {
                                           <tr>
                                             <td
                                               colSpan="6"
-                                              className="p-1 text-[12.5px] text-center text-slate-500 italic bg-slate-800/50"
+                                              className="py-2 px-1 text-[14px] text-center text-slate-500 italic bg-slate-800/50"
                                             >
                                               <Info className="w-2 h-2 inline mr-0.5" />{' '}
                                               ⚠️ 本次除息不計入
@@ -3916,11 +3916,11 @@ const App = () => {
                                               : 'bg-slate-700/30'
                                           }`}
                                         >
-                                          <td className="p-1 pl-2" colSpan="2">
+                                          <td className="py-2 pl-2" colSpan="2">
                                             計入總計
                                           </td>
                                           <td
-                                            className={`p-1 ${textClass.highlight}`}
+                                            className={`py-2 ${textClass.highlight}`}
                                           >
                                             $
                                             {Math.round(
@@ -3934,7 +3934,7 @@ const App = () => {
                                             ) / 100}
                                           </td>
                                           <td
-                                            className={`p-1 text-right ${textClass.highlight}`}
+                                            className={`py-2 text-right ${textClass.highlight}`}
                                           >
                                             {item.initialPrice > 0
                                               ? `${(
@@ -3952,8 +3952,8 @@ const App = () => {
                                                 ).toFixed(2)}%`
                                               : '-'}
                                           </td>
-                                          <td className="p-1"></td>
-                                          <td className="p-1"></td>
+                                          <td className="py-2"></td>
+                                          <td className="py-2"></td>
                                         </tr>
                                       </tbody>
                                     </table>
