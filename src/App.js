@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import TW_STOCK_NAMES from './data/twStockNames';
 import {
   LineChart,
   Line,
@@ -961,7 +962,9 @@ const App = () => {
     4: true,
     5: true,
   });
-  const [stockNames, setStockNames] = useState({});
+  // 先以內建的台股代號對照表(src/data/twStockNames.js)當作初始值,
+  // 已知代號可直接顯示名稱、無需每次都打 API 查詢;查不到的代號才會照舊呼叫線上 API。
+  const [stockNames, setStockNames] = useState(() => ({ ...TW_STOCK_NAMES }));
 
   const [timeRange, setTimeRange] = useState('12m');
   const [customStart, setCustomStart] = useState('');
