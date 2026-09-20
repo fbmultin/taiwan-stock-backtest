@@ -3865,6 +3865,25 @@ const App = () => {
                                   {item.finalPrice.toFixed(2)}
                                 </span>
                               </div>
+                              <div
+                                className={`flex justify-between border-t border-dashed pt-1 mt-1 ${
+                                  printMode
+                                    ? 'border-gray-300'
+                                    : 'border-slate-600/50'
+                                }`}
+                              >
+                                <span className={textClass.sub}>不含息報酬</span>
+                                <span
+                                  className={`font-mono ${
+                                    item.priceReturnPct >= 0
+                                      ? textClass.warn
+                                      : textClass.highlight
+                                  }`}
+                                >
+                                  {item.priceReturnPct > 0 ? '+' : ''}
+                                  {item.priceReturnPct.toFixed(2)}%
+                                </span>
+                              </div>
                             </div>
                             <div className="space-y-1 sm:border-l border-slate-700/50 sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0">
                               <div className="flex justify-between">
