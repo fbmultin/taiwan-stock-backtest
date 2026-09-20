@@ -992,6 +992,36 @@ const App = () => {
   // 執行狀態顯示:目前階段文字說明 + 每檔標的抓取進度,讓使用者知道卡在哪裡
   const [loadingStage, setLoadingStage] = useState('');
   const [fetchStatusList, setFetchStatusList] = useState([]);
+  // 目前所在的資料階段(price/name/quote/compute),用來顯示「這個階段跳過會怎樣」的具體說明
+  const [loadingStagePhase, setLoadingStagePhaseState] = useState('');
+  const loadingStagePhaseRef = useRef('');
+  const setLoadingStagePhase = (phase) => {
+    loadingStagePhaseRef.current = phase;
+    setLoadingStagePhaseState(phase);
+  };
+  // 點擊「跳過等待」當下所在的階段,用來讓「已跳過」提示文字維持在那個階段的說明,
+  // 不會因為後續階段接著推進而跟著變動
+  const [skippedAtPhase, setSkippedAtPhase] = useState('');
+  // 各階段跳過後的具體影響說明,顯示在跳過按鈕旁邊,讓使用者知道「跳過會少什麼資料」
+  const STAGE_SKIP_INFO = {
+    params: { label: '參數準備', consequence: '此步驟為本機運算，通常瞬間完成。' },
+    price: {
+      label: '股價與配息資料抓取',
+      consequence:
+        '這是回測用的核心資料。跳過的標的會被視為抓取失敗，可能被排除在回測結果之外，或需要之後手動補值。',
+    },
+    name: {
+      label: '股票名稱查詢',
+      consequence:
+        '不影響回測數據，此階段的資料只有「公司名稱」，跳過只會讓尚未查到名稱的股票代號旁邊沒有顯示公司名稱，價格、配息、報酬率等計算完全不受影響。',
+    },
+    quote: {
+      label: '即時報價查詢',
+      consequence:
+        '不影響歷史數據，此步驟只是嘗試補上「今天」這一天尚未收盤的最新股價。跳過的標的資料就會停在上一個交易日，其餘歷史資料完整不受影響。',
+    },
+    compute: { label: '績效與配息週期計算', consequence: '此步驟為本機運算，通常瞬間完成。' },
+  };
   // 卡住點跳過機制:等待超過門檻時間後開放「跳過等待」按鈕,由使用者手動決定是否放棄仍在等待中的項目、直接用現有資料繼續
   const [skipAvailable, setSkipAvailable] = useState(false);
   const [skipTriggered, setSkipTriggered] = useState(false);
@@ -1260,9 +1290,11 @@ const App = () => {
     setIsConfigExpanded(false);
     setProgress(0);
     setLoadingStage('準備回測參數...');
+    setLoadingStagePhase('params');
     setFetchStatusList([]);
     setSkipAvailable(false);
     setSkipTriggered(false);
+    setSkippedAtPhase('');
 
     // 卡住點跳過機制:建立一個共用的「跳過訊號」。
     // 等待超過門檻時間後會開放畫面上的「跳過等待」按鈕,使用者按下後
@@ -1274,6 +1306,7 @@ const App = () => {
       skipResolve = resolve;
     });
     skipResolverRef.current = () => {
+      setSkippedAtPhase(loadingStagePhaseRef.current);
       setSkipTriggered(true);
       setSkipAvailable(false);
       skipResolve(SKIP_MARKER);
@@ -1294,6 +1327,7 @@ const App = () => {
       }
       setSkipAvailable(false);
       setLoadingStage('');
+      setLoadingStagePhase('');
     };
 
     let rangeStart, rangeEnd;
@@ -1422,6 +1456,7 @@ const App = () => {
       let fetchedCount = 0;
       const totalStocks = activeStocks.length;
       setLoadingStage(`正在抓取股價與配息資料 (0/${totalStocks})...`);
+      setLoadingStagePhase('price');
       setProgress(5);
       const promises = activeStocks.map((item) =>
         raceWithSkip(fetchStockData(item.s, fetchStart, rangeEnd)).then(
@@ -1467,21 +1502,31 @@ const App = () => {
       }
 
       // 階段 2:查詢股票名稱(非關鍵資料,卡住時同樣可被「跳過」訊號放行)
+      // 沿用 fetchStatusList 顯示每檔的即時狀態,讓畫面能清楚指出「目前是哪一檔還在查」
       setLoadingStage('正在查詢股票名稱...');
+      setLoadingStagePhase('name');
       setProgress(65);
+      setFetchStatusList(
+        successfulData.map((stock) => ({
+          symbol: stock.symbol,
+          status: stockNames[stock.symbol] ? 'done' : 'pending',
+        }))
+      );
       await Promise.all(
         successfulData.map(async (stock) => {
           try {
             if (stockNames[stock.symbol]) {
               stock.stockName = stockNames[stock.symbol];
             } else {
-              const { value: name } = await raceWithSkip(
+              const { value: name, wasSkipped } = await raceWithSkip(
                 getStockNameFromAPI(stock.symbol)
               );
               stock.stockName = name || '';
+              updateFetchStatus(stock.symbol, wasSkipped ? 'skipped' : 'done');
             }
           } catch (e) {
             stock.stockName = '';
+            updateFetchStatus(stock.symbol, 'failed');
           }
         })
       );
@@ -1500,7 +1545,27 @@ const App = () => {
         now.getHours() >= 14 || targetEndDate < todayStr;
 
       // 階段 3:檢查即時報價(補當日尚未收盤的最新價,同樣可被跳過)
+      // 只有真的需要補即時價的標的才會顯示為「等待中」,其餘直接標記完成
       setLoadingStage('正在檢查即時報價...');
+      setLoadingStagePhase('quote');
+      const quoteCandidateSymbols = new Set(
+        successfulData
+          .filter((stock) => {
+            const lastData = stock.data[stock.data.length - 1];
+            return (
+              isEndingNearToday &&
+              allowRealtimeQuote &&
+              lastData.date < targetEndDate
+            );
+          })
+          .map((stock) => stock.symbol)
+      );
+      setFetchStatusList(
+        successfulData.map((stock) => ({
+          symbol: stock.symbol,
+          status: quoteCandidateSymbols.has(stock.symbol) ? 'pending' : 'done',
+        }))
+      );
       await Promise.all(
         successfulData.map(async (stock) => {
           const lastData = stock.data[stock.data.length - 1];
@@ -1510,7 +1575,7 @@ const App = () => {
             lastData.date < targetEndDate
           ) {
             try {
-              const { value: quote } = await raceWithSkip(
+              const { value: quote, wasSkipped } = await raceWithSkip(
                 fetchQuoteData(stock.usedSymbol)
               );
               if (quote && quote.date > lastData.date) {
@@ -1522,7 +1587,10 @@ const App = () => {
                 });
                 stock.data.sort((a, b) => a.timestamp - b.timestamp);
               }
-            } catch (e) {}
+              updateFetchStatus(stock.symbol, wasSkipped ? 'skipped' : 'done');
+            } catch (e) {
+              updateFetchStatus(stock.symbol, 'failed');
+            }
           }
         })
       );
@@ -1890,6 +1958,7 @@ const App = () => {
       }
 
       setLoadingStage('正在計算績效與配息週期...');
+      setLoadingStagePhase('compute');
       setProgress(96);
 
       const periods = [3, 6, 12, 36, 60];
@@ -2318,14 +2387,36 @@ const App = () => {
             </div>
 
             {skipTriggered ? (
-              <div className="text-center text-[14.5px] text-amber-400 flex items-center justify-center gap-1">
-                <Info className="w-3 h-3" /> 已跳過等待中項目，使用現有資料繼續計算...
+              <div className="text-center space-y-1">
+                <div className="text-[14.5px] text-amber-400 flex items-center justify-center gap-1">
+                  <Info className="w-3 h-3 flex-shrink-0" />
+                  已跳過「{STAGE_SKIP_INFO[skippedAtPhase]?.label || '目前步驟'}」等待中項目，使用現有資料繼續計算...
+                </div>
+                {STAGE_SKIP_INFO[skippedAtPhase]?.consequence && (
+                  <p className="text-[12.5px] text-slate-500 leading-snug px-2">
+                    {STAGE_SKIP_INFO[skippedAtPhase].consequence}
+                  </p>
+                )}
               </div>
             ) : skipAvailable ? (
               <div className="text-center space-y-1.5">
-                <p className="text-[14.5px] text-slate-500">
-                  部分項目回應較久，可手動跳過等待以加快速度
+                <p className="text-[14.5px] text-slate-400">
+                  「{STAGE_SKIP_INFO[loadingStagePhase]?.label || '目前步驟'}」部分項目回應較久，可手動跳過等待以加快速度
                 </p>
+                {STAGE_SKIP_INFO[loadingStagePhase]?.consequence && (
+                  <p className="text-[12.5px] text-slate-500 leading-snug px-2">
+                    {STAGE_SKIP_INFO[loadingStagePhase].consequence}
+                  </p>
+                )}
+                {fetchStatusList.some((f) => f.status === 'pending') && (
+                  <p className="text-[12.5px] text-slate-500">
+                    目前等待中:{' '}
+                    {fetchStatusList
+                      .filter((f) => f.status === 'pending')
+                      .map((f) => f.symbol)
+                      .join('、')}
+                  </p>
+                )}
                 <button
                   onClick={() => skipResolverRef.current && skipResolverRef.current()}
                   className="inline-flex items-center gap-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-bold"
