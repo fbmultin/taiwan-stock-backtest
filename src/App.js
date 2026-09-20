@@ -328,6 +328,19 @@ const getDurationLabel = (startStr, endStr) => {
   return `${diffDays}天 / ${months}月 / ${years}年`;
 };
 
+// 幫所有外部網路請求加上逾時保護:部分 CORS 代理服務故障時不會直接回錯誤，
+// 而是整個連線卡住不回應，若不設定逾時，原生 fetch 可能會一路卡到瀏覽器自己的
+// 逾時上限(可能長達數十秒到數分鐘),讓使用者感覺整個回測「卡住不動」。
+// 這裡統一用 AbortController 幫每一次嘗試設一個較短的上限,逾時就自動放棄、
+// 換下一個代理或資料源,而不是無止盡等待。
+const fetchWithTimeout = (url, options = {}, timeoutMs = 7000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(timer)
+  );
+};
+
 const fetchProxy = async (url) => {
   const proxies = [
     (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -338,7 +351,9 @@ const fetchProxy = async (url) => {
 
   for (const proxyGen of proxies) {
     try {
-      const response = await fetch(proxyGen(url), { cache: 'no-store' });
+      const response = await fetchWithTimeout(proxyGen(url), {
+        cache: 'no-store',
+      });
       if (!response.ok) continue;
 
       const text = await response.text();
@@ -376,7 +391,7 @@ const fetchStockName = async (yahooSymbol) => {
 
   for (const proxyGen of proxies) {
     try {
-      const response = await fetch(proxyGen(url));
+      const response = await fetchWithTimeout(proxyGen(url));
       if (!response.ok) continue;
       const data = await response.json();
       const html = data.contents || (typeof data === 'string' ? data : '');
@@ -511,7 +526,7 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
     const endStr = formatD(endDate);
 
     const priceUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${symbol}&start_date=${startStr}&end_date=${endStr}`;
-    const priceRes = await fetch(priceUrl);
+    const priceRes = await fetchWithTimeout(priceUrl, {}, 10000);
     const priceJson = await priceRes.json();
     if (
       priceJson.msg !== 'success' ||
@@ -522,7 +537,7 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
     }
 
     const divUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividendResult&data_id=${symbol}&start_date=${startStr}&end_date=${endStr}`;
-    const divRes = await fetch(divUrl);
+    const divRes = await fetchWithTimeout(divUrl, {}, 10000);
     const divJson = await divRes.json();
 
     const dividendsMap = {};
