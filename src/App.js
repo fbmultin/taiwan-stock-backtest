@@ -328,6 +328,39 @@ const getDurationLabel = (startStr, endStr) => {
   return `${diffDays}天 / ${months}月 / ${years}年`;
 };
 
+// 自訂區間下方的「月/季拉桿」用來把日期換算成「距基準年份第幾個月」的整數索引,
+// 方便用單一顆 <input type="range"> 操作,並可用 step=1(月)或 step=3(季)切換跳動單位。
+const RANGE_SLIDER_BASE_YEAR = 2003;
+
+const monthIndexToDate = (monthIndex, useEndOfMonth) => {
+  const year = RANGE_SLIDER_BASE_YEAR + Math.floor(monthIndex / 12);
+  const month = ((monthIndex % 12) + 12) % 12; // 0-indexed
+  if (useEndOfMonth) {
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return `${year}-${String(month + 1).padStart(2, '0')}-${String(
+      lastDay
+    ).padStart(2, '0')}`;
+  }
+  return `${year}-${String(month + 1).padStart(2, '0')}-01`;
+};
+
+const dateToMonthIndex = (dateStr) => {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 0;
+  return (d.getFullYear() - RANGE_SLIDER_BASE_YEAR) * 12 + d.getMonth();
+};
+
+const formatMonthIndexLabel = (monthIndex, stepMode) => {
+  const year = RANGE_SLIDER_BASE_YEAR + Math.floor(monthIndex / 12);
+  const month = (((monthIndex % 12) + 12) % 12) + 1;
+  if (stepMode === 'quarter') {
+    const q = Math.floor((month - 1) / 3) + 1;
+    return `${year}年Q${q}`;
+  }
+  return `${year}年${month}月`;
+};
+
 // 幫所有外部網路請求加上逾時保護:部分 CORS 代理服務故障時不會直接回錯誤，
 // 而是整個連線卡住不回應，若不設定逾時，原生 fetch 可能會一路卡到瀏覽器自己的
 // 逾時上限(可能長達數十秒到數分鐘),讓使用者感覺整個回測「卡住不動」。
@@ -1280,6 +1313,7 @@ const App = () => {
   const [timeRange, setTimeRange] = useState('12m');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [rangeStepMode, setRangeStepMode] = useState('month'); // 'month' | 'quarter'
 
   const [totalCapital, setTotalCapital] = useState(6000000);
 
@@ -2671,6 +2705,38 @@ const App = () => {
     };
   }, [results, totalCapital, fairMode]);
 
+  // 自訂區間下方的月/季拉桿:把 customStart/customEnd 換算成月份索引供 <input type="range"> 使用,
+  // 兩顆拉桿共用同一條軌道(始/迄各一顆),並依 rangeStepMode 決定 step=1(逐月)或 step=3(逐季)。
+  const rangeSliderMax = useMemo(() => {
+    const now = new Date();
+    return (now.getFullYear() - RANGE_SLIDER_BASE_YEAR) * 12 + now.getMonth();
+  }, []);
+  const rangeSliderStep = rangeStepMode === 'quarter' ? 3 : 1;
+  const rangeSliderStartIdx = Math.min(
+    Math.max(
+      customStart ? dateToMonthIndex(customStart) : rangeSliderMax - 12,
+      0
+    ),
+    rangeSliderMax
+  );
+  const rangeSliderEndIdx = Math.min(
+    Math.max(customEnd ? dateToMonthIndex(customEnd) : rangeSliderMax, 0),
+    rangeSliderMax
+  );
+  const handleRangeSliderStartChange = (e) => {
+    let val = parseInt(e.target.value, 10);
+    if (val > rangeSliderEndIdx) val = rangeSliderEndIdx;
+    setCustomStart(monthIndexToDate(val, false));
+    if (!customEnd) setCustomEnd(monthIndexToDate(rangeSliderEndIdx, true));
+  };
+  const handleRangeSliderEndChange = (e) => {
+    let val = parseInt(e.target.value, 10);
+    if (val < rangeSliderStartIdx) val = rangeSliderStartIdx;
+    setCustomEnd(monthIndexToDate(val, true));
+    if (!customStart)
+      setCustomStart(monthIndexToDate(rangeSliderStartIdx, false));
+  };
+
   return (
     <div className={containerClass}>
       {missingDataList.length > 0 && (
@@ -2939,6 +3005,121 @@ const App = () => {
                         onChange={(e) => setCustomEnd(e.target.value)}
                         className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
                       />
+                    </div>
+                  )}
+                  {timeRange === 'custom' && (
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <style>{`
+                        .dual-range-slider {
+                          -webkit-appearance: none;
+                          appearance: none;
+                          background: transparent;
+                          pointer-events: none;
+                        }
+                        .dual-range-slider::-webkit-slider-thumb {
+                          -webkit-appearance: none;
+                          appearance: none;
+                          pointer-events: auto;
+                          width: 14px;
+                          height: 14px;
+                          border-radius: 9999px;
+                          background: #10b981;
+                          border: 2px solid #0f172a;
+                          cursor: pointer;
+                        }
+                        .dual-range-slider::-moz-range-thumb {
+                          pointer-events: auto;
+                          width: 14px;
+                          height: 14px;
+                          border-radius: 9999px;
+                          background: #10b981;
+                          border: 2px solid #0f172a;
+                          cursor: pointer;
+                        }
+                        .dual-range-slider::-webkit-slider-runnable-track {
+                          background: transparent;
+                        }
+                        .dual-range-slider::-moz-range-track {
+                          background: transparent;
+                        }
+                      `}</style>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-500 font-mono">
+                          {formatMonthIndexLabel(
+                            rangeSliderStartIdx,
+                            rangeStepMode
+                          )}{' '}
+                          →{' '}
+                          {formatMonthIndexLabel(
+                            rangeSliderEndIdx,
+                            rangeStepMode
+                          )}
+                        </span>
+                        <div className="flex rounded border border-slate-600 overflow-hidden shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setRangeStepMode('month')}
+                            className={`text-[11px] px-2 py-0.5 ${
+                              rangeStepMode === 'month'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            月
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRangeStepMode('quarter')}
+                            className={`text-[11px] px-2 py-0.5 border-l border-slate-600 ${
+                              rangeStepMode === 'quarter'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            季
+                          </button>
+                        </div>
+                      </div>
+                      <div className="relative h-5">
+                        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-slate-700" />
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-emerald-500"
+                          style={{
+                            left: `${
+                              (rangeSliderStartIdx / rangeSliderMax) * 100
+                            }%`,
+                            right: `${
+                              100 -
+                              (rangeSliderEndIdx / rangeSliderMax) * 100
+                            }%`,
+                          }}
+                        />
+                        <input
+                          type="range"
+                          min="0"
+                          max={rangeSliderMax}
+                          step={rangeSliderStep}
+                          value={rangeSliderStartIdx}
+                          onChange={handleRangeSliderStartChange}
+                          className="dual-range-slider absolute left-0 right-0 top-0 w-full h-5 m-0"
+                          style={{
+                            zIndex:
+                              rangeSliderStartIdx > rangeSliderMax - 5
+                                ? 5
+                                : 3,
+                          }}
+                        />
+                        <input
+                          type="range"
+                          min="0"
+                          max={rangeSliderMax}
+                          step={rangeSliderStep}
+                          value={rangeSliderEndIdx}
+                          onChange={handleRangeSliderEndChange}
+                          className="dual-range-slider absolute left-0 right-0 top-0 w-full h-5 m-0"
+                          style={{ zIndex: 4 }}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
