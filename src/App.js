@@ -1431,6 +1431,9 @@ const App = () => {
 
   const [independentCycleMode, setIndependentCycleMode] = useState(false);
   const [strictTimeMode, setStrictTimeMode] = useState(false);
+  // β值需要額外抓取大盤加權指數、且逐檔跑迴歸計算,會拖慢回測速度,
+  // 預設關閉,使用者主動勾選才執行,一般情況不需要。
+  const [calcBeta, setCalcBeta] = useState(false);
 
   const [missingDataList, setMissingDataList] = useState([]);
   const [manualPriceData, setManualPriceData] = useState({});
@@ -1875,13 +1878,14 @@ const App = () => {
         )
       );
       // 同時抓取大盤加權指數(^TWII)同一段期間的收盤價,供之後計算各標的的β值使用;
-      // 抓取失敗也不影響回測本身,β值只是圖卡上多一項資訊,缺資料時該標的改顯示「資料不足」。
-      const benchmarkPromise = fetchWithSuffix(
-        '^TWII',
-        '^TWII',
-        fetchStart,
-        rangeEnd
-      ).catch(() => null);
+      // 這是額外的一次網路請求+逐檔迴歸運算,會拖慢回測速度,故只在使用者勾選
+      // 「計算β值」時才發出;未勾選就直接跳過,不佔用這次回測的時間。
+      // 抓取失敗也不影響回測本身,缺資料時該標的改顯示「資料不足」。
+      const benchmarkPromise = calcBeta
+        ? fetchWithSuffix('^TWII', '^TWII', fetchStart, rangeEnd).catch(
+            () => null
+          )
+        : Promise.resolve(null);
       const [rawResults, benchmarkResult] = await Promise.all([
         Promise.all(promises),
         benchmarkPromise,
@@ -2641,7 +2645,11 @@ const App = () => {
               filteredData.map((d) => d.price),
               printMode
             ),
-            beta: calculateBeta(filteredData, benchmarkReturnsByDate),
+            // 未勾選「計算β值」時完全不放這個欄位(而不是塞 null),
+            // 讓卡片能區分「沒算」(不顯示徽章)跟「算了但資料不足」(顯示「資料不足」)。
+            ...(calcBeta
+              ? { beta: calculateBeta(filteredData, benchmarkReturnsByDate) }
+              : {}),
             frequencyLabel: getFrequencyLabel(stock.divDates),
             weight,
             divDates: stock.divDates,
@@ -3427,6 +3435,32 @@ const App = () => {
                       </div>
                     </div>
                   </label>
+                  <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                    <div className="relative flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={calcBeta}
+                        onChange={() => setCalcBeta((v) => !v)}
+                      />
+                      <div
+                        className={`w-8 h-4 rounded-full shadow-inner transition-colors ${
+                          calcBeta ? 'bg-indigo-500' : 'bg-slate-600'
+                        }`}
+                      ></div>
+                      <div
+                        className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${
+                          calcBeta ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      ></div>
+                    </div>
+                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
+                      <div>計算β值</div>
+                      <div className="text-[13px] text-slate-500">
+                        額外抓取大盤指數比對,較耗時 (預設關閉)
+                      </div>
+                    </div>
+                  </label>
                   {independentCycleMode && !strictTimeMode && (
                     <div className="text-[14px] sm:text-[14.5px] leading-snug text-purple-300 bg-purple-900/20 border border-purple-800/50 rounded-lg p-2 flex items-start gap-1.5">
                       <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
@@ -4048,19 +4082,21 @@ const App = () => {
                                   <RiskIcon className="w-3 h-3" />
                                   {riskLabel}
                                 </span>
-                                <span
-                                  title="β值(系統性風險係數):以個股日報酬對大盤加權指數(^TWII)日報酬做迴歸估算,反映相對大盤的波動敏感度;β>1 代表波動比大盤劇烈,β<1 代表較平緩"
-                                  className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                    printMode
-                                      ? 'text-indigo-700 border-indigo-200 bg-indigo-50'
-                                      : 'text-indigo-400 border-indigo-900/50 bg-indigo-900/20'
-                                  }`}
-                                >
-                                  β{' '}
-                                  {item.beta !== null && item.beta !== undefined
-                                    ? item.beta.toFixed(2)
-                                    : '資料不足'}
-                                </span>
+                                {item.beta !== undefined && (
+                                  <span
+                                    title="β值(系統性風險係數):以個股日報酬對大盤加權指數(^TWII)日報酬做迴歸估算,反映相對大盤的波動敏感度;β>1 代表波動比大盤劇烈,β<1 代表較平緩"
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                      printMode
+                                        ? 'text-indigo-700 border-indigo-200 bg-indigo-50'
+                                        : 'text-indigo-400 border-indigo-900/50 bg-indigo-900/20'
+                                    }`}
+                                  >
+                                    β{' '}
+                                    {item.beta !== null
+                                      ? item.beta.toFixed(2)
+                                      : '資料不足'}
+                                  </span>
+                                )}
                                 <span
                                   className={`text-[14px] px-1.5 py-0.5 rounded border ${
                                     printMode
