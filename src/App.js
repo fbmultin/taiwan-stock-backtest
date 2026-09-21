@@ -328,37 +328,22 @@ const getDurationLabel = (startStr, endStr) => {
   return `${diffDays}天 / ${months}月 / ${years}年`;
 };
 
-// 自訂區間下方的「月/季拉桿」用來把日期換算成「距基準年份第幾個月」的整數索引,
-// 方便用單一顆 <input type="range"> 操作,並可用 step=1(月)或 step=3(季)切換跳動單位。
-const RANGE_SLIDER_BASE_YEAR = 2003;
-
-const monthIndexToDate = (monthIndex, useEndOfMonth) => {
-  const year = RANGE_SLIDER_BASE_YEAR + Math.floor(monthIndex / 12);
-  const month = ((monthIndex % 12) + 12) % 12; // 0-indexed
-  if (useEndOfMonth) {
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    return `${year}-${String(month + 1).padStart(2, '0')}-${String(
-      lastDay
-    ).padStart(2, '0')}`;
-  }
-  return `${year}-${String(month + 1).padStart(2, '0')}-01`;
-};
-
-const dateToMonthIndex = (dateStr) => {
-  if (!dateStr) return 0;
+// 自訂區間下方的「月/季 -/+ 格子」:以「保持區間長度不變、整段往前或往後平移」的方式,
+// 用 setMonth() 直接調整 customStart/customEnd,不需要額外的滑桿索引換算。
+const shiftDateStr = (dateStr, months) => {
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return 0;
-  return (d.getFullYear() - RANGE_SLIDER_BASE_YEAR) * 12 + d.getMonth();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split('T')[0];
 };
 
-const formatMonthIndexLabel = (monthIndex, stepMode) => {
-  const year = RANGE_SLIDER_BASE_YEAR + Math.floor(monthIndex / 12);
-  const month = (((monthIndex % 12) + 12) % 12) + 1;
-  if (stepMode === 'quarter') {
-    const q = Math.floor((month - 1) / 3) + 1;
-    return `${year}年Q${q}`;
-  }
-  return `${year}年${month}月`;
+const formatDateForDisplay = (dateStr) => {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '—';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    '0'
+  )}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 // 幫所有外部網路請求加上逾時保護:部分 CORS 代理服務故障時不會直接回錯誤，
@@ -1313,7 +1298,6 @@ const App = () => {
   const [timeRange, setTimeRange] = useState('12m');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [rangeStepMode, setRangeStepMode] = useState('month'); // 'month' | 'quarter'
 
   const [totalCapital, setTotalCapital] = useState(6000000);
 
@@ -2184,16 +2168,26 @@ const App = () => {
         setCyclesUsed(commonCycles);
         finalStockList = [...finalCandidates, ...allExcluded];
       } else {
-        // 情況 B:某標的的資料起始日晚於指定的起始日(可能上市較晚,或資料庫尚未收錄更早資料)
-        let excludedSymbol = null;
+        // 情況 B:某些標的的資料起始日晚於指定的起始日(可能上市較晚,或資料庫尚未收錄更早資料)
+        // 注意:candidateStart/candidateLimiter 只是用running-max找出「最晚」的那一檔,
+        // 用來當作 pushForward 的建議日期;實際判斷「哪些標的不合格」必須另外用固定的
+        // rangeStart 逐一比對每一檔,否則只會抓到最極端的那一檔,其餘同樣不合格的標的會被漏掉。
+        let excludedSymbols = [];
         if (!strictTimeMode) {
           const validStocksForDate = successfulData.filter(
             (s) => s.data.length > 10
           );
           let candidateStart = rangeStart;
           let candidateLimiter = null;
+          const shortHistoryStocks = [];
           validStocksForDate.forEach((stock) => {
             const firstDate = new Date(stock.data[0].date);
+            if (firstDate > rangeStart) {
+              shortHistoryStocks.push({
+                symbol: stock.symbol,
+                firstDateStr: firstDate.toISOString().split('T')[0],
+              });
+            }
             if (firstDate > candidateStart) {
               candidateStart = firstDate;
               candidateLimiter = stock.symbol;
@@ -2202,6 +2196,12 @@ const App = () => {
           if (validStocksForDate.length === 0 && successfulData.length > 0) {
             candidateStart = new Date(successfulData[0].data[0].date);
             candidateLimiter = successfulData[0].symbol;
+            if (candidateStart.getTime() !== rangeStart.getTime()) {
+              shortHistoryStocks.push({
+                symbol: candidateLimiter,
+                firstDateStr: candidateStart.toISOString().split('T')[0],
+              });
+            }
           }
 
           if (
@@ -2213,20 +2213,26 @@ const App = () => {
               .split('T')[0];
             const rangeStartStr = rangeStart.toISOString().split('T')[0];
             const resolution = situationResolutions?.startDateShortHistory;
+            const shortHistoryLabel = shortHistoryStocks
+              .map((s) => `${s.symbol}(${s.firstDateStr})`)
+              .join('、');
+            const isMultiple = shortHistoryStocks.length > 1;
 
             if (resolution === 'pushForward') {
               maxMinDate = candidateStart;
               limitingStockSymbol = candidateLimiter;
             } else if (resolution === 'exclude') {
-              excludedSymbol = candidateLimiter;
+              excludedSymbols = shortHistoryStocks.map((s) => s.symbol);
               maxMinDate = rangeStart;
             } else if (resolution === 'keepPartial') {
               maxMinDate = rangeStart;
             } else {
               situations.push({
                 key: 'startDateShortHistory',
-                title: `${candidateLimiter} 的資料起始日晚於您指定的起始日`,
-                description: `${candidateLimiter} 最早的資料是 ${candidateStartStr},晚於您指定的起始日 ${rangeStartStr}(可能是上市較晚,或資料庫尚未收錄更早的資料),要怎麼處理?`,
+                title: isMultiple
+                  ? `有 ${shortHistoryStocks.length} 檔標的的資料起始日晚於您指定的起始日`
+                  : `${candidateLimiter} 的資料起始日晚於您指定的起始日`,
+                description: `${shortHistoryLabel} 最早的資料如上,晚於您指定的起始日 ${rangeStartStr}(可能是上市較晚,或資料庫尚未收錄更早的資料),要怎麼處理?`,
                 options: [
                   {
                     value: 'pushForward',
@@ -2235,20 +2241,24 @@ const App = () => {
                   },
                   {
                     value: 'exclude',
-                    label: `排除 ${candidateLimiter},其餘標的維持從 ${rangeStartStr} 開始`,
+                    label: isMultiple
+                      ? `排除以上 ${shortHistoryStocks.length} 檔(${shortHistoryLabel}),其餘標的維持從 ${rangeStartStr} 開始`
+                      : `排除 ${candidateLimiter},其餘標的維持從 ${rangeStartStr} 開始`,
                   },
                   {
                     value: 'keepPartial',
-                    label: `維持 ${rangeStartStr},${candidateLimiter} 從其實際起始日開始比較(各標的起點不同)`,
+                    label: isMultiple
+                      ? `維持 ${rangeStartStr},以上標的從其各自實際起始日開始比較(各標的起點不同)`
+                      : `維持 ${rangeStartStr},${candidateLimiter} 從其實際起始日開始比較(各標的起點不同)`,
                   },
                 ],
               });
             }
           }
         }
-        finalStockList = excludedSymbol
+        finalStockList = excludedSymbols.length
           ? successfulData.map((s) =>
-              s.symbol === excludedSymbol
+              excludedSymbols.includes(s.symbol)
                 ? {
                     ...s,
                     isExcluded: true,
@@ -2705,36 +2715,23 @@ const App = () => {
     };
   }, [results, totalCapital, fairMode]);
 
-  // 自訂區間下方的月/季拉桿:把 customStart/customEnd 換算成月份索引供 <input type="range"> 使用,
-  // 兩顆拉桿共用同一條軌道(始/迄各一顆),並依 rangeStepMode 決定 step=1(逐月)或 step=3(逐季)。
-  const rangeSliderMax = useMemo(() => {
-    const now = new Date();
-    return (now.getFullYear() - RANGE_SLIDER_BASE_YEAR) * 12 + now.getMonth();
-  }, []);
-  const rangeSliderStep = rangeStepMode === 'quarter' ? 3 : 1;
-  const rangeSliderStartIdx = Math.min(
-    Math.max(
-      customStart ? dateToMonthIndex(customStart) : rangeSliderMax - 12,
-      0
-    ),
-    rangeSliderMax
-  );
-  const rangeSliderEndIdx = Math.min(
-    Math.max(customEnd ? dateToMonthIndex(customEnd) : rangeSliderMax, 0),
-    rangeSliderMax
-  );
-  const handleRangeSliderStartChange = (e) => {
-    let val = parseInt(e.target.value, 10);
-    if (val > rangeSliderEndIdx) val = rangeSliderEndIdx;
-    setCustomStart(monthIndexToDate(val, false));
-    if (!customEnd) setCustomEnd(monthIndexToDate(rangeSliderEndIdx, true));
+  // 自訂區間下方的「月/季 -/+ 格子」:以目前的 customStart/customEnd 為基準,
+  // 保持區間長度不變,整段往前或往後平移 1 個月或 1 季(3個月)。
+  const getEffectiveCustomRange = () => {
+    const end = customEnd ? new Date(customEnd) : new Date();
+    let start;
+    if (customStart) {
+      start = new Date(customStart);
+    } else {
+      start = new Date(end);
+      start.setFullYear(start.getFullYear() - 1);
+    }
+    return { start, end };
   };
-  const handleRangeSliderEndChange = (e) => {
-    let val = parseInt(e.target.value, 10);
-    if (val < rangeSliderStartIdx) val = rangeSliderStartIdx;
-    setCustomEnd(monthIndexToDate(val, true));
-    if (!customStart)
-      setCustomStart(monthIndexToDate(rangeSliderStartIdx, false));
+  const shiftCustomRange = (months) => {
+    const { start, end } = getEffectiveCustomRange();
+    setCustomStart(shiftDateStr(start.toISOString().split('T')[0], months));
+    setCustomEnd(shiftDateStr(end.toISOString().split('T')[0], months));
   };
 
   return (
@@ -3008,118 +3005,55 @@ const App = () => {
                     </div>
                   )}
                   {timeRange === 'custom' && (
-                    <div className="flex flex-col gap-1.5 mt-1">
-                      <style>{`
-                        .dual-range-slider {
-                          -webkit-appearance: none;
-                          appearance: none;
-                          background: transparent;
-                          pointer-events: none;
-                        }
-                        .dual-range-slider::-webkit-slider-thumb {
-                          -webkit-appearance: none;
-                          appearance: none;
-                          pointer-events: auto;
-                          width: 14px;
-                          height: 14px;
-                          border-radius: 9999px;
-                          background: #10b981;
-                          border: 2px solid #0f172a;
-                          cursor: pointer;
-                        }
-                        .dual-range-slider::-moz-range-thumb {
-                          pointer-events: auto;
-                          width: 14px;
-                          height: 14px;
-                          border-radius: 9999px;
-                          background: #10b981;
-                          border: 2px solid #0f172a;
-                          cursor: pointer;
-                        }
-                        .dual-range-slider::-webkit-slider-runnable-track {
-                          background: transparent;
-                        }
-                        .dual-range-slider::-moz-range-track {
-                          background: transparent;
-                        }
-                      `}</style>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-slate-500 font-mono">
-                          {formatMonthIndexLabel(
-                            rangeSliderStartIdx,
-                            rangeStepMode
-                          )}{' '}
-                          →{' '}
-                          {formatMonthIndexLabel(
-                            rangeSliderEndIdx,
-                            rangeStepMode
-                          )}
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => shiftCustomRange(-1)}
+                          title="整段區間往前推1個月"
+                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        >
+                          −
+                        </button>
+                        <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                          月
                         </span>
-                        <div className="flex rounded border border-slate-600 overflow-hidden shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setRangeStepMode('month')}
-                            className={`text-[11px] px-2 py-0.5 ${
-                              rangeStepMode === 'month'
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-slate-800 text-slate-400'
-                            }`}
-                          >
-                            月
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRangeStepMode('quarter')}
-                            className={`text-[11px] px-2 py-0.5 border-l border-slate-600 ${
-                              rangeStepMode === 'quarter'
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-slate-800 text-slate-400'
-                            }`}
-                          >
-                            季
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => shiftCustomRange(1)}
+                          title="整段區間往後推1個月"
+                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        >
+                          ＋
+                        </button>
                       </div>
-                      <div className="relative h-5">
-                        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-slate-700" />
-                        <div
-                          className="absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-emerald-500"
-                          style={{
-                            left: `${
-                              (rangeSliderStartIdx / rangeSliderMax) * 100
-                            }%`,
-                            right: `${
-                              100 -
-                              (rangeSliderEndIdx / rangeSliderMax) * 100
-                            }%`,
-                          }}
-                        />
-                        <input
-                          type="range"
-                          min="0"
-                          max={rangeSliderMax}
-                          step={rangeSliderStep}
-                          value={rangeSliderStartIdx}
-                          onChange={handleRangeSliderStartChange}
-                          className="dual-range-slider absolute left-0 right-0 top-0 w-full h-5 m-0"
-                          style={{
-                            zIndex:
-                              rangeSliderStartIdx > rangeSliderMax - 5
-                                ? 5
-                                : 3,
-                          }}
-                        />
-                        <input
-                          type="range"
-                          min="0"
-                          max={rangeSliderMax}
-                          step={rangeSliderStep}
-                          value={rangeSliderEndIdx}
-                          onChange={handleRangeSliderEndChange}
-                          className="dual-range-slider absolute left-0 right-0 top-0 w-full h-5 m-0"
-                          style={{ zIndex: 4 }}
-                        />
+                      <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => shiftCustomRange(-3)}
+                          title="整段區間往前推1季(3個月)"
+                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        >
+                          −
+                        </button>
+                        <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                          季
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => shiftCustomRange(3)}
+                          title="整段區間往後推1季(3個月)"
+                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        >
+                          ＋
+                        </button>
                       </div>
+                    </div>
+                  )}
+                  {timeRange === 'custom' && (
+                    <div className="mt-1.5 text-[13px] font-mono text-center text-emerald-400 bg-slate-900/60 border border-slate-700 rounded py-1">
+                      {formatDateForDisplay(customStart)} ～{' '}
+                      {formatDateForDisplay(customEnd)}
                     </div>
                   )}
                 </div>
