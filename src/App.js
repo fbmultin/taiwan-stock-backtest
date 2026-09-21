@@ -328,11 +328,15 @@ const getDurationLabel = (startStr, endStr) => {
   return `${diffDays}天 / ${months}月 / ${years}年`;
 };
 
-// 自訂區間下方的「月/季 -/+ 格子」:以「保持區間長度不變、整段往前或往後平移」的方式,
-// 用 setMonth() 直接調整 customStart/customEnd,不需要額外的滑桿索引換算。
-const shiftDateStr = (dateStr, months) => {
+// 自訂區間下方的「日/月/季 -/+ 格子」:以「保持區間長度不變、整段往前或往後平移」的方式,
+// 用 setDate()/setMonth() 直接調整 customStart/customEnd,不需要額外的滑桿索引換算。
+const shiftDateStr = (dateStr, amount, unit = 'month') => {
   const d = new Date(dateStr);
-  d.setMonth(d.getMonth() + months);
+  if (unit === 'day') {
+    d.setDate(d.getDate() + amount);
+  } else {
+    d.setMonth(d.getMonth() + amount);
+  }
   return d.toISOString().split('T')[0];
 };
 
@@ -2718,10 +2722,10 @@ const App = () => {
     };
   }, [results, totalCapital, fairMode]);
 
-  // 自訂區間下方的「月/季 -/+ 格子」:只調整起始日(customStart),
+  // 自訂區間下方的「日/月/季 -/+ 格子」:只調整起始日(customStart),
   // 終點日固定為今天,不隨按鈕移動;「-」把起始日往前推(拉長區間),「+」把起始日往後推(縮短區間)。
   // 「+」最多只能把起始日推到昨天為止,避免起始日追上或超過固定為今天的終點日。
-  const shiftCustomRange = (months) => {
+  const shiftCustomRange = (amount, unit = 'month') => {
     const startBase = customStart
       ? new Date(customStart)
       : (() => {
@@ -2730,7 +2734,7 @@ const App = () => {
           return d;
         })();
     const shifted = new Date(
-      shiftDateStr(startBase.toISOString().split('T')[0], months)
+      shiftDateStr(startBase.toISOString().split('T')[0], amount, unit)
     );
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -3015,6 +3019,27 @@ const App = () => {
                     />
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
+                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-1, 'day')}
+                        title="起始日往前推1天"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        −
+                      </button>
+                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                        日
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(1, 'day')}
+                        title="起始日往後推1天"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        ＋
+                      </button>
+                    </div>
                     <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
                       <button
                         type="button"
