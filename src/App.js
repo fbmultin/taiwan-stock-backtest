@@ -2718,23 +2718,18 @@ const App = () => {
     };
   }, [results, totalCapital, fairMode]);
 
-  // 自訂區間下方的「月/季 -/+ 格子」:以目前的 customStart/customEnd 為基準,
-  // 保持區間長度不變,整段往前或往後平移 1 個月或 1 季(3個月)。
-  const getEffectiveCustomRange = () => {
-    const end = customEnd ? new Date(customEnd) : new Date();
-    let start;
-    if (customStart) {
-      start = new Date(customStart);
-    } else {
-      start = new Date(end);
-      start.setFullYear(start.getFullYear() - 1);
-    }
-    return { start, end };
-  };
+  // 自訂區間下方的「月/季 -/+ 格子」:只調整起始日(customStart),
+  // 終點日固定為今天,不隨按鈕移動;「-」把起始日往前推(拉長區間),「+」把起始日往後推(縮短區間)。
   const shiftCustomRange = (months) => {
-    const { start, end } = getEffectiveCustomRange();
-    setCustomStart(shiftDateStr(start.toISOString().split('T')[0], months));
-    setCustomEnd(shiftDateStr(end.toISOString().split('T')[0], months));
+    const startBase = customStart
+      ? new Date(customStart)
+      : (() => {
+          const d = new Date();
+          d.setFullYear(d.getFullYear() - 1);
+          return d;
+        })();
+    setCustomStart(shiftDateStr(startBase.toISOString().split('T')[0], months));
+    setCustomEnd(new Date().toISOString().split('T')[0]);
     setTimeRange('custom');
   };
 
