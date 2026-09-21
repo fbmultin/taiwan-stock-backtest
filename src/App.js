@@ -2720,6 +2720,7 @@ const App = () => {
 
   // 自訂區間下方的「月/季 -/+ 格子」:只調整起始日(customStart),
   // 終點日固定為今天,不隨按鈕移動;「-」把起始日往前推(拉長區間),「+」把起始日往後推(縮短區間)。
+  // 「+」最多只能把起始日推到昨天為止,避免起始日追上或超過固定為今天的終點日。
   const shiftCustomRange = (months) => {
     const startBase = customStart
       ? new Date(customStart)
@@ -2728,7 +2729,13 @@ const App = () => {
           d.setFullYear(d.getFullYear() - 1);
           return d;
         })();
-    setCustomStart(shiftDateStr(startBase.toISOString().split('T')[0], months));
+    const shifted = new Date(
+      shiftDateStr(startBase.toISOString().split('T')[0], months)
+    );
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const clamped = shifted.getTime() > yesterday.getTime() ? yesterday : shifted;
+    setCustomStart(clamped.toISOString().split('T')[0]);
     setCustomEnd(new Date().toISOString().split('T')[0]);
     setTimeRange('custom');
   };
