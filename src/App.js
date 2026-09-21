@@ -288,6 +288,61 @@ const calculateRiskProfile = (prices, printMode) => {
   };
 };
 
+// 把價格序列轉成「日期 -> 當日報酬率」的對照表,供計算β值時依日期比對用。
+const buildDailyReturnsByDate = (data) => {
+  const map = new Map();
+  if (!data || data.length < 2) return map;
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1].price;
+    const curr = data[i].price;
+    if (prev > 0 && curr !== null && curr !== undefined) {
+      map.set(data[i].date, (curr - prev) / prev);
+    }
+  }
+  return map;
+};
+
+// 個股β值(系統性風險係數):以個股日報酬對大盤加權指數(^TWII)日報酬做迴歸估算,
+// β = Cov(個股日報酬, 大盤日報酬) / Var(大盤日報酬),只取兩邊日期對得上的交易日。
+// β > 1 代表這檔標的波動比大盤劇烈,β < 1 代表較平緩;大盤資料缺失或可比對的
+// 交易日數不足時回傳 null,卡片上改顯示「資料不足」而非硬湊一個不可靠的數字。
+const MIN_BETA_SAMPLES = 20;
+const calculateBeta = (priceData, benchmarkReturnsByDate) => {
+  if (
+    !priceData ||
+    priceData.length < 2 ||
+    !benchmarkReturnsByDate ||
+    benchmarkReturnsByDate.size === 0
+  )
+    return null;
+  const stockReturns = [];
+  const benchReturns = [];
+  for (let i = 1; i < priceData.length; i++) {
+    const prev = priceData[i - 1].price;
+    const curr = priceData[i].price;
+    if (!(prev > 0)) continue;
+    const benchReturn = benchmarkReturnsByDate.get(priceData[i].date);
+    if (benchReturn === undefined) continue;
+    stockReturns.push((curr - prev) / prev);
+    benchReturns.push(benchReturn);
+  }
+  if (stockReturns.length < MIN_BETA_SAMPLES) return null;
+  const meanStock =
+    stockReturns.reduce((a, b) => a + b, 0) / stockReturns.length;
+  const meanBench =
+    benchReturns.reduce((a, b) => a + b, 0) / benchReturns.length;
+  let covariance = 0;
+  let varianceBench = 0;
+  for (let i = 0; i < stockReturns.length; i++) {
+    covariance += (stockReturns[i] - meanStock) * (benchReturns[i] - meanBench);
+    varianceBench += (benchReturns[i] - meanBench) ** 2;
+  }
+  covariance /= stockReturns.length;
+  varianceBench /= stockReturns.length;
+  if (varianceBench === 0) return null;
+  return covariance / varianceBench;
+};
+
 const checkIsMonthly = (dates) => {
   if (!dates || dates.length < 2) return false;
   let intervals = [];
@@ -1819,7 +1874,21 @@ const App = () => {
           }
         )
       );
-      const rawResults = await Promise.all(promises);
+      // 同時抓取大盤加權指數(^TWII)同一段期間的收盤價,供之後計算各標的的β值使用;
+      // 抓取失敗也不影響回測本身,β值只是圖卡上多一項資訊,缺資料時該標的改顯示「資料不足」。
+      const benchmarkPromise = fetchWithSuffix(
+        '^TWII',
+        '^TWII',
+        fetchStart,
+        rangeEnd
+      ).catch(() => null);
+      const [rawResults, benchmarkResult] = await Promise.all([
+        Promise.all(promises),
+        benchmarkPromise,
+      ]);
+      const benchmarkReturnsByDate = buildDailyReturnsByDate(
+        benchmarkResult?.data
+      );
 
       const failures = [];
       activeStocks.forEach((item, idx) => {
@@ -2572,6 +2641,7 @@ const App = () => {
               filteredData.map((d) => d.price),
               printMode
             ),
+            beta: calculateBeta(filteredData, benchmarkReturnsByDate),
             frequencyLabel: getFrequencyLabel(stock.divDates),
             weight,
             divDates: stock.divDates,
@@ -3977,6 +4047,19 @@ const App = () => {
                                 >
                                   <RiskIcon className="w-3 h-3" />
                                   {riskLabel}
+                                </span>
+                                <span
+                                  title="β值(系統性風險係數):以個股日報酬對大盤加權指數(^TWII)日報酬做迴歸估算,反映相對大盤的波動敏感度;β>1 代表波動比大盤劇烈,β<1 代表較平緩"
+                                  className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    printMode
+                                      ? 'text-indigo-700 border-indigo-200 bg-indigo-50'
+                                      : 'text-indigo-400 border-indigo-900/50 bg-indigo-900/20'
+                                  }`}
+                                >
+                                  β{' '}
+                                  {item.beta !== null && item.beta !== undefined
+                                    ? item.beta.toFixed(2)
+                                    : '資料不足'}
                                 </span>
                                 <span
                                   className={`text-[14px] px-1.5 py-0.5 rounded border ${
