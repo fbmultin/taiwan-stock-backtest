@@ -2863,6 +2863,25 @@ const App = () => {
         </div>
       )}
 
+      {/* 手機版初始設定頁的浮動按鈕:設定項目多、頁面拉很長,不想每次都滑到最底才能開始回測,
+          直接提供一顆「測」浮動鈕,按下即直接開始回測;沿用主要開始回測按鈕的 disabled 判斷,避免在設定不合法時誤觸 */}
+      {!results && !loading && !printMode && (
+        <button
+          onClick={() => runBacktest()}
+          disabled={
+            allocationError && Object.values(enabledInputs).every((v) => v)
+          }
+          className={`sm:hidden fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white text-lg font-bold shadow-xl flex items-center justify-center no-print ${
+            allocationError && Object.values(enabledInputs).every((v) => v)
+              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
+              : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
+          }`}
+          title="直接開始回測"
+        >
+          測
+        </button>
+      )}
+
       {/* 手機版初始設定頁的浮動按鈕:設定項目多、頁面拉很長,提供快速跳到最底部(開始回測按鈕)的捷徑 */}
       {!results && !loading && !printMode && (
         <button
