@@ -1297,7 +1297,10 @@ const App = () => {
 
   const [timeRange, setTimeRange] = useState('12m');
   const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
+  // 結束日預設帶入今天,使用者不用每次都手動選today
+  const [customEnd, setCustomEnd] = useState(
+    () => new Date().toISOString().split('T')[0]
+  );
 
   const [totalCapital, setTotalCapital] = useState(6000000);
 
@@ -2732,6 +2735,7 @@ const App = () => {
     const { start, end } = getEffectiveCustomRange();
     setCustomStart(shiftDateStr(start.toISOString().split('T')[0], months));
     setCustomEnd(shiftDateStr(end.toISOString().split('T')[0], months));
+    setTimeRange('custom');
   };
 
   return (
@@ -2988,74 +2992,74 @@ const App = () => {
                   >
                     自訂區間
                   </button>
-                  {timeRange === 'custom' && (
-                    <div className="flex gap-1 mt-1">
-                      <input
-                        type="date"
-                        value={customStart}
-                        onChange={(e) => setCustomStart(e.target.value)}
-                        className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
-                      />
-                      <input
-                        type="date"
-                        value={customEnd}
-                        onChange={(e) => setCustomEnd(e.target.value)}
-                        className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
-                      />
+                  <div className="flex gap-1 mt-1">
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => {
+                        setCustomStart(e.target.value);
+                        setTimeRange('custom');
+                      }}
+                      className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
+                    />
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => {
+                        setCustomEnd(e.target.value);
+                        setTimeRange('custom');
+                      }}
+                      className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-1)}
+                        title="整段區間往前推1個月"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        −
+                      </button>
+                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                        月
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(1)}
+                        title="整段區間往後推1個月"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        ＋
+                      </button>
                     </div>
-                  )}
-                  {timeRange === 'custom' && (
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => shiftCustomRange(-1)}
-                          title="整段區間往前推1個月"
-                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        >
-                          −
-                        </button>
-                        <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
-                          月
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => shiftCustomRange(1)}
-                          title="整段區間往後推1個月"
-                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        >
-                          ＋
-                        </button>
-                      </div>
-                      <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => shiftCustomRange(-3)}
-                          title="整段區間往前推1季(3個月)"
-                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        >
-                          −
-                        </button>
-                        <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
-                          季
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => shiftCustomRange(3)}
-                          title="整段區間往後推1季(3個月)"
-                          className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        >
-                          ＋
-                        </button>
-                      </div>
+                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-3)}
+                        title="整段區間往前推1季(3個月)"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        −
+                      </button>
+                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                        季
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(3)}
+                        title="整段區間往後推1季(3個月)"
+                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      >
+                        ＋
+                      </button>
                     </div>
-                  )}
-                  {timeRange === 'custom' && (
-                    <div className="mt-1.5 text-[13px] font-mono text-center text-emerald-400 bg-slate-900/60 border border-slate-700 rounded py-1">
-                      {formatDateForDisplay(customStart)} ～{' '}
-                      {formatDateForDisplay(customEnd)}
-                    </div>
-                  )}
+                  </div>
+                  <div className="mt-1.5 text-[13px] font-mono text-center text-emerald-400 bg-slate-900/60 border border-slate-700 rounded py-1">
+                    {formatDateForDisplay(customStart)} ～{' '}
+                    {formatDateForDisplay(customEnd)}
+                  </div>
                 </div>
               </div>
 
