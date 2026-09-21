@@ -1280,12 +1280,12 @@ const App = () => {
     : 'bg-slate-800 border border-slate-700 rounded-xl shadow-lg';
 
   const [inputs, setInputs] = useState([
-    '009805',
-    '00981A',
-    '00988A',
-    '00991A',
+    '009816',
+    '0052',
+    '0050',
     '00935',
     '00904',
+    '00891',
   ]);
   const [enabledInputs, setEnabledInputs] = useState({
     0: true,
@@ -3006,6 +3006,35 @@ const App = () => {
                           : '近5年'}
                       </button>
                     ))}
+                    {/* 常用的固定起始日快捷鈕:點擊即把起始日設為該固定日期、結束日固定為今天,
+                        沿用「自訂區間」既有邏輯,不需另外新增 timeRange 狀態 */}
+                    {[
+                      { label: '2026/06/22', dateStr: '2026-06-22' },
+                      { label: '2026/07/29', dateStr: '2026-07-29' },
+                    ].map(({ label, dateStr }) => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      const isActive =
+                        timeRange === 'custom' &&
+                        customStart === dateStr &&
+                        customEnd === todayStr;
+                      return (
+                        <button
+                          key={dateStr}
+                          onClick={() => {
+                            setCustomStart(dateStr);
+                            setCustomEnd(todayStr);
+                            setTimeRange('custom');
+                          }}
+                          className={`py-2 text-[14px] rounded border font-bold ${
+                            isActive
+                              ? 'bg-emerald-600 border-emerald-500 text-white'
+                              : 'bg-slate-800 border-slate-600 text-slate-400'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
                   <button
                     onClick={() => setTimeRange('custom')}
