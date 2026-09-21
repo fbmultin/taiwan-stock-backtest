@@ -480,3 +480,195 @@ const SmartNumberInput = ({
     />
   );
 };
+
+const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
+  const [inputs, setInputs] = useState({});
+
+  const handleInputChange = (key, value) => {
+    setInputs((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = () => {
+    const allFilled = missingData.every((item) => {
+      const key = `${item.symbol}_${item.date}`;
+      return inputs[key] !== undefined && inputs[key] !== '';
+    });
+
+    if (allFilled) {
+      onConfirm(inputs);
+    } else {
+      alert('請輸入所有缺漏的股價資訊以繼續回測。');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+        <div className="flex items-center gap-3 mb-4 text-amber-400">
+          <div className="bg-amber-900/30 p-2 rounded-full">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold">需要人工補正資料</h3>
+            <p className="text-xs opacity-80">多重數據源皆無法取得以下資料</p>
+          </div>
+        </div>
+
+        <p className="text-slate-300 text-sm mb-4">
+          系統偵測到以下標的在關鍵日期缺少股價。為確保回測準確性，請手動輸入收盤價：
+        </p>
+
+        <div className="space-y-3 mb-6 max-h-[40vh] overflow-y-auto pr-1">
+          {missingData.map((item, idx) => {
+            const key = `${item.symbol}_${item.date}`;
+            const stockNameDisplay =
+              item.stockName && typeof item.stockName === 'string'
+                ? item.stockName
+                : '';
+
+            return (
+              <div
+                key={key}
+                className="flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700"
+              >
+                <div>
+                  <div className="font-bold text-white text-lg">
+                    {item.symbol}
+                    {stockNameDisplay && (
+                      <span className="text-xs font-normal text-slate-400 ml-1">
+                        {stockNameDisplay}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono">
+                    {item.date}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">收盤價:</span>
+                  <SmartNumberInput
+                    value={inputs[key] || ''}
+                    onChange={(val) => handleInputChange(key, val)}
+                    className="w-24 bg-slate-700 border border-slate-500 rounded px-2 py-1 text-right text-white font-mono focus:border-emerald-500 outline-none"
+                    placeholder="0.00"
+                    autoFocus={idx === 0}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+          >
+            取消回測
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+          >
+            確認並繼續
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 執行過程中遇到需要決定的狀況(例如標的資料起始日晚於指定日期、除息日太靠近結束日)時彈出的詢問視窗。
+// 取代先前「依除息日對齊週期/強制固定區間」這類事先勾選好的隱藏規則:改成當下發生了什麼、
+// 有哪些處理方式,直接列出來讓使用者選,選完才繼續往下算。
+const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
+  const [choices, setChoices] = useState(() => {
+    const initial = {};
+    situations.forEach((s) => {
+      const recommended = s.options.find((o) => o.recommended) || s.options[0];
+      initial[s.key] = recommended.value;
+    });
+    return initial;
+  });
+
+  const handleChoose = (key, value) => {
+    setChoices((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200">
+        <div className="flex items-center gap-3 mb-4 text-amber-400">
+          <div className="bg-amber-900/30 p-2 rounded-full">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold">執行中遇到需要您決定的狀況</h3>
+            <p className="text-xs opacity-80">
+              請選擇要怎麼處理，選完後會用您的選擇繼續計算
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4 mb-6 max-h-[55vh] overflow-y-auto pr-1">
+          {situations.map((s) => (
+            <div
+              key={s.key}
+              className="bg-slate-900/50 p-3 rounded-lg border border-slate-700"
+            >
+              <div className="font-bold text-white text-sm mb-1">
+                {s.title}
+              </div>
+              <p className="text-slate-400 text-xs mb-3 leading-relaxed">
+                {s.description}
+              </p>
+              <div className="space-y-1.5">
+                {s.options.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs ${
+                      choices[s.key] === opt.value
+                        ? 'border-emerald-500 bg-emerald-900/20 text-emerald-300'
+                        : 'border-slate-700 hover:bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name={s.key}
+                      className="mt-0.5 flex-shrink-0"
+                      checked={choices[s.key] === opt.value}
+                      onChange={() => handleChoose(s.key, opt.value)}
+                    />
+                    <span>
+                      {opt.label}
+                      {opt.recommended && (
+                        <span className="ml-1.5 text-[14px] text-emerald-500">
+                          (建議)
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+          >
+            取消回測
+          </button>
+          <button
+            onClick={() => onConfirm(choices)}
+            className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+          >
+            確認並繼續
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
