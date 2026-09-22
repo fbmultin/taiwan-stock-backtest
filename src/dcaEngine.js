@@ -97,13 +97,34 @@ export const buildMonthlyInvestDates = (days, investDay) => {
     if (!byMonth.has(monthKey)) byMonth.set(monthKey, []);
     byMonth.get(monthKey).push(d);
   });
+  const monthKeys = Array.from(byMonth.keys());
   const investDateSet = new Set();
-  byMonth.forEach((monthDays) => {
+  // 頭尾兩個月常常是「不完整」的月份(回測起始日、結束日不是剛好切在月初/月底),
+  // 這兩個邊界月份需要特別判斷,否則會多算出一次不存在的加碼:
+  // - 第一個月:如果資料開始的日期本身就已經晚於加碼日(例如加碼日設5號、
+  //   資料卻從15號才開始),代表這個月的加碼日在回測起始前就已經過了,不該把
+  //   「資料的第一天」誤當成一次加碼。
+  // - 最後一個月:如果整個月都找不到「日期 >= 加碼日」的交易日(代表加碼日
+  //   還沒到回測結束日),也不該硬用當月最後一個交易日頂替一次加碼。
+  // 中間的完整月份仍維持原本邏輯:找不到 >= 加碼日的交易日時(通常是月底遇到
+  // 國定假日),用當月最後一個交易日頂替,確保每個完整月份都有一次加碼。
+  monthKeys.forEach((monthKey, idx) => {
+    const monthDays = byMonth.get(monthKey);
+    const isFirstMonth = idx === 0;
+    const isLastMonth = idx === monthKeys.length - 1;
+    const firstDayNum = parseInt(monthDays[0].date.slice(8, 10), 10);
+    if (isFirstMonth && firstDayNum > investDay) return;
+
     const target = monthDays.find(
       (d) => parseInt(d.date.slice(8, 10), 10) >= investDay
     );
-    const chosen = target || monthDays[monthDays.length - 1];
-    investDateSet.add(chosen.date);
+    if (target) {
+      investDateSet.add(target.date);
+      return;
+    }
+    if (!isLastMonth) {
+      investDateSet.add(monthDays[monthDays.length - 1].date);
+    }
   });
   return investDateSet;
 };
