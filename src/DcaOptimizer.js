@@ -85,11 +85,178 @@ const describeConfig = (config) => {
   return parts.join(' · ');
 };
 
+// 解析使用者輸入的股票代碼:逗號、全形逗號、頓號、空白都當分隔符,
+// 自動去除空白、轉大寫、去重複,最多取前 MAX_COMPARE_SYMBOLS 檔。
+export const MAX_COMPARE_SYMBOLS = 5;
+export const parseSymbolsInput = (raw) => {
+  const parts = (raw || '')
+    .split(/[,，、\s]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const seen = new Set();
+  const unique = [];
+  parts.forEach((s) => {
+    if (!seen.has(s)) {
+      seen.add(s);
+      unique.push(s);
+    }
+  });
+  return unique;
+};
+
+// 單一策略結果的完整明細卡片(成效指標 + 各年度拆解 + 加碼明細),
+// 單檔模式(前5名)與多檔比較模式(每檔最佳一組)共用同一份渲染邏輯。
+const ResultDetailCard = ({ item, badge }) => (
+  <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+    <div className="flex items-start justify-between gap-2 flex-wrap">
+      <div className="flex items-center gap-2">{badge}</div>
+      <div className="text-[12px] text-slate-400 text-right">{describeConfig(item.config)}</div>
+    </div>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <Metric
+        label="總投入金額"
+        value={`$${Math.round(item.result.totalInvested).toLocaleString()}`}
+      />
+      <Metric
+        label="目前市值"
+        value={`$${Math.round(item.result.finalMarketValue).toLocaleString()}`}
+        highlight
+      />
+      <Metric
+        label="總報酬率(不含息)"
+        value={`${item.result.totalReturnPct >= 0 ? '+' : ''}${item.result.totalReturnPct.toFixed(2)}%`}
+      />
+      <Metric
+        label="含息報酬率"
+        value={`${item.result.dividendReturnPct >= 0 ? '+' : ''}${item.result.dividendReturnPct.toFixed(2)}%`}
+        highlight
+      />
+      <Metric label="CAGR(年化報酬率)" value={`${item.result.cagr.toFixed(2)}%`} />
+      <Metric
+        label="累計配息金額"
+        value={`$${Math.round(item.result.totalDividends).toLocaleString()}`}
+      />
+      <Metric label="最大回撤" value={`${item.result.maxDrawdownPct.toFixed(2)}%`} />
+      <Metric
+        label="回測區間"
+        value={`${item.result.startDate} ~ ${item.result.endDate}`}
+      />
+      <Metric
+        label="加碼實際成交次數"
+        value={`${item.result.topUpEvents.filter((e) => !e.skipped).length} 次`}
+      />
+    </div>
+    <details className="text-[12px] text-slate-400">
+      <summary className="cursor-pointer select-none text-slate-300 font-bold">
+        各年度報酬拆解
+      </summary>
+      <div className="overflow-x-auto mt-2">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-700">
+              <th className="text-left py-1">年度</th>
+              <th className="text-right py-1">年底市值</th>
+              <th className="text-right py-1">累計投入</th>
+              <th className="text-right py-1">年度變動%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {item.result.yearlyBreakdown.map((y) => (
+              <tr key={y.year} className="border-b border-slate-800">
+                <td className="py-1">{y.year}</td>
+                <td className="text-right py-1 font-mono">
+                  ${Math.round(y.endValue).toLocaleString()}
+                </td>
+                <td className="text-right py-1 font-mono">
+                  ${Math.round(y.totalInvested).toLocaleString()}
+                </td>
+                <td
+                  className={`text-right py-1 font-mono ${
+                    y.yearReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {y.yearReturnPct >= 0 ? '+' : ''}
+                  {y.yearReturnPct.toFixed(2)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="text-[11px] text-slate-600 mt-1">
+        年度變動% 為簡化呈現(今年底市值 vs
+        去年底市值,第一年則為今年底市值vs今年度累計投入),會同時反映市場漲跌與當年度資金投入的影響,並非嚴格的年化報酬。
+      </div>
+    </details>
+
+    {item.result.topUpEvents.length > 0 && (
+      <details className="text-[12px] text-slate-400">
+        <summary className="cursor-pointer select-none text-slate-300 font-bold">
+          加碼明細(共 {item.result.topUpEvents.length} 次觸發,
+          {item.result.topUpEvents.filter((e) => !e.skipped).length} 次成交)
+        </summary>
+        <div className="overflow-x-auto mt-2">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-slate-500 border-b border-slate-700">
+                <th className="text-left py-1">日期</th>
+                <th className="text-left py-1">觸發均線</th>
+                <th className="text-left py-1">加碼原因</th>
+                <th className="text-right py-1">加碼金額</th>
+              </tr>
+            </thead>
+            <tbody>
+              {item.result.topUpEvents.map((e, i) => (
+                <tr
+                  key={i}
+                  className={`border-b border-slate-800 ${
+                    e.skipped ? 'text-slate-600 italic' : ''
+                  }`}
+                >
+                  <td className="py-1 font-mono">{e.date}</td>
+                  <td className="py-1">{e.lineLabel}</td>
+                  <td className="py-1">
+                    {e.triggerMode === 'kline' ? (
+                      <>
+                        前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
+                        {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
+                        {e.ma.toFixed(2)}
+                      </>
+                    ) : (
+                      <>
+                        收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
+                        乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                      </>
+                    )}
+                    {e.skipped
+                      ? ',但當月加碼配額已用完,未實際加碼'
+                      : `,依設定${
+                          e.topUpMode === 'multiple' ? `以${e.topUpValue}倍定額` : '固定金額'
+                        }加碼`}
+                  </td>
+                  <td className="text-right py-1 font-mono">
+                    {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="text-[11px] text-slate-600 mt-1">
+          {item.config.useKLineCrossTrigger
+            ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
+            : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
+          若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+        </div>
+      </details>
+    )}
+  </div>
+);
+
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function DcaOptimizer() {
-  const [symbol, setSymbol] = useState('');
-  const [stockName, setStockName] = useState('');
+  const [symbolInput, setSymbolInput] = useState('');
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 3);
@@ -120,12 +287,18 @@ export default function DcaOptimizer() {
   const [loadingStage, setLoadingStage] = useState('');
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
-  const [topResults, setTopResults] = useState(null);
-  const [dataSourceInfo, setDataSourceInfo] = useState(null);
+  // runResults: 陣列,每個元素對應一檔股票的回測結果
+  // { symbol, stockName, dataSourceInfo, results: [{config,result,score}, ...], error }
+  // 長度 1 時視為「單檔模式」(顯示前N名);長度 > 1 時視為「多檔比較模式」(每檔只取最佳一組)。
+  const [runResults, setRunResults] = useState(null);
 
   const updateLineConfig = (key, patch) => {
     setMaLineConfigs((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   };
+
+  const parsedSymbols = useMemo(() => parseSymbolsInput(symbolInput), [symbolInput]);
+  const symbolsToRun = useMemo(() => parsedSymbols.slice(0, MAX_COMPARE_SYMBOLS), [parsedSymbols]);
+  const symbolOverflow = parsedSymbols.length > MAX_COMPARE_SYMBOLS;
 
   const optimizerConfig = useMemo(
     () => ({
@@ -164,12 +337,11 @@ export default function DcaOptimizer() {
 
   const runOptimization = async () => {
     setErrorMsg('');
-    setTopResults(null);
-    setDataSourceInfo(null);
+    setRunResults(null);
 
-    const cleanSymbol = symbol.trim().toUpperCase();
-    if (!cleanSymbol) {
-      setErrorMsg('請輸入股票代碼。');
+    const symbols = symbolsToRun;
+    if (symbols.length === 0) {
+      setErrorMsg('請輸入股票代碼(可一次輸入多檔,用逗號分隔,最多 5 檔)。');
       return;
     }
     if (!(Number(monthlyAmount) > 0)) {
@@ -185,62 +357,102 @@ export default function DcaOptimizer() {
 
     setLoading(true);
     setProgress(0);
-    setLoadingStage('正在抓取股價與配息資料...');
+
+    const isCompareMode = symbols.length > 1;
+    const topNPerSymbol = isCompareMode ? 1 : 5;
+    const results = [];
 
     try {
-      const priceResult = await fetchStockPriceData(cleanSymbol);
-      if (!priceResult || !priceResult.data || priceResult.data.length === 0) {
-        setErrorMsg('無法取得股價資料,請確認代碼是否正確。');
-        setLoading(false);
-        return;
+      for (let i = 0; i < symbols.length; i++) {
+        const sym = symbols[i];
+        const baseProgress = (i / symbols.length) * 100;
+        const progressSpan = 100 / symbols.length;
+        const stagePrefix = isCompareMode ? `(${i + 1}/${symbols.length}) ${sym}:` : '';
+
+        setProgress(baseProgress);
+        setLoadingStage(`${stagePrefix}正在抓取股價與配息資料...`);
+
+        let priceResult = null;
+        let displayName = '';
+        try {
+          const [priceRes, nameRes] = await Promise.all([
+            fetchStockPriceData(sym),
+            fetchStockDisplayName(sym).catch(() => ''),
+          ]);
+          priceResult = priceRes;
+          displayName = nameRes || '';
+        } catch (fetchErr) {
+          results.push({
+            symbol: sym,
+            stockName: '',
+            error: '抓取股價資料失敗:' + (fetchErr?.message || String(fetchErr)),
+          });
+          continue;
+        }
+
+        if (!priceResult || !priceResult.data || priceResult.data.length === 0) {
+          results.push({
+            symbol: sym,
+            stockName: displayName,
+            error: '無法取得股價資料,請確認代碼是否正確。',
+          });
+          continue;
+        }
+
+        const dataSourceInfo = {
+          source: priceResult.source,
+          fromCache: priceResult.fromCache,
+          dataPoints: priceResult.data.length,
+          firstDate: priceResult.data[0]?.date,
+          lastDate: priceResult.data[priceResult.data.length - 1]?.date,
+        };
+
+        setLoadingStage(`${stagePrefix}正在計算均線(MA20/MA60/MA120)與除息標記...`);
+        const preprocessed = preprocessPriceSeries(priceResult);
+
+        const combos = buildParamCombinations(optimizerConfig);
+        if (combos.length === 0) {
+          results.push({
+            symbol: sym,
+            stockName: displayName,
+            dataSourceInfo,
+            error: '沒有產生任何可執行的參數組合,請檢查參數設定。',
+          });
+          continue;
+        }
+
+        const topForSymbol = await runOptimizationBatch({
+          preprocessedData: preprocessed,
+          paramCombinations: combos,
+          objective,
+          topN: topNPerSymbol,
+          onProgress: (done, total) => {
+            setProgress(baseProgress + (done / total) * progressSpan);
+            setLoadingStage(
+              `${stagePrefix}正在批次回測... (${done.toLocaleString()}/${total.toLocaleString()})`
+            );
+          },
+        });
+
+        if (topForSymbol.length === 0) {
+          results.push({
+            symbol: sym,
+            stockName: displayName,
+            dataSourceInfo,
+            error:
+              '這段期間的資料不足以完成任何一組策略的模擬,請確認起始日期是否早於股票上市日,或調整參數範圍。',
+          });
+          continue;
+        }
+
+        results.push({ symbol: sym, stockName: displayName, dataSourceInfo, results: topForSymbol });
       }
-      setDataSourceInfo({
-        source: priceResult.source,
-        fromCache: priceResult.fromCache,
-        dataPoints: priceResult.data.length,
-        firstDate: priceResult.data[0]?.date,
-        lastDate: priceResult.data[priceResult.data.length - 1]?.date,
-      });
-      setProgress(15);
 
-      fetchStockDisplayName(cleanSymbol)
-        .then((name) => {
-          if (name) setStockName(name);
-        })
-        .catch(() => {});
-
-      setLoadingStage('正在計算均線(MA20/MA60/MA120)與除息標記...');
-      const preprocessed = preprocessPriceSeries(priceResult);
-      setProgress(25);
-
-      const combos = buildParamCombinations(optimizerConfig);
-      if (combos.length === 0) {
-        setErrorMsg('沒有產生任何可執行的參數組合,請檢查參數設定。');
-        setLoading(false);
-        return;
-      }
-
-      setLoadingStage(`正在批次回測(共 ${combos.length.toLocaleString()} 組參數)...`);
-      const top5 = await runOptimizationBatch({
-        preprocessedData: preprocessed,
-        paramCombinations: combos,
-        objective,
-        topN: 5,
-        onProgress: (done, total) => {
-          setProgress(25 + (done / total) * 74);
-          setLoadingStage(
-            `正在批次回測... (${done.toLocaleString()}/${total.toLocaleString()})`
-          );
-        },
-      });
       setProgress(100);
+      setRunResults(results);
 
-      if (top5.length === 0) {
-        setErrorMsg(
-          '這段期間的資料不足以完成任何一組策略的模擬,請確認起始日期是否早於股票上市日,或調整參數範圍。'
-        );
-      } else {
-        setTopResults(top5);
+      if (results.length > 0 && results.every((r) => r.error)) {
+        setErrorMsg('所有股票都無法完成回測,請檢查代碼或參數設定。');
       }
     } catch (e) {
       setErrorMsg('執行時發生錯誤:' + (e?.message || String(e)));
@@ -261,21 +473,28 @@ export default function DcaOptimizer() {
           (MA20)、季線(MA60)、半年線(MA120)三組獨立的加碼條件,每個參數都用
           「最小 / 最大 / 間距」設定搜尋範圍(最小=最大時等同固定單一數值)。
           系統會自動排列組合所有範圍內的參數跑批次回測,依您選擇的目標排序,
-          輸出成效前 5 名的策略組合。
+          輸出成效前 5 名的策略組合。股票代碼也可以一次輸入多檔(用逗號分隔,
+          最多 5 檔),套用同一組參數設定分別回測後並列比較,此時每檔只會列出
+          成效最佳的一組結果。
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label className="text-xs text-slate-400 font-bold">股票代碼</label>
+            <label className="text-xs text-slate-400 font-bold">
+              股票代碼(可輸入多檔,逗號分隔,最多 {MAX_COMPARE_SYMBOLS} 檔)
+            </label>
             <input
               type="text"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              placeholder="例如 0050、2330"
+              value={symbolInput}
+              onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
+              placeholder="例如 0050,0056,2330"
               className="w-full mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
             />
-            {stockName && (
-              <div className="text-[12px] text-slate-500 mt-0.5">{stockName}</div>
+            {symbolsToRun.length > 0 && (
+              <div className="text-[12px] text-slate-500 mt-0.5">
+                將回測:{symbolsToRun.join('、')}
+                {symbolOverflow && `(最多比較 ${MAX_COMPARE_SYMBOLS} 檔,超出的部分已忽略)`}
+              </div>
             )}
           </div>
           <div>
@@ -477,7 +696,8 @@ export default function DcaOptimizer() {
             <RefreshCw className="animate-spin w-5 h-5" />
           ) : (
             <>
-              <Zap className="w-5 h-5 fill-current" /> 開始最佳化
+              <Zap className="w-5 h-5 fill-current" />
+              {symbolsToRun.length > 1 ? `開始比較(${symbolsToRun.length} 檔)` : '開始最佳化'}
             </>
           )}
         </button>
@@ -501,184 +721,175 @@ export default function DcaOptimizer() {
           </div>
         )}
 
-        {dataSourceInfo && (
-          <div className="text-[12px] text-slate-500 flex items-center gap-1.5">
-            <Info className="w-3 h-3 flex-shrink-0" />
-            資料來源:
-            {dataSourceInfo.fromCache
-              ? '本機快取'
-              : dataSourceInfo.source || '即時抓取'}
-            ,共 {dataSourceInfo.dataPoints} 筆({dataSourceInfo.firstDate} ~{' '}
-            {dataSourceInfo.lastDate})
-          </div>
-        )}
       </div>
 
-      {topResults && (
+      {runResults && runResults.length === 1 && !runResults[0].error && (
         <div className="space-y-3">
           <h3 className="font-bold text-lg text-slate-100">
-            成效前 {topResults.length} 名策略({OPTIMIZE_OBJECTIVE_LABELS[objective]})
+            {runResults[0].symbol}
+            {runResults[0].stockName ? ` ${runResults[0].stockName}` : ''} · 成效前{' '}
+            {runResults[0].results.length} 名策略({OPTIMIZE_OBJECTIVE_LABELS[objective]})
           </h3>
-          {topResults.map((item, idx) => (
-            <div
+          {runResults[0].dataSourceInfo && (
+            <div className="text-[12px] text-slate-500 flex items-center gap-1.5">
+              <Info className="w-3 h-3 flex-shrink-0" />
+              資料來源:
+              {runResults[0].dataSourceInfo.fromCache
+                ? '本機快取'
+                : runResults[0].dataSourceInfo.source || '即時抓取'}
+              ,共 {runResults[0].dataSourceInfo.dataPoints} 筆(
+              {runResults[0].dataSourceInfo.firstDate} ~ {runResults[0].dataSourceInfo.lastDate})
+            </div>
+          )}
+          {runResults[0].results.map((item, idx) => (
+            <ResultDetailCard
               key={idx}
-              className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3"
-            >
-              <div className="flex items-start justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="bg-yellow-500 text-slate-900 text-xs px-2 py-0.5 rounded font-bold">
-                    第 {idx + 1} 名
-                  </span>
-                </div>
-                <div className="text-[12px] text-slate-400 text-right">
-                  {describeConfig(item.config)}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Metric
-                  label="總投入金額"
-                  value={`$${Math.round(item.result.totalInvested).toLocaleString()}`}
-                />
-                <Metric
-                  label="目前市值"
-                  value={`$${Math.round(item.result.finalMarketValue).toLocaleString()}`}
-                  highlight
-                />
-                <Metric
-                  label="總報酬率(不含息)"
-                  value={`${item.result.totalReturnPct >= 0 ? '+' : ''}${item.result.totalReturnPct.toFixed(2)}%`}
-                />
-                <Metric
-                  label="含息報酬率"
-                  value={`${item.result.dividendReturnPct >= 0 ? '+' : ''}${item.result.dividendReturnPct.toFixed(2)}%`}
-                  highlight
-                />
-                <Metric label="CAGR(年化報酬率)" value={`${item.result.cagr.toFixed(2)}%`} />
-                <Metric
-                  label="累計配息金額"
-                  value={`$${Math.round(item.result.totalDividends).toLocaleString()}`}
-                />
-                <Metric
-                  label="最大回撤"
-                  value={`${item.result.maxDrawdownPct.toFixed(2)}%`}
-                />
-                <Metric
-                  label="回測區間"
-                  value={`${item.result.startDate} ~ ${item.result.endDate}`}
-                />
-                <Metric
-                  label="加碼實際成交次數"
-                  value={`${item.result.topUpEvents.filter((e) => !e.skipped).length} 次`}
-                />
-              </div>
-              <details className="text-[12px] text-slate-400">
-                <summary className="cursor-pointer select-none text-slate-300 font-bold">
-                  各年度報酬拆解
-                </summary>
-                <div className="overflow-x-auto mt-2">
-                  <table className="w-full text-[12px]">
-                    <thead>
-                      <tr className="text-slate-500 border-b border-slate-700">
-                        <th className="text-left py-1">年度</th>
-                        <th className="text-right py-1">年底市值</th>
-                        <th className="text-right py-1">累計投入</th>
-                        <th className="text-right py-1">年度變動%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {item.result.yearlyBreakdown.map((y) => (
-                        <tr key={y.year} className="border-b border-slate-800">
-                          <td className="py-1">{y.year}</td>
-                          <td className="text-right py-1 font-mono">
-                            ${Math.round(y.endValue).toLocaleString()}
-                          </td>
-                          <td className="text-right py-1 font-mono">
-                            ${Math.round(y.totalInvested).toLocaleString()}
+              item={item}
+              badge={
+                <span className="bg-yellow-500 text-slate-900 text-xs px-2 py-0.5 rounded font-bold">
+                  第 {idx + 1} 名
+                </span>
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {runResults && runResults.length === 1 && runResults[0].error && (
+        <div className="text-[13px] text-rose-400 bg-rose-900/20 border border-rose-800/50 rounded-lg p-3 flex items-start gap-1.5">
+          <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <span>
+            {runResults[0].symbol}:{runResults[0].error}
+          </span>
+        </div>
+      )}
+
+      {runResults && runResults.length > 1 && (
+        <div className="space-y-3">
+          <h3 className="font-bold text-lg text-slate-100">
+            {runResults.length} 檔股票比較(各取最佳一組,{OPTIMIZE_OBJECTIVE_LABELS[objective]})
+          </h3>
+
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="text-slate-500 border-b border-slate-700">
+                    <th className="text-left py-1">排名</th>
+                    <th className="text-left py-1">股票</th>
+                    <th className="text-right py-1">含息報酬率</th>
+                    <th className="text-right py-1">CAGR</th>
+                    <th className="text-right py-1">最大回撤</th>
+                    <th className="text-right py-1">總投入</th>
+                    <th className="text-right py-1">目前市值</th>
+                    <th className="text-right py-1">累計配息</th>
+                    <th className="text-left py-1">回測區間</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runResults
+                    .filter((r) => !r.error)
+                    .slice()
+                    .sort((a, b) => b.results[0].score - a.results[0].score)
+                    .map((r, idx) => {
+                      const item = r.results[0];
+                      return (
+                        <tr key={r.symbol} className="border-b border-slate-800">
+                          <td className="py-1">{idx + 1}</td>
+                          <td className="py-1 font-bold text-slate-200">
+                            {r.symbol}
+                            {r.stockName && (
+                              <span className="font-normal text-slate-400"> {r.stockName}</span>
+                            )}
                           </td>
                           <td
                             className={`text-right py-1 font-mono ${
-                              y.yearReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              item.result.dividendReturnPct >= 0
+                                ? 'text-emerald-400'
+                                : 'text-rose-400'
                             }`}
                           >
-                            {y.yearReturnPct >= 0 ? '+' : ''}
-                            {y.yearReturnPct.toFixed(2)}%
+                            {item.result.dividendReturnPct >= 0 ? '+' : ''}
+                            {item.result.dividendReturnPct.toFixed(2)}%
+                          </td>
+                          <td className="text-right py-1 font-mono">
+                            {item.result.cagr.toFixed(2)}%
+                          </td>
+                          <td className="text-right py-1 font-mono">
+                            {item.result.maxDrawdownPct.toFixed(2)}%
+                          </td>
+                          <td className="text-right py-1 font-mono">
+                            ${Math.round(item.result.totalInvested).toLocaleString()}
+                          </td>
+                          <td className="text-right py-1 font-mono">
+                            ${Math.round(item.result.finalMarketValue).toLocaleString()}
+                          </td>
+                          <td className="text-right py-1 font-mono">
+                            ${Math.round(item.result.totalDividends).toLocaleString()}
+                          </td>
+                          <td className="py-1">
+                            {item.result.startDate} ~ {item.result.endDate}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="text-[11px] text-slate-600 mt-1">
-                  年度變動% 為簡化呈現(今年底市值 vs
-                  去年底市值,第一年則為今年底市值vs今年度累計投入),會同時反映市場漲跌與當年度資金投入的影響,並非嚴格的年化報酬。
-                </div>
-              </details>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+            {runResults.some((r) => r.error) && (
+              <div className="mt-2 text-[12px] text-rose-400 space-y-0.5">
+                {runResults
+                  .filter((r) => r.error)
+                  .map((r) => (
+                    <div key={r.symbol}>
+                      {r.symbol}:{r.error}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
 
-              {item.result.topUpEvents.length > 0 && (
-                <details className="text-[12px] text-slate-400">
-                  <summary className="cursor-pointer select-none text-slate-300 font-bold">
-                    加碼明細(共 {item.result.topUpEvents.length} 次觸發,
-                    {item.result.topUpEvents.filter((e) => !e.skipped).length} 次成交)
+          <div className="space-y-2">
+            {runResults
+              .filter((r) => !r.error)
+              .slice()
+              .sort((a, b) => b.results[0].score - a.results[0].score)
+              .map((r, idx) => (
+                <details
+                  key={r.symbol}
+                  className="bg-slate-800/60 border border-slate-700 rounded-lg"
+                >
+                  <summary className="cursor-pointer select-none p-3 text-sm font-bold text-slate-200 flex flex-wrap items-center gap-2">
+                    <span className="bg-slate-700 text-slate-200 text-xs px-2 py-0.5 rounded">
+                      第 {idx + 1} 名
+                    </span>
+                    <span>
+                      {r.symbol}
+                      {r.stockName ? ` ${r.stockName}` : ''}
+                    </span>
+                    {r.dataSourceInfo && (
+                      <span className="text-[11px] text-slate-500 font-normal ml-auto">
+                        資料來源:
+                        {r.dataSourceInfo.fromCache
+                          ? '本機快取'
+                          : r.dataSourceInfo.source || '即時抓取'}
+                        ,共 {r.dataSourceInfo.dataPoints} 筆
+                      </span>
+                    )}
                   </summary>
-                  <div className="overflow-x-auto mt-2">
-                    <table className="w-full text-[12px]">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-slate-700">
-                          <th className="text-left py-1">日期</th>
-                          <th className="text-left py-1">觸發均線</th>
-                          <th className="text-left py-1">加碼原因</th>
-                          <th className="text-right py-1">加碼金額</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {item.result.topUpEvents.map((e, i) => (
-                          <tr
-                            key={i}
-                            className={`border-b border-slate-800 ${
-                              e.skipped ? 'text-slate-600 italic' : ''
-                            }`}
-                          >
-                            <td className="py-1 font-mono">{e.date}</td>
-                            <td className="py-1">{e.lineLabel}</td>
-                            <td className="py-1">
-                              {e.triggerMode === 'kline' ? (
-                                <>
-                                  前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
-                                  {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
-                                  {e.ma.toFixed(2)}
-                                </>
-                              ) : (
-                                <>
-                                  收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
-                                  乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
-                                </>
-                              )}
-                              {e.skipped
-                                ? ',但當月加碼配額已用完,未實際加碼'
-                                : `,依設定${
-                                    e.topUpMode === 'multiple'
-                                      ? `以${e.topUpValue}倍定額`
-                                      : '固定金額'
-                                  }加碼`}
-                            </td>
-                            <td className="text-right py-1 font-mono">
-                              {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="text-[11px] text-slate-600 mt-1">
-                    {item.config.useKLineCrossTrigger
-                      ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
-                      : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
-                    若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+                  <div className="p-3 pt-0">
+                    <ResultDetailCard
+                      item={r.results[0]}
+                      badge={
+                        <span className="bg-yellow-500 text-slate-900 text-xs px-2 py-0.5 rounded font-bold">
+                          最佳組合
+                        </span>
+                      }
+                    />
                   </div>
                 </details>
-              )}
-            </div>
-          ))}
+              ))}
+          </div>
         </div>
       )}
     </div>
