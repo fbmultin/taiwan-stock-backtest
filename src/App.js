@@ -62,9 +62,9 @@ import {
   Scissors,
 } from 'lucide-react';
 
-// 「定期定額加碼開關」開啟時,除了每月固定日期加碼外,同時套用「K線穿越均線」加碼規則
-// (規則寫死、不提供額外設定):月線(MA20)/季線(MA60)/半年線(MA120)共用同一個
-// 「每個月最多觸發幾次」的額度,詳見 runBacktest 內的計算邏輯與 dcaEngine.js 的同名規則。
+// 「K線穿越均線加碼」開關(klineTopUpEnabled)開啟時的規則寫死、不提供額外設定:
+// 月線(MA20)/季線(MA60)/半年線(MA120)共用同一個「每個月最多觸發幾次」的額度,
+// 詳見 runBacktest 內的計算邏輯與 dcaEngine.js 的同名規則。
 const KLINE_TOPUP_MONTHLY_CAP = 1;
 
 const COLORS = [
@@ -736,16 +736,20 @@ const App = () => {
 
   const [totalCapital, setTotalCapital] = useState(6000000);
 
-  // 定期定額加碼開關:開啟後,每個月固定日期(monthlyTopUpDay)加碼投入 monthlyTopUpAmount 元,
-  // 從回測起始日持續到結束日,所有比較中的標的都會套用同一組設定。
-  // monthlyTopUpIncludeLumpSum 控制「最上面設定的一次性本金」是否也列入:
-  // true(預設)= 一次性本金照常投入,每月加碼是額外加上去的;
-  // false = 不做一次性投入,完全從零開始,只靠每月加碼逐步建立部位。
+  // 加碼策略:「每月固定日期加碼」與「K線穿越均線加碼」是兩個各自獨立的開關,
+  // 可以分別自由開關(單獨開一個、兩個都開、或都關),兩者共用同一個「每次加碼金額」
+  // (monthlyTopUpAmount)。K線穿越均線的規則本身寫死、不提供額外設定:
+  // 月線(MA20)/季線(MA60)/半年線(MA120)共用「每月最多觸發1次」的額度。
+  // monthlyTopUpIncludeLumpSum 控制「最上面設定的一次性本金」是否也列入(只要任一
+  // 加碼開關開啟就適用):true(預設)= 一次性本金照常投入,加碼是額外加上去的;
+  // false = 不做一次性投入,完全從零開始,只靠加碼逐步建立部位。
   const [monthlyTopUpEnabled, setMonthlyTopUpEnabled] = useState(false);
+  const [klineTopUpEnabled, setKlineTopUpEnabled] = useState(false);
   const [monthlyTopUpDay, setMonthlyTopUpDay] = useState(5);
   const [monthlyTopUpAmount, setMonthlyTopUpAmount] = useState(10000);
   const [monthlyTopUpIncludeLumpSum, setMonthlyTopUpIncludeLumpSum] =
     useState(true);
+  const anyTopUpEnabled = monthlyTopUpEnabled || klineTopUpEnabled;
 
   const [allocations, setAllocations] = useState({
     0: 16.6666,
@@ -1797,17 +1801,17 @@ const App = () => {
           });
           if (periodDividends < 0) periodDividends = 0;
 
-          // 定期定額加碼開關:計算「實際投入本金/股數/配息現金」。
-          // 關閉時邏輯與過去完全相同(shares 固定 = allocated/initialPrice,
-          // dividendCash = shares * periodDividends);開啟時改成逐日模擬——
-          // 每個月固定日期加碼買進、股數隨時間增加,配息現金則依「當下實際持有股數」
+          // 加碼開關:計算「實際投入本金/股數/配息現金」。「每月固定日期加碼」與
+          // 「K線穿越均線加碼」是兩個各自獨立的開關,可以只開一個、兩個都開、或都關。
+          // 兩者都關時邏輯與過去完全相同(shares 固定 = allocated/initialPrice,
+          // dividendCash = shares * periodDividends);只要開了任一個,就改成逐日模擬——
+          // 觸發時加碼買進、股數隨時間增加,配息現金則依「當下實際持有股數」
           // 逐次入帳,而不是用回測結束時的股數去回推整個期間的配息。
           // useLumpSum 為 false 時(使用者選擇「不列入本金」),不做一開始的一次性投入,
-          // 完全從零股數開始,只靠每月加碼逐步建立部位。
+          // 完全從零股數開始,只靠加碼逐步建立部位。
           const weight = finalAllocations[stock.inputIndex] || 0;
           const allocated = totalCapital * (weight / 100);
-          const useLumpSum =
-            !monthlyTopUpEnabled || monthlyTopUpIncludeLumpSum;
+          const useLumpSum = !anyTopUpEnabled || monthlyTopUpIncludeLumpSum;
           let shares = useLumpSum && initialPrice > 0 ? allocated / initialPrice : 0;
           let totalInvested = useLumpSum ? allocated : 0;
           let dividendCash = 0;
@@ -1817,10 +1821,11 @@ const App = () => {
               ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
               : null;
 
-          // K線穿越均線加碼(規則寫死,套用定期定額加碼開關同一個開關,不額外提供設定):
-          // 月線(MA20)/季線(MA60)/半年線(MA120)都用 stock.data 的完整歷史算均線
-          // (跟定期定額最佳化分頁算法相同),再依日期對回 filteredData 使用。
-          const maByDate = monthlyTopUpEnabled
+          // K線穿越均線加碼(規則寫死,由獨立的 klineTopUpEnabled 開關控制,
+          // 不提供額外設定):月線(MA20)/季線(MA60)/半年線(MA120)都用
+          // stock.data 的完整歷史算均線(跟定期定額最佳化分頁算法相同),
+          // 再依日期對回 filteredData 使用。
+          const maByDate = klineTopUpEnabled
             ? new Map(
                 preprocessPriceSeries(stock).map((d) => [
                   d.date,
@@ -2578,42 +2583,66 @@ const App = () => {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 bg-slate-800/60 border border-slate-700 rounded-lg p-3">
+                  <div className="text-xs text-slate-300 font-bold">
+                    加碼策略設定
+                  </div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={monthlyTopUpEnabled}
                       onChange={() => setMonthlyTopUpEnabled((v) => !v)}
                     />
-                    <span className="text-xs text-slate-300 font-bold">
-                      定期定額加碼開關
+                    <span className="text-xs text-slate-300">
+                      每月固定日期加碼
                     </span>
                   </label>
                   <div className="text-[11px] text-slate-500 leading-relaxed">
-                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。同時套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
-                    (MA20)/季線 (MA60)/半年線
-                    (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與上面設定的「每月加碼金額」相同。
+                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
                   </div>
-                  {monthlyTopUpEnabled && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={klineTopUpEnabled}
+                      onChange={() => setKlineTopUpEnabled((v) => !v)}
+                    />
+                    <span className="text-xs text-slate-300">
+                      K線穿越均線加碼
+                    </span>
+                  </label>
+                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                    開啟後套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
+                    (MA20)/季線 (MA60)/半年線
+                    (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與下面設定的「每次加碼金額」相同。這兩個開關可以各自獨立開關,也可以同時開啟。
+                  </div>
+                  {anyTopUpEnabled && (
                     <>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="text-[11px] text-slate-500 mb-1">
-                            每月投入日(1~31)
+                      <div
+                        className={`grid gap-2 ${
+                          monthlyTopUpEnabled ? 'grid-cols-2' : 'grid-cols-1'
+                        }`}
+                      >
+                        {monthlyTopUpEnabled && (
+                          <div>
+                            <div className="text-[11px] text-slate-500 mb-1">
+                              每月投入日(1~31)
+                            </div>
+                            <input
+                              type="number"
+                              min={1}
+                              max={31}
+                              value={monthlyTopUpDay}
+                              onChange={(e) =>
+                                setMonthlyTopUpDay(
+                                  parseInt(e.target.value, 10) || 1
+                                )
+                              }
+                              className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                            />
                           </div>
-                          <input
-                            type="number"
-                            min={1}
-                            max={31}
-                            value={monthlyTopUpDay}
-                            onChange={(e) =>
-                              setMonthlyTopUpDay(parseInt(e.target.value, 10) || 1)
-                            }
-                            className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
-                          />
-                        </div>
+                        )}
                         <div>
                           <div className="text-[11px] text-slate-500 mb-1">
-                            每月加碼金額(元)
+                            每次加碼金額(元)
                           </div>
                           <input
                             type="number"
@@ -2640,7 +2669,7 @@ const App = () => {
                                 : 'bg-slate-800 border-slate-600 text-slate-400'
                             }`}
                           >
-                            列入(本金+每月加碼)
+                            列入(本金+加碼)
                           </button>
                           <button
                             type="button"
@@ -2651,13 +2680,13 @@ const App = () => {
                                 : 'bg-slate-800 border-slate-600 text-slate-400'
                             }`}
                           >
-                            不列入(只用每月加碼)
+                            不列入(只用加碼)
                           </button>
                         </div>
                         <div className="text-[11px] text-slate-500 leading-relaxed mt-1">
                           {monthlyTopUpIncludeLumpSum
-                            ? '一開始會照常投入一次性本金,之後每月再額外加碼。'
-                            : '一開始不投入一次性本金,完全從零股數開始,只靠每月加碼逐步買進。'}
+                            ? '一開始會照常投入一次性本金,之後再額外加碼。'
+                            : '一開始不投入一次性本金,完全從零股數開始,只靠加碼逐步買進。'}
                         </div>
                       </div>
                     </>
