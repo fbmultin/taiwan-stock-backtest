@@ -2306,14 +2306,14 @@ const App = () => {
           disabled={
             allocationError && Object.values(enabledInputs).every((v) => v)
           }
-          className={`sm:hidden fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white text-lg font-bold shadow-xl flex items-center justify-center no-print ${
+          className={`sm:hidden fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
             allocationError && Object.values(enabledInputs).every((v) => v)
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
           }`}
           title="直接開始回測"
         >
-          測
+          <Zap className="w-6 h-6 fill-current" />
         </button>
       )}
 
@@ -3128,9 +3128,12 @@ const App = () => {
         )}
 
         {!results && !loading && !errorMsg && (
-          <div className="h-64 flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-xl no-print m-4">
+          <div className="min-h-[55vh] sm:h-64 flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-xl no-print m-4 gap-2">
             <CloudLightning className="w-12 h-12 mb-2 opacity-30" />
             <p>設定上方投資組合後，點擊「開始回測」</p>
+            <p className="sm:hidden text-xs text-slate-700">
+              也可以點擊右下角 ⚡ 浮動按鈕快速開始回測
+            </p>
           </div>
         )}
 
