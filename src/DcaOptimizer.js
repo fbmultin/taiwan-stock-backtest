@@ -536,6 +536,10 @@ export default function DcaOptimizer() {
                   label="回測區間"
                   value={`${item.result.startDate} ~ ${item.result.endDate}`}
                 />
+                <Metric
+                  label="加碼實際成交次數"
+                  value={`${item.result.topUpEvents.filter((e) => !e.skipped).length} 次`}
+                />
               </div>
               <details className="text-[12px] text-slate-400">
                 <summary className="cursor-pointer select-none text-slate-300 font-bold">
@@ -579,6 +583,57 @@ export default function DcaOptimizer() {
                   去年底市值,第一年則為今年底市值vs今年度累計投入),會同時反映市場漲跌與當年度資金投入的影響,並非嚴格的年化報酬。
                 </div>
               </details>
+
+              {item.result.topUpEvents.length > 0 && (
+                <details className="text-[12px] text-slate-400">
+                  <summary className="cursor-pointer select-none text-slate-300 font-bold">
+                    加碼明細(共 {item.result.topUpEvents.length} 次觸發,
+                    {item.result.topUpEvents.filter((e) => !e.skipped).length} 次成交)
+                  </summary>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-[12px]">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-700">
+                          <th className="text-left py-1">日期</th>
+                          <th className="text-left py-1">觸發均線</th>
+                          <th className="text-left py-1">加碼原因</th>
+                          <th className="text-right py-1">加碼金額</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {item.result.topUpEvents.map((e, i) => (
+                          <tr
+                            key={i}
+                            className={`border-b border-slate-800 ${
+                              e.skipped ? 'text-slate-600 italic' : ''
+                            }`}
+                          >
+                            <td className="py-1 font-mono">{e.date}</td>
+                            <td className="py-1">{e.lineLabel}</td>
+                            <td className="py-1">
+                              收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
+                              乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                              {e.skipped
+                                ? ',但當月加碼配額已用完,未實際加碼'
+                                : `,依設定${
+                                    e.topUpMode === 'multiple'
+                                      ? `以${e.topUpValue}倍定額`
+                                      : '固定金額'
+                                  }加碼`}
+                            </td>
+                            <td className="text-right py-1 font-mono">
+                              {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-[11px] text-slate-600 mt-1">
+                    「觸發」代表收盤價當天首次跌破該均線的乖離門檻;若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+                  </div>
+                </details>
+              )}
             </div>
           ))}
         </div>

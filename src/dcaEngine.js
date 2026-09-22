@@ -161,6 +161,7 @@ export const runDcaStrategy = (preprocessedData, config) => {
   let monthlyTriggerCount = 0;
   const insideBand = { ma20: false, ma60: false, ma120: false };
   const valueSeries = [];
+  const topUpEvents = []; // 每一次實際成交的加碼記錄:{date, lineKey, lineLabel, deviationPct, thresholdPct, price, ma, topUpAmount, topUpMode, shares, skippedByCap}
 
   days.forEach((day) => {
     const monthKey = day.date.slice(0, 7);
@@ -187,16 +188,48 @@ export const runDcaStrategy = (preprocessedData, config) => {
       const isInBandNow = deviation <= threshold;
 
       if (isInBandNow && !insideBand[lineKey]) {
-        if (monthlyTriggerCap > 0 && monthlyTriggerCount < monthlyTriggerCap) {
+        const withinCap = monthlyTriggerCap > 0 && monthlyTriggerCount < monthlyTriggerCap;
+        if (withinCap) {
           const topUpAmount =
             lineConfig.topUpMode === 'multiple'
               ? monthlyAmount * lineConfig.topUpValue
               : lineConfig.topUpValue;
           if (topUpAmount > 0) {
-            shares += topUpAmount / day.price;
+            const topUpShares = topUpAmount / day.price;
+            shares += topUpShares;
             totalInvested += topUpAmount;
             monthlyTriggerCount += 1;
+            topUpEvents.push({
+              date: day.date,
+              lineKey,
+              lineLabel: MA_LINE_LABELS[lineKey],
+              deviationPct: deviation * 100,
+              thresholdPct: lineConfig.deviationPct,
+              price: day.price,
+              ma,
+              topUpMode: lineConfig.topUpMode,
+              topUpValue: lineConfig.topUpValue,
+              topUpAmount,
+              shares: topUpShares,
+              skipped: false,
+            });
           }
+        } else if (monthlyTriggerCap > 0) {
+          // 有啟用加碼,但當月配額已被其他線用完:記錄下來讓使用者知道「這次沒買到」的原因。
+          topUpEvents.push({
+            date: day.date,
+            lineKey,
+            lineLabel: MA_LINE_LABELS[lineKey],
+            deviationPct: deviation * 100,
+            thresholdPct: lineConfig.deviationPct,
+            price: day.price,
+            ma,
+            topUpMode: lineConfig.topUpMode,
+            topUpValue: lineConfig.topUpValue,
+            topUpAmount: 0,
+            shares: 0,
+            skipped: true,
+          });
         }
       }
       insideBand[lineKey] = isInBandNow;
@@ -274,6 +307,7 @@ export const runDcaStrategy = (preprocessedData, config) => {
     startDate: days[0].date,
     endDate: days[days.length - 1].date,
     valueSeries,
+    topUpEvents,
   };
 };
 
