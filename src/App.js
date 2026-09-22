@@ -2499,8 +2499,8 @@ const App = () => {
                 : 'max-h-0 opacity-0'
             }`}
           >
-            <div className="grid lg:grid-cols-12 gap-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-              <div className="lg:col-span-3 space-y-4 border-b lg:border-b-0 lg:border-r border-slate-700 pb-4 lg:pb-0 pr-0 lg:pr-4">
+            <div className="grid lg:grid-cols-12 lg:items-start gap-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+              <div className="lg:col-span-4 space-y-4 border-b lg:border-b-0 lg:border-r border-slate-700 pb-4 lg:pb-0 pr-0 lg:pr-4">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs text-slate-400 font-bold">
                     總投入本金 (萬元)
@@ -2798,7 +2798,7 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="lg:col-span-7 space-y-3">
+              <div className="lg:col-span-5 space-y-3">
                 <div className="flex flex-wrap items-center gap-2 mb-4 bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">
                   <span className="text-xs text-slate-400 font-bold mr-2">
                     <Database className="w-4 h-4 inline mr-1" />
@@ -2848,50 +2848,52 @@ const App = () => {
                     (平均分配本金)
                   </span>
                 </div>
-                {inputs.map((val, idx) => {
-                  const isEnabled = enabledInputs[idx];
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
+                  {inputs.map((val, idx) => {
+                    const isEnabled = enabledInputs[idx];
 
-                  return (
-                    <div
-                      key={idx}
-                      className={`flex items-center gap-2 sm:gap-3 transition-opacity ${
-                        isEnabled ? 'opacity-100' : 'opacity-50'
-                      }`}
-                    >
-                      <button
-                        onClick={() => toggleEnabled(idx)}
-                        className="text-slate-500 hover:text-white shrink-0"
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-center gap-2 transition-opacity ${
+                          isEnabled ? 'opacity-100' : 'opacity-50'
+                        }`}
                       >
-                        {isEnabled ? (
-                          <CheckSquare className="w-5 h-5 text-emerald-500" />
-                        ) : (
-                          <Square className="w-5 h-5" />
-                        )}
-                      </button>
-                      <div className="relative flex-1 sm:w-40">
-                        <input
-                          type="text"
-                          onFocus={handleInputFocus}
-                          value={val}
-                          onChange={(e) =>
-                            handleInputChange(idx, e.target.value)
-                          }
-                          onBlur={() => handleInputBlurInApp(idx, val)}
-                          placeholder={`標的 ${idx + 1}`}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-md py-1.5 pl-2 pr-2 text-sm text-white font-mono uppercase"
-                        />
-                        {stockNames[val] && (
-                          <div className="absolute left-0 -bottom-4 text-[13px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis w-full">
-                            {stockNames[val]}
-                          </div>
-                        )}
+                        <button
+                          onClick={() => toggleEnabled(idx)}
+                          className="text-slate-500 hover:text-white shrink-0"
+                        >
+                          {isEnabled ? (
+                            <CheckSquare className="w-5 h-5 text-emerald-500" />
+                          ) : (
+                            <Square className="w-5 h-5" />
+                          )}
+                        </button>
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            onFocus={handleInputFocus}
+                            value={val}
+                            onChange={(e) =>
+                              handleInputChange(idx, e.target.value)
+                            }
+                            onBlur={() => handleInputBlurInApp(idx, val)}
+                            placeholder={`標的 ${idx + 1}`}
+                            className="w-full bg-slate-800 border border-slate-600 rounded-md py-1.5 pl-2 pr-2 text-sm text-white font-mono uppercase"
+                          />
+                          {stockNames[val] && (
+                            <div className="absolute left-0 -bottom-4 text-[13px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis w-full">
+                              {stockNames[val]}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="lg:col-span-2 flex flex-col justify-end mt-4 lg:mt-0">
+              <div className="lg:col-span-3 mt-4 lg:mt-0">
                 <div className="flex flex-col gap-2">
                   <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
                     <div className="relative flex-shrink-0">
