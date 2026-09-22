@@ -1819,12 +1819,15 @@ const App = () => {
             );
           });
           filteredData.forEach((day) => {
+            // 配息入帳要用「當天加碼買進之前」持有的股數:除息當天才買進的這一筆,
+            // 現實中還沒資格領當天的配息,所以要先算配息、再處理當天的加碼買進,
+            // 順序對調的話,萬一加碼日剛好跟除息日同一天,會多算到不該有的配息。
+            const divAmount = divAmountByDate.get(day.date);
+            if (divAmount) dividendCash += shares * divAmount;
             if (topUpDateSet && topUpDateSet.has(day.date)) {
               shares += monthlyTopUpAmount / day.price;
               totalInvested += monthlyTopUpAmount;
             }
-            const divAmount = divAmountByDate.get(day.date);
-            if (divAmount) dividendCash += shares * divAmount;
           });
 
           const finalMarketValue = shares * finalPrice;
