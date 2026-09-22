@@ -942,7 +942,6 @@ const App = () => {
   ) => {
     setLoading(true);
     setResults(null);
-    setPeriodStats(null);
     setErrorMsg('');
     setDebugInfo('');
     setCycleInfoText('');
