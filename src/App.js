@@ -2,7 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TW_STOCK_NAMES from './data/twStockNames';
 import TW_STOCK_SPLITS from './data/twStockSplits';
 import DcaOptimizer from './DcaOptimizer';
-import { buildMonthlyInvestDates } from './dcaEngine';
+import {
+  buildMonthlyInvestDates,
+  preprocessPriceSeries,
+  MA_LINE_KEYS,
+  MA_LINE_LABELS,
+} from './dcaEngine';
 import {
   fetchStockPriceData,
   fetchIndexPriceData,
@@ -56,6 +61,11 @@ import {
   Save,
   Scissors,
 } from 'lucide-react';
+
+// 「定期定額加碼開關」開啟時,除了每月固定日期加碼外,同時套用「K線穿越均線」加碼規則
+// (規則寫死、不提供額外設定):月線(MA20)/季線(MA60)/半年線(MA120)共用同一個
+// 「每個月最多觸發幾次」的額度,詳見 runBacktest 內的計算邏輯與 dcaEngine.js 的同名規則。
+const KLINE_TOPUP_MONTHLY_CAP = 1;
 
 const COLORS = [
   '#3b82f6',
@@ -1806,6 +1816,18 @@ const App = () => {
             monthlyTopUpEnabled && monthlyTopUpAmount > 0
               ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
               : null;
+
+          // K線穿越均線加碼(規則寫死,套用定期定額加碼開關同一個開關,不額外提供設定):
+          // 月線(MA20)/季線(MA60)/半年線(MA120)都用 stock.data 的完整歷史算均線
+          // (跟定期定額最佳化分頁算法相同),再依日期對回 filteredData 使用。
+          const maByDate = monthlyTopUpEnabled
+            ? new Map(
+                preprocessPriceSeries(stock).map((d) => [
+                  d.date,
+                  { ma20: d.ma20, ma60: d.ma60, ma120: d.ma120 },
+                ])
+              )
+            : null;
           const divAmountByDate = new Map();
           validDivTimestamps.forEach((ts) => {
             const keySec = Math.floor(ts / 1000);
@@ -1831,12 +1853,30 @@ const App = () => {
           }
 
           const topUpEvents = [];
+          // K線加碼:記錄「前一天」最低價與各均線值(每檔標的自己一組狀態),
+          // 邏輯與 dcaEngine.js 的 runDcaStrategy 完全相同——前一天最低價要高於
+          // 前一天均線(代表前一天整天沒碰到均線),今天最低價才跌破今天均線時觸發,
+          // 避免股價與均線糾結、來回穿越時天天觸發。
+          let klinePrevLow = null;
+          const klinePrevMaByLine = { ma20: null, ma60: null, ma120: null };
+          let klineMonthKey = null;
+          let klineMonthlyTriggerCount = 0;
+
           filteredData.forEach((day, dayIndex) => {
             // 配息入帳要用「當天加碼買進之前」持有的股數:除息當天才買進的這一筆,
             // 現實中還沒資格領當天的配息,所以要先算配息、再處理當天的加碼買進,
             // 順序對調的話,萬一加碼日剛好跟除息日同一天,會多算到不該有的配息。
             const divAmount = divAmountByDate.get(day.date);
             if (divAmount) dividendCash += shares * divAmount;
+
+            const futureDivPerShare = suffixDivSum[dayIndex + 1];
+            const makeReturnPct = (entryPrice) => ({
+              priceReturnPct: ((finalPrice - entryPrice) / entryPrice) * 100,
+              totalReturnPct:
+                ((finalPrice - entryPrice + futureDivPerShare) / entryPrice) *
+                100,
+            });
+
             if (topUpDateSet && topUpDateSet.has(day.date)) {
               const boughtShares = monthlyTopUpAmount / day.price;
               shares += boughtShares;
@@ -1844,21 +1884,85 @@ const App = () => {
 
               // 這一筆加碼「從買進那天到回測結束」自己的報酬率,跟是否列入本金無關——
               // 不含息只看股價漲跌,含息則再加上買進後(不含當天)實際能領到的配息。
-              const futureDivPerShare = suffixDivSum[dayIndex + 1];
-              const eventPriceReturnPct =
-                ((finalPrice - day.price) / day.price) * 100;
-              const eventTotalReturnPct =
-                ((finalPrice - day.price + futureDivPerShare) / day.price) *
-                100;
               topUpEvents.push({
                 date: day.date,
                 symbol: stock.symbol,
                 stockName: stock.stockName,
+                source: 'monthly',
                 price: day.price,
                 shares: boughtShares,
                 amount: monthlyTopUpAmount,
-                priceReturnPct: eventPriceReturnPct,
-                totalReturnPct: eventTotalReturnPct,
+                skipped: false,
+                ...makeReturnPct(day.price),
+              });
+            }
+
+            if (maByDate) {
+              const monthKey = day.date.slice(0, 7);
+              if (monthKey !== klineMonthKey) {
+                klineMonthKey = monthKey;
+                klineMonthlyTriggerCount = 0;
+              }
+              const mas = maByDate.get(day.date);
+              const hasLow =
+                typeof day.low === 'number' && Number.isFinite(day.low);
+
+              MA_LINE_KEYS.forEach((lineKey) => {
+                const ma = mas ? mas[lineKey] : null;
+                if (ma === null || ma === undefined || !(ma > 0)) return;
+                const prevMa = klinePrevMaByLine[lineKey];
+                const triggeredToday =
+                  klinePrevLow !== null &&
+                  prevMa !== null &&
+                  prevMa > 0 &&
+                  klinePrevLow > prevMa &&
+                  hasLow &&
+                  day.low <= ma;
+                if (!triggeredToday) return;
+
+                const withinCap =
+                  klineMonthlyTriggerCount < KLINE_TOPUP_MONTHLY_CAP;
+                if (withinCap && monthlyTopUpAmount > 0) {
+                  const boughtShares = monthlyTopUpAmount / day.price;
+                  shares += boughtShares;
+                  totalInvested += monthlyTopUpAmount;
+                  klineMonthlyTriggerCount += 1;
+                  topUpEvents.push({
+                    date: day.date,
+                    symbol: stock.symbol,
+                    stockName: stock.stockName,
+                    source: 'kline',
+                    lineKey,
+                    lineLabel: MA_LINE_LABELS[lineKey],
+                    price: day.price,
+                    shares: boughtShares,
+                    amount: monthlyTopUpAmount,
+                    skipped: false,
+                    ...makeReturnPct(day.price),
+                  });
+                } else {
+                  // 當月三線共用的加碼額度已被用掉,這次穿越不會真的買進,
+                  // 但仍記錄下來讓使用者知道「有觸發、但沒成交」。
+                  topUpEvents.push({
+                    date: day.date,
+                    symbol: stock.symbol,
+                    stockName: stock.stockName,
+                    source: 'kline',
+                    lineKey,
+                    lineLabel: MA_LINE_LABELS[lineKey],
+                    price: day.price,
+                    shares: 0,
+                    amount: 0,
+                    skipped: true,
+                  });
+                }
+              });
+
+              klinePrevLow = hasLow ? day.low : null;
+              MA_LINE_KEYS.forEach((lineKey) => {
+                const ma = mas ? mas[lineKey] : null;
+                klinePrevMaByLine[lineKey] =
+                  ma !== null && ma !== undefined && ma > 0 ? ma : null;
               });
             }
           });
@@ -2485,7 +2589,9 @@ const App = () => {
                     </span>
                   </label>
                   <div className="text-[11px] text-slate-500 leading-relaxed">
-                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
+                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。同時套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
+                    (MA20)/季線 (MA60)/半年線
+                    (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與上面設定的「每月加碼金額」相同。
                   </div>
                   {monthlyTopUpEnabled && (
                     <>
@@ -3972,7 +4078,11 @@ const App = () => {
                               <details className="group">
                                 <summary className="text-[15px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
                                   <Table2 className="w-3 h-3" /> 共{' '}
-                                  {item.topUpEvents.length} 次定期定額加碼明細
+                                  {
+                                    item.topUpEvents.filter((e) => !e.skipped)
+                                      .length
+                                  }{' '}
+                                  次加碼明細(定期定額 + K線穿越均線)
                                 </summary>
                                 <div
                                   className={`mt-1 overflow-x-auto rounded border ${
@@ -3992,6 +4102,7 @@ const App = () => {
                                       <tr>
                                         <th className="py-2 pl-2">加碼日期</th>
                                         <th className="py-2">股票</th>
+                                        <th className="py-2">方式</th>
                                         <th className="py-2 text-right">
                                           進場價
                                         </th>
@@ -4014,7 +4125,9 @@ const App = () => {
                                         <tr
                                           key={i}
                                           className={
-                                            printMode
+                                            e.skipped
+                                              ? 'italic text-slate-500 bg-slate-800/40'
+                                              : printMode
                                               ? 'hover:bg-gray-50'
                                               : 'hover:bg-slate-700/20'
                                           }
@@ -4032,31 +4145,47 @@ const App = () => {
                                               </span>
                                             )}
                                           </td>
+                                          <td className={`py-2 ${textClass.sub}`}>
+                                            {e.source === 'monthly'
+                                              ? '定期定額'
+                                              : `K線·${e.lineLabel}`}
+                                          </td>
                                           <td
                                             className={`py-2 font-mono text-right ${textClass.main}`}
                                           >
                                             {e.price.toFixed(2)}
                                           </td>
-                                          <td
-                                            className={`py-2 font-mono text-right ${
-                                              e.priceReturnPct >= 0
-                                                ? textClass.warn
-                                                : textClass.highlight
-                                            }`}
-                                          >
-                                            {e.priceReturnPct > 0 ? '+' : ''}
-                                            {e.priceReturnPct.toFixed(2)}%
-                                          </td>
-                                          <td
-                                            className={`py-2 pr-2 font-mono text-right ${
-                                              e.totalReturnPct >= 0
-                                                ? textClass.warn
-                                                : textClass.highlight
-                                            }`}
-                                          >
-                                            {e.totalReturnPct > 0 ? '+' : ''}
-                                            {e.totalReturnPct.toFixed(2)}%
-                                          </td>
+                                          {e.skipped ? (
+                                            <td
+                                              colSpan="2"
+                                              className="py-2 pr-2 text-center text-slate-500 italic"
+                                            >
+                                              當月加碼額度已滿,未成交
+                                            </td>
+                                          ) : (
+                                            <>
+                                              <td
+                                                className={`py-2 font-mono text-right ${
+                                                  e.priceReturnPct >= 0
+                                                    ? textClass.warn
+                                                    : textClass.highlight
+                                                }`}
+                                              >
+                                                {e.priceReturnPct > 0 ? '+' : ''}
+                                                {e.priceReturnPct.toFixed(2)}%
+                                              </td>
+                                              <td
+                                                className={`py-2 pr-2 font-mono text-right ${
+                                                  e.totalReturnPct >= 0
+                                                    ? textClass.warn
+                                                    : textClass.highlight
+                                                }`}
+                                              >
+                                                {e.totalReturnPct > 0 ? '+' : ''}
+                                                {e.totalReturnPct.toFixed(2)}%
+                                              </td>
+                                            </>
+                                          )}
                                         </tr>
                                       ))}
                                     </tbody>
