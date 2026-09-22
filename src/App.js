@@ -1830,10 +1830,25 @@ const App = () => {
           const finalMarketValue = shares * finalPrice;
           const finalStockDividends = dividendCash;
 
-          const totalReturnVal = finalPrice - initialPrice + periodDividends;
-          const totalReturnPct = (totalReturnVal / initialPrice) * 100;
+          // 報酬率(含息/不含息)改用「實際投入本金」(totalInvested)當分母的金額加權報酬,
+          // 不再只用起始價/終值價計算——這樣「定期定額加碼」開啟、以及「一次性本金是否列入」
+          // 的設定不同時,含息報酬才會正確反映股數與投入時間點的差異。
+          // 關閉定期定額加碼時,totalInvested = allocated、shares = allocated/initialPrice,
+          // 數學上與過去的起始價/終值價公式完全等價,結果不變。
+          // totalInvested 為 0(僅在「不列入本金」且每月加碼金額也是 0 的退化情況下發生)時,
+          // 退回用起始/終值價計算,避免除以 0。
+          const totalReturnPct =
+            totalInvested > 0
+              ? ((finalMarketValue + finalStockDividends - totalInvested) /
+                  totalInvested) *
+                100
+              : ((finalPrice - initialPrice + periodDividends) /
+                  initialPrice) *
+                100;
           const priceReturnPct =
-            ((finalPrice - initialPrice) / initialPrice) * 100;
+            totalInvested > 0
+              ? ((finalMarketValue - totalInvested) / totalInvested) * 100
+              : ((finalPrice - initialPrice) / initialPrice) * 100;
           const dividendYield = (periodDividends / initialPrice) * 100;
 
           let annualizedDividendYield = 0;
