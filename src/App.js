@@ -353,6 +353,84 @@ const applySplitAdjustments = (stock) => {
   return notes;
 };
 
+// 標的組合排名表:固定對應「回測投資年限」裡的 6 個相對區間 + 2 個固定起始日快捷鈕,
+// 跟目前實際選擇的回測投資年限無關,一律同時算這 8 組區間的排名。
+const RANKING_PERIODS = [
+  { key: 'ytd', label: '今年' },
+  { key: '3m', label: '3個月', months: 3 },
+  { key: '6m', label: '半年', months: 6 },
+  { key: '12m', label: '近1年', months: 12 },
+  { key: '3y', label: '近3年', months: 36 },
+  { key: '5y', label: '近5年', months: 60 },
+  { key: 'fixed1', label: '2026/6/22', fixedStart: '2026-06-22' },
+  { key: 'fixed2', label: '2026/7/29', fixedStart: '2026-07-29' },
+];
+
+// 算法跟 runBacktest 裡「無加碼」時的起訖日推算完全同一套邏輯(結束日固定為
+// 前一個交易日、起訖日都避開非交易日),只是這裡一次算 8 組固定區間、跟使用者
+// 目前實際選的「回測投資年限」無關。
+const computeRankingPeriodRange = (period) => {
+  const rangeEnd = getLastCompletedTradingDay();
+  let rangeStart;
+  if (period.fixedStart) {
+    rangeStart = new Date(period.fixedStart);
+  } else if (period.key === 'ytd') {
+    rangeStart = new Date(rangeEnd.getFullYear(), 0, 1);
+  } else {
+    rangeStart = new Date(rangeEnd);
+    rangeStart.setMonth(rangeStart.getMonth() - period.months);
+  }
+  while (isNonTradingDay(rangeEnd)) rangeEnd.setDate(rangeEnd.getDate() - 1);
+  while (isNonTradingDay(rangeStart)) rangeStart.setDate(rangeStart.getDate() + 1);
+  return { rangeStart, rangeEnd };
+};
+
+// 排名表用的單一標的、單一區間報酬率:採簡單一次性買進、含息(不含加碼),
+// 算法跟主要回測「關閉定期定額加碼」時的 periodDividends/totalReturnPct 公式相同。
+// 資料起始日明顯晚於這個區間的起點時,代表這檔標的在這段期間內還沒有資料(例如
+// 近5年但標的3年前才上市),回傳 null 顯示「—」,不硬湊一個其實較短期間的報酬率。
+const computeStockReturnForRange = (stock, rangeStart, rangeEnd) => {
+  if (!stock.data || stock.data.length === 0) return null;
+  const firstDataDate = new Date(stock.data[0].date);
+  if (firstDataDate.getTime() > rangeStart.getTime() + 86400000 * 5) return null;
+
+  const startIdx = stock.data.findIndex(
+    (d) => new Date(d.date) >= rangeStart
+  );
+  if (startIdx === -1) return null;
+  let endIdx = -1;
+  for (let i = stock.data.length - 1; i >= 0; i--) {
+    if (new Date(stock.data[i].date) <= rangeEnd) {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx === -1 || endIdx <= startIdx) return null;
+
+  const startData = stock.data[startIdx];
+  const endData = stock.data[endIdx];
+  const initialPrice = startData.price;
+  const finalPrice = endData.price;
+  if (!(initialPrice > 0)) return null;
+
+  const periodStartTs = new Date(startData.date).getTime();
+  const periodEndTs = new Date(endData.date).getTime();
+  let periodDividends = 0;
+  (stock.divDates || []).forEach((ts) => {
+    if (ts >= periodStartTs && ts <= periodEndTs) {
+      const keySec = Math.floor(ts / 1000);
+      const divInfo =
+        stock.dividendsMap[keySec.toString()] ||
+        stock.dividendsMap[keySec] ||
+        stock.dividendsMap[ts];
+      if (divInfo) periodDividends += divInfo.amount;
+    }
+  });
+  if (periodDividends < 0) periodDividends = 0;
+
+  return ((finalPrice - initialPrice + periodDividends) / initialPrice) * 100;
+};
+
 const CustomizedDot = (props) => {
   const { cx, cy, payload, divDates } = props;
   const isExDiv =
@@ -780,6 +858,11 @@ const App = () => {
   // 我的常用標的(存在瀏覽器 localStorage,僅此裝置/瀏覽器有效)
   const [myPresetStocks, setMyPresetStocks] = useState(null);
 
+  // 標的組合排名表:只在按下「更新排名表」時才重新計算,詳見下方 updateRankingTable。
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [rankingError, setRankingError] = useState('');
+  const [rankingData, setRankingData] = useState(null);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem(MY_PRESET_STORAGE_KEY);
@@ -916,6 +999,92 @@ const App = () => {
   const hasSelectedStock = inputs.some(
     (val, idx) => val && enabledInputs[idx]
   );
+
+  // 標的組合排名表:獨立於主要回測流程之外,只在使用者按下「更新排名表」時才會
+  // 重新抓資料、重新計算,不會隨著「開始回測」或改變回測投資年限而跟著變動。
+  const updateRankingTable = async () => {
+    const activeStocks = inputs
+      .map((s, idx) => ({ s, idx }))
+      .filter((item) => item.s !== '' && enabledInputs[item.idx]);
+    if (activeStocks.length === 0) {
+      setRankingError('請至少勾選一檔標的');
+      return;
+    }
+    setRankingLoading(true);
+    setRankingError('');
+    try {
+      const rawResults = await Promise.all(
+        activeStocks.map((item) => fetchStockPriceData(item.s))
+      );
+      const successfulData = rawResults
+        .map((r, i) => (r ? { ...r, inputIndex: activeStocks[i].idx } : null))
+        .filter((r) => r && r.data.length > 0);
+
+      if (successfulData.length === 0) {
+        setRankingError('無法抓取任何有效數據,請檢查代碼或網路。');
+        setRankingLoading(false);
+        return;
+      }
+
+      successfulData.forEach((stock) => {
+        applySplitAdjustments(stock);
+      });
+
+      await Promise.all(
+        successfulData.map(async (stock) => {
+          if (stockNames[stock.symbol]) {
+            stock.stockName = stockNames[stock.symbol];
+          } else {
+            try {
+              const name = await fetchStockDisplayName(stock.symbol);
+              stock.stockName = name || '';
+            } catch (e) {
+              stock.stockName = '';
+            }
+          }
+        })
+      );
+      const newNamesMap = {};
+      successfulData.forEach((s) => {
+        if (s.stockName) newNamesMap[s.symbol] = s.stockName;
+      });
+      setStockNames((prev) => ({ ...prev, ...newNamesMap }));
+
+      const rows = successfulData.map((stock) => {
+        const returns = {};
+        RANKING_PERIODS.forEach((period) => {
+          const { rangeStart, rangeEnd } = computeRankingPeriodRange(period);
+          returns[period.key] = computeStockReturnForRange(
+            stock,
+            rangeStart,
+            rangeEnd
+          );
+        });
+        return { symbol: stock.symbol, stockName: stock.stockName, returns };
+      });
+
+      // 每個區間各自排名(報酬率高到低,1 = 表現最好),缺資料(null)的標的不參與排名。
+      const ranksByRow = rows.map(() => ({}));
+      RANKING_PERIODS.forEach((period) => {
+        rows
+          .map((row, i) => ({ i, val: row.returns[period.key] }))
+          .filter((x) => typeof x.val === 'number' && Number.isFinite(x.val))
+          .sort((a, b) => b.val - a.val)
+          .forEach((x, rankIdx) => {
+            ranksByRow[x.i][period.key] = rankIdx + 1;
+          });
+      });
+
+      setRankingData({
+        rows: rows.map((row, i) => ({ ...row, ranks: ranksByRow[i] })),
+        updatedAt: new Date(),
+      });
+    } catch (e) {
+      setRankingError('計算排名時發生錯誤,請稍後再試。');
+    } finally {
+      setRankingLoading(false);
+    }
+  };
 
   const handlePrint = () => {
     setIsConfigExpanded(false);
@@ -2889,6 +3058,87 @@ const App = () => {
                       </div>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-700/60">
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <label className="text-xs text-slate-400 font-bold">
+                      標的組合排名表
+                    </label>
+                    <button
+                      onClick={updateRankingTable}
+                      disabled={rankingLoading || !hasSelectedStock}
+                      className="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-700 text-white px-3 py-1.5 rounded-md border border-slate-600 transition-colors flex items-center gap-1 shrink-0"
+                    >
+                      {rankingLoading ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Table2 className="w-3.5 h-3.5" />
+                      )}
+                      更新排名表
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    列出目前已勾選標的,在「回測投資年限」的 6 個區間及 2 個固定起始日下的含息報酬率排名(1
+                    =表現最好,以紅字標示)。只算已勾選的標的、不含加碼,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
+                  </div>
+                  {rankingError && (
+                    <div className="text-[13px] text-rose-400 mb-2">
+                      {rankingError}
+                    </div>
+                  )}
+                  {rankingData && (
+                    <div className="overflow-x-auto">
+                      <table className="text-xs text-center border-collapse min-w-full">
+                        <thead>
+                          <tr>
+                            <th className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 sticky left-0"></th>
+                            {RANKING_PERIODS.map((p) => (
+                              <th
+                                key={p.key}
+                                className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 whitespace-nowrap font-mono"
+                              >
+                                {p.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rankingData.rows.map((row, i) => (
+                            <tr
+                              key={row.symbol}
+                              className={i % 2 === 0 ? 'bg-slate-800/70' : 'bg-slate-800/30'}
+                            >
+                              <td
+                                title={row.stockName}
+                                className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap"
+                              >
+                                {row.symbol}
+                              </td>
+                              {RANKING_PERIODS.map((p) => {
+                                const rank = row.ranks[p.key];
+                                return (
+                                  <td
+                                    key={p.key}
+                                    className={`px-2 py-1.5 border border-slate-700 font-bold font-mono ${
+                                      rank === 1
+                                        ? 'text-rose-400'
+                                        : 'text-slate-300'
+                                    }`}
+                                  >
+                                    {rank ?? '—'}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div className="text-[13px] text-slate-500 mt-1">
+                        更新時間: {rankingData.updatedAt.toLocaleString('zh-TW')}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
