@@ -75,7 +75,8 @@ const describeConfig = (config) => {
         line.topUpMode === 'multiple'
           ? `${line.topUpValue}倍`
           : `$${Math.round(line.topUpValue).toLocaleString()}`;
-      parts.push(`${MA_LINE_LABELS[key]} 偏離${line.deviationPct}%/${modeLabel}`);
+      const triggerLabel = config.useKLineCrossTrigger ? 'K線穿越均線' : `偏離${line.deviationPct}%`;
+      parts.push(`${MA_LINE_LABELS[key]} ${triggerLabel}/${modeLabel}`);
     }
   });
   if (parts.length === 0) parts.push('未啟用加碼(純定期定額)');
@@ -112,6 +113,7 @@ export default function DcaOptimizer() {
     max: 100,
     step: 0,
   });
+  const [useKLineCrossTrigger, setUseKLineCrossTrigger] = useState(false);
   const [objective, setObjective] = useState(OPTIMIZE_OBJECTIVES.BALANCED);
 
   const [loading, setLoading] = useState(false);
@@ -139,8 +141,17 @@ export default function DcaOptimizer() {
       },
       monthlyTriggerCapRange,
       reinvestRatioRange,
+      useKLineCrossTrigger,
     }),
-    [startDate, monthlyAmount, investDay, maLineConfigs, monthlyTriggerCapRange, reinvestRatioRange]
+    [
+      startDate,
+      monthlyAmount,
+      investDay,
+      maLineConfigs,
+      monthlyTriggerCapRange,
+      reinvestRatioRange,
+      useKLineCrossTrigger,
+    ]
   );
 
   const previewCombinationCount = useMemo(() => {
@@ -307,6 +318,24 @@ export default function DcaOptimizer() {
         <h3 className="font-bold text-slate-100 flex items-center gap-2">
           加碼條件(三組,各自獨立開關)
         </h3>
+
+        <label className="flex items-start gap-2 cursor-pointer bg-slate-900/50 border border-slate-700 rounded-lg p-3">
+          <input
+            type="checkbox"
+            checked={useKLineCrossTrigger}
+            onChange={() => setUseKLineCrossTrigger((v) => !v)}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="font-bold text-sm text-slate-200">
+              用「K線穿越均線」判斷加碼(取代偏離%規則)
+            </span>
+            <div className="text-[12px] text-slate-400 mt-0.5 leading-relaxed">
+              全域套用於所有已啟用的均線:模擬在均線價位掛買進限價單——前一天收盤價高於前一天均線,且今天最低價跌到均線價位以下(含等於)才成交。開啟後,下方各均線的「觸發偏離%」範圍會停用,不會納入最佳化搜尋。
+            </div>
+          </span>
+        </label>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           {MA_LINE_KEYS.map((key) => {
             const line = maLineConfigs[key];
@@ -327,9 +356,10 @@ export default function DcaOptimizer() {
                 </label>
                 {line.enabled && (
                   <>
-                    <div>
+                    <div className={useKLineCrossTrigger ? 'opacity-40 pointer-events-none' : ''}>
                       <div className="text-[12px] text-slate-400 mb-1">
                         觸發偏離%(收盤價低於均線多少% 觸發)
+                        {useKLineCrossTrigger && '(已改用K線穿越,此設定停用)'}
                       </div>
                       <RangeInputGroup
                         unit="%"
@@ -611,8 +641,18 @@ export default function DcaOptimizer() {
                             <td className="py-1 font-mono">{e.date}</td>
                             <td className="py-1">{e.lineLabel}</td>
                             <td className="py-1">
-                              收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
-                              乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                              {e.triggerMode === 'kline' ? (
+                                <>
+                                  前一天收盤 {e.prevPrice.toFixed(2)} {'>'} 前一天均線{' '}
+                                  {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
+                                  {e.ma.toFixed(2)}
+                                </>
+                              ) : (
+                                <>
+                                  收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
+                                  乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                                </>
+                              )}
                               {e.skipped
                                 ? ',但當月加碼配額已用完,未實際加碼'
                                 : `,依設定${
@@ -630,7 +670,10 @@ export default function DcaOptimizer() {
                     </table>
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1">
-                    「觸發」代表收盤價當天首次跌破該均線的乖離門檻;若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+                    {item.config.useKLineCrossTrigger
+                      ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天收盤高於前一天均線,且當天最低價跌到均線價位以下);'
+                      : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
+                    若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
                   </div>
                 </details>
               )}

@@ -174,10 +174,14 @@ const fetchWithSuffix = async (
       const dateStr = new Date(ts * 1000).toISOString().split('T')[0];
       const closePrice = quotes.close[i];
       if (closePrice !== null && closePrice !== undefined) {
+        const highPrice = quotes.high?.[i];
+        const lowPrice = quotes.low?.[i];
         data.push({
           date: dateStr,
           timestamp: ts * 1000,
           price: closePrice,
+          high: highPrice !== null && highPrice !== undefined ? highPrice : undefined,
+          low: lowPrice !== null && lowPrice !== undefined ? lowPrice : undefined,
           accumulatedDividend: 0,
         });
       }
@@ -234,12 +238,19 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
       });
     }
 
-    const data = priceJson.data.map((p) => ({
-      date: p.date,
-      timestamp: new Date(p.date).getTime(),
-      price: p.close,
-      accumulatedDividend: 0,
-    }));
+    // FinMind TaiwanStockPrice 欄位用 max/min 代表當天最高/最低價(不是 high/low)。
+    const data = priceJson.data.map((p) => {
+      const high = p.max;
+      const low = p.min;
+      return {
+        date: p.date,
+        timestamp: new Date(p.date).getTime(),
+        price: p.close,
+        high: typeof high === 'number' && Number.isFinite(high) ? high : undefined,
+        low: typeof low === 'number' && Number.isFinite(low) ? low : undefined,
+        accumulatedDividend: 0,
+      };
+    });
 
     return {
       symbol,
@@ -281,11 +292,15 @@ const fetchTWSEMonth = async (symbol, year, month) => {
       .map((row) => {
         const dateStr = rocDateToISO(row[0]);
         const close = parseFloat(String(row[6]).replace(/,/g, ''));
+        const high = parseFloat(String(row[4]).replace(/,/g, ''));
+        const low = parseFloat(String(row[5]).replace(/,/g, ''));
         if (!dateStr || !Number.isFinite(close)) return null;
         return {
           date: dateStr,
           timestamp: new Date(dateStr).getTime(),
           price: close,
+          high: Number.isFinite(high) ? high : undefined,
+          low: Number.isFinite(low) ? low : undefined,
           accumulatedDividend: 0,
         };
       })
@@ -460,14 +475,23 @@ const getFetchAnchorStartDate = () => {
   return start;
 };
 
+// 舊版程式抓的快取只有收盤價,沒有當天最高/最低價(K線穿越均線判斷需要這兩個
+// 欄位)。用這個判斷「這份快取是不是舊格式」,只要有任何一天缺 high 或 low
+// 就視為不完整,整檔重新即時抓取以補齊(不是逐天補,因為三層資料源都是整段
+// 歷史一起回傳,重抓一次最省事也最不會欄位對不齊)。
+const priceCacheMissingHighLow = (data) =>
+  !Array.isArray(data) ||
+  data.length === 0 ||
+  data.some((d) => typeof d.high !== 'number' || typeof d.low !== 'number');
+
 // 股價/配息資料的對外主要入口:cache-first。
-// 只要 localStorage 已經有這檔代碼的快取(不論是多久以前存的),就直接回傳、
-// 完全不打 API;只有「這檔代碼從來沒有成功查詢過」才會發出即時抓取
-// (FinMind → TWSE → Yahoo 三層備援),一次抓最近 FETCH_HISTORY_YEARS 年的
-// 完整歷史,抓到後永久存快取。
+// 只要 localStorage 已經有這檔代碼的快取(不論是多久以前存的)且格式完整,
+// 就直接回傳、完全不打 API;「這檔代碼從來沒有成功查詢過」或「快取是舊格式
+// 缺高低價」都會發出即時抓取(FinMind → TWSE → Yahoo 三層備援),一次抓最近
+// FETCH_HISTORY_YEARS 年的完整歷史,抓到後永久存快取(覆蓋舊格式快取)。
 export const fetchStockPriceData = async (symbol) => {
   const cached = loadPriceCache(symbol);
-  if (cached && cached.data && cached.data.length > 0) {
+  if (cached && cached.data && cached.data.length > 0 && !priceCacheMissingHighLow(cached.data)) {
     return {
       symbol,
       data: cached.data,

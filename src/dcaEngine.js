@@ -142,8 +142,15 @@ const computeYearlyBreakdown = (valueSeries) => {
 };
 
 export const runDcaStrategy = (preprocessedData, config) => {
-  const { startDate, monthlyAmount, investDay, maLines, monthlyTriggerCap, reinvestRatio } =
-    config;
+  const {
+    startDate,
+    monthlyAmount,
+    investDay,
+    maLines,
+    monthlyTriggerCap,
+    reinvestRatio,
+    useKLineCrossTrigger, // 全域開關:true 時所有已啟用均線改用「K線穿越」判斷,取代乖離率
+  } = config;
 
   const startTs = new Date(startDate).getTime();
   const days = preprocessedData.filter((d) => d.timestamp >= startTs);
@@ -160,8 +167,12 @@ export const runDcaStrategy = (preprocessedData, config) => {
   let currentMonthKey = null;
   let monthlyTriggerCount = 0;
   const insideBand = { ma20: false, ma60: false, ma120: false };
+  // K線穿越模式用:記錄「前一天」的收盤價與各條均線值,不需要邊緣觸發狀態,
+  // 因為「前一天收盤>前一天均線」這個條件本身就會隨每天收盤自然重置。
+  let prevPrice = null;
+  const prevMaByLine = { ma20: null, ma60: null, ma120: null };
   const valueSeries = [];
-  const topUpEvents = []; // 每一次實際成交的加碼記錄:{date, lineKey, lineLabel, deviationPct, thresholdPct, price, ma, topUpAmount, topUpMode, shares, skippedByCap}
+  const topUpEvents = []; // 每一次實際成交(或被配額擋下)的加碼記錄
 
   days.forEach((day) => {
     const monthKey = day.date.slice(0, 7);
@@ -183,12 +194,46 @@ export const runDcaStrategy = (preprocessedData, config) => {
       const ma = day[lineKey];
       if (ma === null || ma === undefined || !(ma > 0)) return;
 
-      const deviation = (day.price - ma) / ma; // 負值代表跌破均線
-      const threshold = -Math.abs(lineConfig.deviationPct) / 100;
-      const isInBandNow = deviation <= threshold;
+      let triggeredToday = false;
+      let deviation = null;
 
-      if (isInBandNow && !insideBand[lineKey]) {
+      if (useKLineCrossTrigger) {
+        // 模擬「在均線價位掛買進限價單」:前一天收盤價要高於前一天的均線,
+        // 且今天最低價跌到均線價位以下(含等於),這張單今天才會成交。
+        const prevMa = prevMaByLine[lineKey];
+        const hasLow = typeof day.low === 'number' && Number.isFinite(day.low);
+        triggeredToday =
+          prevPrice !== null &&
+          prevMa !== null &&
+          prevMa > 0 &&
+          prevPrice > prevMa &&
+          hasLow &&
+          day.low <= ma;
+      } else {
+        deviation = (day.price - ma) / ma; // 負值代表跌破均線
+        const threshold = -Math.abs(lineConfig.deviationPct) / 100;
+        const isInBandNow = deviation <= threshold;
+        triggeredToday = isInBandNow && !insideBand[lineKey];
+        insideBand[lineKey] = isInBandNow;
+      }
+
+      if (triggeredToday) {
         const withinCap = monthlyTriggerCap > 0 && monthlyTriggerCount < monthlyTriggerCap;
+        const baseEvent = {
+          date: day.date,
+          lineKey,
+          lineLabel: MA_LINE_LABELS[lineKey],
+          triggerMode: useKLineCrossTrigger ? 'kline' : 'deviation',
+          price: day.price,
+          ma,
+          deviationPct: deviation !== null ? deviation * 100 : null,
+          thresholdPct: useKLineCrossTrigger ? null : lineConfig.deviationPct,
+          low: useKLineCrossTrigger ? day.low : null,
+          prevPrice: useKLineCrossTrigger ? prevPrice : null,
+          prevMa: useKLineCrossTrigger ? prevMaByLine[lineKey] : null,
+          topUpMode: lineConfig.topUpMode,
+          topUpValue: lineConfig.topUpValue,
+        };
         if (withinCap) {
           const topUpAmount =
             lineConfig.topUpMode === 'multiple'
@@ -199,40 +244,20 @@ export const runDcaStrategy = (preprocessedData, config) => {
             shares += topUpShares;
             totalInvested += topUpAmount;
             monthlyTriggerCount += 1;
-            topUpEvents.push({
-              date: day.date,
-              lineKey,
-              lineLabel: MA_LINE_LABELS[lineKey],
-              deviationPct: deviation * 100,
-              thresholdPct: lineConfig.deviationPct,
-              price: day.price,
-              ma,
-              topUpMode: lineConfig.topUpMode,
-              topUpValue: lineConfig.topUpValue,
-              topUpAmount,
-              shares: topUpShares,
-              skipped: false,
-            });
+            topUpEvents.push({ ...baseEvent, topUpAmount, shares: topUpShares, skipped: false });
           }
         } else if (monthlyTriggerCap > 0) {
           // 有啟用加碼,但當月配額已被其他線用完:記錄下來讓使用者知道「這次沒買到」的原因。
-          topUpEvents.push({
-            date: day.date,
-            lineKey,
-            lineLabel: MA_LINE_LABELS[lineKey],
-            deviationPct: deviation * 100,
-            thresholdPct: lineConfig.deviationPct,
-            price: day.price,
-            ma,
-            topUpMode: lineConfig.topUpMode,
-            topUpValue: lineConfig.topUpValue,
-            topUpAmount: 0,
-            shares: 0,
-            skipped: true,
-          });
+          topUpEvents.push({ ...baseEvent, topUpAmount: 0, shares: 0, skipped: true });
         }
       }
-      insideBand[lineKey] = isInBandNow;
+    });
+
+    // 記錄「今天」的收盤價與均線值,供下一天判斷「前一天」用。
+    prevPrice = day.price;
+    MA_LINE_KEYS.forEach((lineKey) => {
+      const ma = day[lineKey];
+      prevMaByLine[lineKey] = ma !== null && ma !== undefined && ma > 0 ? ma : null;
     });
 
     // 3. 除息配息:以除息日當天收盤價買入再投入部分
@@ -336,18 +361,22 @@ export const COMBINATION_COUNT_HARD_LIMIT = 20000;
 //   },
 //   monthlyTriggerCapRange: { min, max, step },
 //   reinvestRatioRange: { min, max, step }, // 單位:百分比(0~100)
+//   useKLineCrossTrigger: boolean, // 全域開關:true 時所有已啟用均線改用「K線穿越」判斷,
+//                                   // 此時 deviationRange 不會被展開(該參數無意義),
+//                                   // 只展開 topUpRange 等其餘參數,避免浪費組合數。
 // }
 export const buildParamCombinations = (optimizerConfig) => {
-  const { base, maLines, monthlyTriggerCapRange, reinvestRatioRange } = optimizerConfig;
+  const { base, maLines, monthlyTriggerCapRange, reinvestRatioRange, useKLineCrossTrigger } =
+    optimizerConfig;
 
   const lineValueLists = MA_LINE_KEYS.map((key) => {
     const line = maLines[key];
     if (!line || !line.enabled) return [null]; // null = 這條線在這次最佳化搜尋中完全停用
-    const deviations = expandRange(
-      line.deviationRange.min,
-      line.deviationRange.max,
-      line.deviationRange.step
-    );
+    // K線穿越模式下 deviationPct 不會被使用,不展開範圍、固定用單一值即可,
+    // 避免在這個無意義的維度上重複跑一堆相同結果的組合。
+    const deviations = useKLineCrossTrigger
+      ? [line.deviationRange?.min ?? 0]
+      : expandRange(line.deviationRange.min, line.deviationRange.max, line.deviationRange.step);
     const topUps = expandRange(line.topUpRange.min, line.topUpRange.max, line.topUpRange.step);
     const combos = [];
     deviations.forEach((deviationPct) => {
@@ -395,6 +424,7 @@ export const buildParamCombinations = (optimizerConfig) => {
     },
     monthlyTriggerCap: cap,
     reinvestRatio: reinvestPct / 100,
+    useKLineCrossTrigger: !!useKLineCrossTrigger,
   }));
 };
 
