@@ -1818,15 +1818,48 @@ const App = () => {
               divInfo?.amount || 0
             );
           });
-          filteredData.forEach((day) => {
+
+          // 預先算好「某一天之後(不含當天)」還會發生多少配息(每股),
+          // 用來推算「某一筆加碼的股數,從買進那天到回測結束為止,總共能領到多少配息」——
+          // 跟主迴圈一樣,買進當天不算,要隔天以後的配息才算這筆加碼的。
+          const dailyDivAmounts = filteredData.map(
+            (day) => divAmountByDate.get(day.date) || 0
+          );
+          const suffixDivSum = new Array(filteredData.length + 1).fill(0);
+          for (let i = filteredData.length - 1; i >= 0; i--) {
+            suffixDivSum[i] = suffixDivSum[i + 1] + dailyDivAmounts[i];
+          }
+
+          const topUpEvents = [];
+          filteredData.forEach((day, dayIndex) => {
             // 配息入帳要用「當天加碼買進之前」持有的股數:除息當天才買進的這一筆,
             // 現實中還沒資格領當天的配息,所以要先算配息、再處理當天的加碼買進,
             // 順序對調的話,萬一加碼日剛好跟除息日同一天,會多算到不該有的配息。
             const divAmount = divAmountByDate.get(day.date);
             if (divAmount) dividendCash += shares * divAmount;
             if (topUpDateSet && topUpDateSet.has(day.date)) {
-              shares += monthlyTopUpAmount / day.price;
+              const boughtShares = monthlyTopUpAmount / day.price;
+              shares += boughtShares;
               totalInvested += monthlyTopUpAmount;
+
+              // 這一筆加碼「從買進那天到回測結束」自己的報酬率,跟是否列入本金無關——
+              // 不含息只看股價漲跌,含息則再加上買進後(不含當天)實際能領到的配息。
+              const futureDivPerShare = suffixDivSum[dayIndex + 1];
+              const eventPriceReturnPct =
+                ((finalPrice - day.price) / day.price) * 100;
+              const eventTotalReturnPct =
+                ((finalPrice - day.price + futureDivPerShare) / day.price) *
+                100;
+              topUpEvents.push({
+                date: day.date,
+                symbol: stock.symbol,
+                stockName: stock.stockName,
+                price: day.price,
+                shares: boughtShares,
+                amount: monthlyTopUpAmount,
+                priceReturnPct: eventPriceReturnPct,
+                totalReturnPct: eventTotalReturnPct,
+              });
             }
           });
 
@@ -2034,6 +2067,7 @@ const App = () => {
             finalMarketValue,
             finalStockDividends,
             finalTotalValue: finalMarketValue + finalStockDividends,
+            topUpEvents,
           };
         })
         .filter((r) => r !== null);
@@ -3932,6 +3966,105 @@ const App = () => {
                                 </details>
                               </div>
                             )}
+
+                          {item.topUpEvents && item.topUpEvents.length > 0 && (
+                            <div className="mt-2 pt-1 border-t border-slate-700/30">
+                              <details className="group">
+                                <summary className="text-[15px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
+                                  <Table2 className="w-3 h-3" /> 共{' '}
+                                  {item.topUpEvents.length} 次定期定額加碼明細
+                                </summary>
+                                <div
+                                  className={`mt-1 overflow-x-auto rounded border ${
+                                    printMode
+                                      ? 'border-gray-200'
+                                      : 'border-slate-700/50'
+                                  }`}
+                                >
+                                  <table className="w-full text-[16px] leading-normal text-left">
+                                    <thead
+                                      className={`${
+                                        printMode
+                                          ? 'bg-gray-100'
+                                          : 'bg-slate-700/30'
+                                      } text-slate-500`}
+                                    >
+                                      <tr>
+                                        <th className="py-2 pl-2">加碼日期</th>
+                                        <th className="py-2">股票</th>
+                                        <th className="py-2 text-right">
+                                          進場價
+                                        </th>
+                                        <th className="py-2 text-right">
+                                          至期末不含息報酬
+                                        </th>
+                                        <th className="py-2 pr-2 text-right">
+                                          至期末含息報酬
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody
+                                      className={`divide-y ${
+                                        printMode
+                                          ? 'divide-gray-100'
+                                          : 'divide-slate-700/30'
+                                      }`}
+                                    >
+                                      {item.topUpEvents.map((e, i) => (
+                                        <tr
+                                          key={i}
+                                          className={
+                                            printMode
+                                              ? 'hover:bg-gray-50'
+                                              : 'hover:bg-slate-700/20'
+                                          }
+                                        >
+                                          <td
+                                            className={`py-2 pl-2 font-mono ${textClass.sub}`}
+                                          >
+                                            {e.date}
+                                          </td>
+                                          <td className={`py-2 ${textClass.sub}`}>
+                                            {e.symbol}
+                                            {e.stockName && (
+                                              <span className="text-xs font-normal text-slate-400 ml-1">
+                                                {e.stockName}
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td
+                                            className={`py-2 font-mono text-right ${textClass.main}`}
+                                          >
+                                            {e.price.toFixed(2)}
+                                          </td>
+                                          <td
+                                            className={`py-2 font-mono text-right ${
+                                              e.priceReturnPct >= 0
+                                                ? textClass.warn
+                                                : textClass.highlight
+                                            }`}
+                                          >
+                                            {e.priceReturnPct > 0 ? '+' : ''}
+                                            {e.priceReturnPct.toFixed(2)}%
+                                          </td>
+                                          <td
+                                            className={`py-2 pr-2 font-mono text-right ${
+                                              e.totalReturnPct >= 0
+                                                ? textClass.warn
+                                                : textClass.highlight
+                                            }`}
+                                          >
+                                            {e.totalReturnPct > 0 ? '+' : ''}
+                                            {e.totalReturnPct.toFixed(2)}%
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </details>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
