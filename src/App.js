@@ -726,12 +726,16 @@ const App = () => {
 
   const [totalCapital, setTotalCapital] = useState(6000000);
 
-  // 定期定額加碼開關:開啟後,在原本一次性投入的本金之外,
-  // 每個月固定日期(monthlyTopUpDay)額外加碼投入 monthlyTopUpAmount 元,
+  // 定期定額加碼開關:開啟後,每個月固定日期(monthlyTopUpDay)加碼投入 monthlyTopUpAmount 元,
   // 從回測起始日持續到結束日,所有比較中的標的都會套用同一組設定。
+  // monthlyTopUpIncludeLumpSum 控制「最上面設定的一次性本金」是否也列入:
+  // true(預設)= 一次性本金照常投入,每月加碼是額外加上去的;
+  // false = 不做一次性投入,完全從零開始,只靠每月加碼逐步建立部位。
   const [monthlyTopUpEnabled, setMonthlyTopUpEnabled] = useState(false);
   const [monthlyTopUpDay, setMonthlyTopUpDay] = useState(5);
   const [monthlyTopUpAmount, setMonthlyTopUpAmount] = useState(10000);
+  const [monthlyTopUpIncludeLumpSum, setMonthlyTopUpIncludeLumpSum] =
+    useState(true);
 
   const [allocations, setAllocations] = useState({
     0: 16.6666,
@@ -1783,15 +1787,19 @@ const App = () => {
           });
           if (periodDividends < 0) periodDividends = 0;
 
-          // 定期定額加碼開關:在一次性本金之外,計算「實際投入本金/股數/配息現金」。
+          // 定期定額加碼開關:計算「實際投入本金/股數/配息現金」。
           // 關閉時邏輯與過去完全相同(shares 固定 = allocated/initialPrice,
           // dividendCash = shares * periodDividends);開啟時改成逐日模擬——
           // 每個月固定日期加碼買進、股數隨時間增加,配息現金則依「當下實際持有股數」
           // 逐次入帳,而不是用回測結束時的股數去回推整個期間的配息。
+          // useLumpSum 為 false 時(使用者選擇「不列入本金」),不做一開始的一次性投入,
+          // 完全從零股數開始,只靠每月加碼逐步建立部位。
           const weight = finalAllocations[stock.inputIndex] || 0;
           const allocated = totalCapital * (weight / 100);
-          let shares = initialPrice > 0 ? allocated / initialPrice : 0;
-          let totalInvested = allocated;
+          const useLumpSum =
+            !monthlyTopUpEnabled || monthlyTopUpIncludeLumpSum;
+          let shares = useLumpSum && initialPrice > 0 ? allocated / initialPrice : 0;
+          let totalInvested = useLumpSum ? allocated : 0;
           let dividendCash = 0;
 
           const topUpDateSet =
@@ -2298,9 +2306,9 @@ const App = () => {
         </div>
       )}
 
-      {/* 手機版初始設定頁的浮動按鈕:設定項目多、頁面拉很長,不想每次都滑到最底才能開始回測,
-          直接提供一顆「測」浮動鈕,按下即直接開始回測;沿用主要開始回測按鈕的 disabled 判斷,避免在設定不合法時誤觸 */}
-      {!results && !loading && !printMode && (
+      {/* 手機版浮動按鈕:不論設定頁或結果頁、頁面內容多長,都常駐顯示,方便隨時重新執行回測,
+          按下即直接(重新)開始回測;沿用主要開始回測按鈕的 disabled 判斷,避免在設定不合法時誤觸 */}
+      {!loading && !printMode && (
         <button
           onClick={() => runBacktest()}
           disabled={
@@ -2311,14 +2319,14 @@ const App = () => {
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
           }`}
-          title="直接開始回測"
+          title="重新執行回測"
         >
           <Zap className="w-6 h-6 fill-current" />
         </button>
       )}
 
-      {/* 手機版初始設定頁的浮動按鈕:設定項目多、頁面拉很長,提供快速跳到最底部(開始回測按鈕)的捷徑 */}
-      {!results && !loading && !printMode && (
+      {/* 手機版浮動按鈕:不論設定頁或結果頁,都常駐顯示,提供快速跳到頁面最底部的捷徑 */}
+      {!loading && !printMode && (
         <button
           onClick={() =>
             window.scrollTo({
@@ -2425,40 +2433,76 @@ const App = () => {
                     </span>
                   </label>
                   <div className="text-[11px] text-slate-500 leading-relaxed">
-                    開啟後,在上面的一次性本金之外,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
+                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
                   </div>
                   {monthlyTopUpEnabled && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-[11px] text-slate-500 mb-1">
-                          每月投入日(1~31)
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[11px] text-slate-500 mb-1">
+                            每月投入日(1~31)
+                          </div>
+                          <input
+                            type="number"
+                            min={1}
+                            max={31}
+                            value={monthlyTopUpDay}
+                            onChange={(e) =>
+                              setMonthlyTopUpDay(parseInt(e.target.value, 10) || 1)
+                            }
+                            className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                          />
                         </div>
-                        <input
-                          type="number"
-                          min={1}
-                          max={31}
-                          value={monthlyTopUpDay}
-                          onChange={(e) =>
-                            setMonthlyTopUpDay(parseInt(e.target.value, 10) || 1)
-                          }
-                          className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
-                        />
+                        <div>
+                          <div className="text-[11px] text-slate-500 mb-1">
+                            每月加碼金額(元)
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            value={monthlyTopUpAmount}
+                            onChange={(e) =>
+                              setMonthlyTopUpAmount(parseFloat(e.target.value) || 0)
+                            }
+                            className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                          />
+                        </div>
                       </div>
                       <div>
                         <div className="text-[11px] text-slate-500 mb-1">
-                          每月加碼金額(元)
+                          最上面設定的一次性本金
                         </div>
-                        <input
-                          type="number"
-                          min={0}
-                          value={monthlyTopUpAmount}
-                          onChange={(e) =>
-                            setMonthlyTopUpAmount(parseFloat(e.target.value) || 0)
-                          }
-                          className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
-                        />
+                        <div className="grid grid-cols-2 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setMonthlyTopUpIncludeLumpSum(true)}
+                            className={`text-xs rounded p-1.5 border ${
+                              monthlyTopUpIncludeLumpSum
+                                ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                                : 'bg-slate-800 border-slate-600 text-slate-400'
+                            }`}
+                          >
+                            列入(本金+每月加碼)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMonthlyTopUpIncludeLumpSum(false)}
+                            className={`text-xs rounded p-1.5 border ${
+                              !monthlyTopUpIncludeLumpSum
+                                ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                                : 'bg-slate-800 border-slate-600 text-slate-400'
+                            }`}
+                          >
+                            不列入(只用每月加碼)
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-slate-500 leading-relaxed mt-1">
+                          {monthlyTopUpIncludeLumpSum
+                            ? '一開始會照常投入一次性本金,之後每月再額外加碼。'
+                            : '一開始不投入一次性本金,完全從零股數開始,只靠每月加碼逐步買進。'}
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
