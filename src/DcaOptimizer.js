@@ -331,7 +331,7 @@ export default function DcaOptimizer() {
               用「K線穿越均線」判斷加碼(取代偏離%規則)
             </span>
             <div className="text-[12px] text-slate-400 mt-0.5 leading-relaxed">
-              全域套用於所有已啟用的均線:模擬在均線價位掛買進限價單——前一天收盤價高於前一天均線,且今天最低價跌到均線價位以下(含等於)才成交。開啟後,下方各均線的「觸發偏離%」範圍會停用,不會納入最佳化搜尋。
+              全域套用於所有已啟用的均線:模擬在均線價位掛買進限價單——前一天最低價高於前一天均線(代表前一天整天都沒碰到均線),且今天最低價跌到均線價位以下(含等於)才成交,可避免股價與均線糾結、來回穿越時天天重複加碼。開啟後,下方各均線的「觸發偏離%」範圍會停用,不會納入最佳化搜尋。
             </div>
           </span>
         </label>
@@ -643,7 +643,7 @@ export default function DcaOptimizer() {
                             <td className="py-1">
                               {e.triggerMode === 'kline' ? (
                                 <>
-                                  前一天收盤 {e.prevPrice.toFixed(2)} {'>'} 前一天均線{' '}
+                                  前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
                                   {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
                                   {e.ma.toFixed(2)}
                                 </>
@@ -671,7 +671,7 @@ export default function DcaOptimizer() {
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1">
                     {item.config.useKLineCrossTrigger
-                      ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天收盤高於前一天均線,且當天最低價跌到均線價位以下);'
+                      ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
                       : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
                     若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
                   </div>

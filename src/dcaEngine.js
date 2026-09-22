@@ -167,9 +167,12 @@ export const runDcaStrategy = (preprocessedData, config) => {
   let currentMonthKey = null;
   let monthlyTriggerCount = 0;
   const insideBand = { ma20: false, ma60: false, ma120: false };
-  // K線穿越模式用:記錄「前一天」的收盤價與各條均線值,不需要邊緣觸發狀態,
-  // 因為「前一天收盤>前一天均線」這個條件本身就會隨每天收盤自然重置。
-  let prevPrice = null;
+  // K線穿越模式用:記錄「前一天」的最低價與各條均線值,不需要額外的邊緣觸發狀態,
+  // 因為「前一天最低價>前一天均線」這個條件本身就會自然形成重置機制——只要前一天
+  // 已經觸發過(代表前一天最低價已經跌到均線之下),隔天這個條件必定不成立,
+  // 直到出現一個完整交易日「當天最低價全天都沒有碰到均線」才會重新解鎖,
+  // 避免股價與均線糾結、來回穿越時天天觸發、重複加碼。
+  let prevLow = null;
   const prevMaByLine = { ma20: null, ma60: null, ma120: null };
   const valueSeries = [];
   const topUpEvents = []; // 每一次實際成交(或被配額擋下)的加碼記錄
@@ -198,15 +201,18 @@ export const runDcaStrategy = (preprocessedData, config) => {
       let deviation = null;
 
       if (useKLineCrossTrigger) {
-        // 模擬「在均線價位掛買進限價單」:前一天收盤價要高於前一天的均線,
-        // 且今天最低價跌到均線價位以下(含等於),這張單今天才會成交。
+        // 模擬「在均線價位掛買進限價單」:前一天最低價要高於前一天的均線
+        // (代表前一天整天都沒有碰到均線),且今天最低價跌到均線價位以下
+        // (含等於),這張單今天才會成交。用「最低價」而不是收盤價做前一天的
+        // 判斷,是為了避免股價與均線糾結、來回穿越時天天觸發:只要前一天已經
+        // 觸發過,前一天的最低價必定已經 ≤ 前一天均線,隔天就不會符合條件。
         const prevMa = prevMaByLine[lineKey];
         const hasLow = typeof day.low === 'number' && Number.isFinite(day.low);
         triggeredToday =
-          prevPrice !== null &&
+          prevLow !== null &&
           prevMa !== null &&
           prevMa > 0 &&
-          prevPrice > prevMa &&
+          prevLow > prevMa &&
           hasLow &&
           day.low <= ma;
       } else {
@@ -229,7 +235,7 @@ export const runDcaStrategy = (preprocessedData, config) => {
           deviationPct: deviation !== null ? deviation * 100 : null,
           thresholdPct: useKLineCrossTrigger ? null : lineConfig.deviationPct,
           low: useKLineCrossTrigger ? day.low : null,
-          prevPrice: useKLineCrossTrigger ? prevPrice : null,
+          prevLow: useKLineCrossTrigger ? prevLow : null,
           prevMa: useKLineCrossTrigger ? prevMaByLine[lineKey] : null,
           topUpMode: lineConfig.topUpMode,
           topUpValue: lineConfig.topUpValue,
@@ -253,8 +259,8 @@ export const runDcaStrategy = (preprocessedData, config) => {
       }
     });
 
-    // 記錄「今天」的收盤價與均線值,供下一天判斷「前一天」用。
-    prevPrice = day.price;
+    // 記錄「今天」的最低價與均線值,供下一天判斷「前一天」用。
+    prevLow = typeof day.low === 'number' && Number.isFinite(day.low) ? day.low : null;
     MA_LINE_KEYS.forEach((lineKey) => {
       const ma = day[lineKey];
       prevMaByLine[lineKey] = ma !== null && ma !== undefined && ma > 0 ? ma : null;
