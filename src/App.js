@@ -47,7 +47,6 @@ import {
   X,
   CheckSquare,
   Square,
-  MousePointerClick,
   Loader2,
   CalendarDays,
   Table2,
@@ -352,61 +351,6 @@ const applySplitAdjustments = (stock) => {
     });
 
   return notes;
-};
-
-const calculatePeriodStats = (
-  allData,
-  months,
-  currentAllocations,
-  currentCapital
-) => {
-  const endDateObj = new Date();
-  const startDateObj = new Date();
-  startDateObj.setMonth(startDateObj.getMonth() - months);
-  let maxMinDate = startDateObj;
-  let isPartial = false;
-  const validStocks = allData.filter((s) => s.data.length > 5);
-  validStocks.forEach((stock) => {
-    const firstDate = new Date(stock.data[0].date);
-    if (firstDate > maxMinDate) {
-      maxMinDate = firstDate;
-      isPartial = true;
-    }
-  });
-  let totalStartValue = 0;
-  let totalEndValue = 0;
-  allData.forEach((stock) => {
-    const weight = currentAllocations[stock.inputIndex] || 0;
-    if (weight === 0) return;
-    const allocated = currentCapital * (weight / 100);
-    const startIndex = stock.data.findIndex(
-      (d) => new Date(d.date) >= maxMinDate
-    );
-    if (startIndex !== -1 && startIndex < stock.data.length) {
-      const startData = stock.data[startIndex];
-      const endData = stock.data[stock.data.length - 1];
-      if (startData && endData) {
-        const shares = allocated / startData.price;
-        const finalMarketVal = shares * endData.price;
-        totalStartValue += allocated;
-        totalEndValue += finalMarketVal;
-      } else {
-        totalStartValue += allocated;
-        totalEndValue += allocated;
-      }
-    } else {
-      totalStartValue += allocated;
-      totalEndValue += allocated;
-    }
-  });
-  if (totalStartValue === 0) return null;
-  const roi = ((totalEndValue - totalStartValue) / totalStartValue) * 100;
-  return {
-    months,
-    roi,
-    isPartial,
-    startDate: maxMinDate.toISOString().split('T')[0],
-  };
 };
 
 const CustomizedDot = (props) => {
@@ -751,6 +695,8 @@ const App = () => {
     useState(true);
   const anyTopUpEnabled = monthlyTopUpEnabled || klineTopUpEnabled;
 
+  // 標的選擇 & 配置:已移除手動拉桿/百分比/金額調整,一律採「已勾選標的平均分配本金」,
+  // enabledInputs 一變動就由下面的 useEffect 自動重新平均分配 allocations。
   const [allocations, setAllocations] = useState({
     0: 16.6666,
     1: 16.6666,
@@ -760,12 +706,9 @@ const App = () => {
     5: 16.667,
   });
 
-  const [allocationError, setAllocationError] = useState(false);
-
   const [isConfigExpanded, setIsConfigExpanded] = useState(true);
 
   const [results, setResults] = useState(null);
-  const [periodStats, setPeriodStats] = useState(null);
   const [comparisonInfo, setComparisonInfo] = useState(null);
   const [failedTickers, setFailedTickers] = useState([]);
 
@@ -939,99 +882,40 @@ const App = () => {
     }
   };
 
-  const handleAllocationChange = (index, value) => {
-    const newVal = Math.max(0, Math.min(100, Number(value)));
-    setAllocations((prev) => ({ ...prev, [index]: newVal }));
-  };
-
-  const handleAmountChange = (index, amountWan) => {
-    const newTargetAmount = Math.max(0, Math.round(Number(amountWan))) * 10000;
-    let currentAmounts = {};
-    inputs.forEach((_, idx) => {
-      const weight = allocations[idx] || 0;
-      currentAmounts[idx] = totalCapital * (weight / 100);
-    });
-    currentAmounts[index] = newTargetAmount;
-    const newTotalCapital = inputs.reduce((sum, _, idx) => {
-      return sum + (enabledInputs[idx] ? currentAmounts[idx] : 0);
-    }, 0);
-    const newAllocations = {};
-    inputs.forEach((_, idx) => {
-      if (newTotalCapital === 0) {
-        newAllocations[idx] = 0;
-      } else {
-        newAllocations[idx] = (currentAmounts[idx] / newTotalCapital) * 100;
-      }
-    });
-    setTotalCapital(newTotalCapital);
-    setAllocations(newAllocations);
-  };
-
   const handleTotalCapitalChange = (newTotalWan) => {
     setTotalCapital(Math.round(newTotalWan) * 10000);
   };
 
-  const toggleEnabled = (index) => {
-    const nextEnabled = { ...enabledInputs, [index]: !enabledInputs[index] };
-    const currentAmounts = {};
-    inputs.forEach((_, i) => {
-      const weight = allocations[i] || 0;
-      currentAmounts[i] = totalCapital * (weight / 100);
-    });
-    const newTotalCapital = inputs.reduce((sum, _, i) => {
-      return sum + (nextEnabled[i] ? currentAmounts[i] : 0);
-    }, 0);
+  // 已勾選的標的一律平均分配本金,enabledInputs 一變動就自動重算 allocations,
+  // 不再提供手動拉桿/百分比/金額調整。
+  useEffect(() => {
+    const enabledCount = inputs.reduce(
+      (count, _, idx) => count + (enabledInputs[idx] ? 1 : 0),
+      0
+    );
+    const equalWeight = enabledCount > 0 ? 100 / enabledCount : 0;
     const newAllocations = {};
-    inputs.forEach((_, i) => {
-      if (newTotalCapital === 0) {
-        newAllocations[i] = 0;
-      } else {
-        newAllocations[i] = (currentAmounts[i] / newTotalCapital) * 100;
-      }
+    inputs.forEach((_, idx) => {
+      newAllocations[idx] = enabledInputs[idx] ? equalWeight : 0;
     });
-    setEnabledInputs(nextEnabled);
-    setTotalCapital(newTotalCapital);
     setAllocations(newAllocations);
+  }, [enabledInputs]);
+
+  const toggleEnabled = (index) => {
+    setEnabledInputs((prev) => ({ ...prev, [index]: !prev[index] }));
   };
 
   const setAllEnabledTo100W = () => {
-    const newAmounts = {};
-    inputs.forEach((_, idx) => {
-      const weight = allocations[idx] || 0;
-      newAmounts[idx] = totalCapital * (weight / 100);
-    });
-    inputs.forEach((_, idx) => {
-      if (enabledInputs[idx]) {
-        newAmounts[idx] = 1000000;
-      }
-    });
-    const newTotalCapital = inputs.reduce((sum, _, idx) => {
-      return sum + (enabledInputs[idx] ? newAmounts[idx] : 0);
-    }, 0);
-    const newAllocations = {};
-    inputs.forEach((_, idx) => {
-      if (newTotalCapital === 0) {
-        newAllocations[idx] = 0;
-      } else {
-        newAllocations[idx] = (newAmounts[idx] / newTotalCapital) * 100;
-      }
-    });
-    setTotalCapital(newTotalCapital);
-    setAllocations(newAllocations);
+    const enabledCount = inputs.reduce(
+      (count, _, idx) => count + (enabledInputs[idx] ? 1 : 0),
+      0
+    );
+    setTotalCapital(enabledCount * 1000000);
   };
 
-  const currentRawTotalWeight = inputs.reduce((sum, _, idx) => {
-    return sum + (enabledInputs[idx] ? allocations[idx] || 0 : 0);
-  }, 0);
-
-  useEffect(() => {
-    const allChecked = Object.values(enabledInputs).every((v) => v);
-    if (allChecked) {
-      setAllocationError(Math.abs(currentRawTotalWeight - 100) > 0.1);
-    } else {
-      setAllocationError(false);
-    }
-  }, [currentRawTotalWeight, enabledInputs]);
+  const hasSelectedStock = inputs.some(
+    (val, idx) => val && enabledInputs[idx]
+  );
 
   const handlePrint = () => {
     setIsConfigExpanded(false);
@@ -1721,12 +1605,6 @@ const App = () => {
       setLoadingStagePhase('compute');
       setProgress(96);
 
-      const periods = [3, 6, 12, 36, 60];
-      const stats = periods.map((m) =>
-        calculatePeriodStats(successfulData, m, finalAllocations, totalCapital)
-      );
-      setPeriodStats(stats);
-
       const finalResults = finalStockList
         .map((stock) => {
           if (stock.isExcluded) {
@@ -1858,6 +1736,14 @@ const App = () => {
           }
 
           const topUpEvents = [];
+          // 「加碼策略」報酬率走勢(不含本金):跟主要的 shares/totalInvested 平行,
+          // 另外單獨追蹤「只靠加碼(定期定額+K線)買進的股數與投入金額」,完全不含
+          // 最上面的一次性本金,不論 monthlyTopUpIncludeLumpSum 設定為何都一樣——
+          // 用來單獨畫出「加碼策略本身」的報酬率走勢圖。
+          let topUpOnlyShares = 0;
+          let topUpOnlyInvested = 0;
+          let topUpOnlyDividendCash = 0;
+          const topUpValueSeries = [];
           // K線加碼:記錄「前一天」最低價與各均線值(每檔標的自己一組狀態),
           // 邏輯與 dcaEngine.js 的 runDcaStrategy 完全相同——前一天最低價要高於
           // 前一天均線(代表前一天整天沒碰到均線),今天最低價才跌破今天均線時觸發,
@@ -1872,7 +1758,10 @@ const App = () => {
             // 現實中還沒資格領當天的配息,所以要先算配息、再處理當天的加碼買進,
             // 順序對調的話,萬一加碼日剛好跟除息日同一天,會多算到不該有的配息。
             const divAmount = divAmountByDate.get(day.date);
-            if (divAmount) dividendCash += shares * divAmount;
+            if (divAmount) {
+              dividendCash += shares * divAmount;
+              topUpOnlyDividendCash += topUpOnlyShares * divAmount;
+            }
 
             const futureDivPerShare = suffixDivSum[dayIndex + 1];
             const makeReturnPct = (entryPrice) => ({
@@ -1886,6 +1775,8 @@ const App = () => {
               const boughtShares = monthlyTopUpAmount / day.price;
               shares += boughtShares;
               totalInvested += monthlyTopUpAmount;
+              topUpOnlyShares += boughtShares;
+              topUpOnlyInvested += monthlyTopUpAmount;
 
               // 這一筆加碼「從買進那天到回測結束」自己的報酬率,跟是否列入本金無關——
               // 不含息只看股價漲跌,含息則再加上買進後(不含當天)實際能領到的配息。
@@ -1931,6 +1822,8 @@ const App = () => {
                   const boughtShares = monthlyTopUpAmount / day.price;
                   shares += boughtShares;
                   totalInvested += monthlyTopUpAmount;
+                  topUpOnlyShares += boughtShares;
+                  topUpOnlyInvested += monthlyTopUpAmount;
                   klineMonthlyTriggerCount += 1;
                   topUpEvents.push({
                     date: day.date,
@@ -1970,6 +1863,20 @@ const App = () => {
                   ma !== null && ma !== undefined && ma > 0 ? ma : null;
               });
             }
+
+            // 加碼策略走勢:第一筆加碼成交之前沒有基準可算報酬率,pct 先留 null;
+            // 之後每天都用「當下加碼部位市值+已領配息」相對「累計加碼投入金額」計算。
+            topUpValueSeries.push({
+              date: day.date,
+              pct:
+                topUpOnlyInvested > 0
+                  ? ((topUpOnlyShares * day.price +
+                      topUpOnlyDividendCash -
+                      topUpOnlyInvested) /
+                      topUpOnlyInvested) *
+                    100
+                  : null,
+            });
           });
 
           const finalMarketValue = shares * finalPrice;
@@ -2177,6 +2084,7 @@ const App = () => {
             finalStockDividends,
             finalTotalValue: finalMarketValue + finalStockDividends,
             topUpEvents,
+            topUpValueSeries,
           };
         })
         .filter((r) => r !== null);
@@ -2226,6 +2134,46 @@ const App = () => {
       stock.trendData.forEach((point) => {
         if (!dateMap[point.date]) dateMap[point.date] = { date: point.date };
         dateMap[point.date][stock.symbol] = point.returnPct;
+      });
+    });
+
+    const sortedData = Object.values(dateMap).sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
+
+    sortedData.forEach((dayData) => {
+      let weightedSum = 0;
+      let activeWeight = 0;
+
+      validResults.forEach((stock) => {
+        if (dayData[stock.symbol] !== undefined) {
+          weightedSum += dayData[stock.symbol] * stock.weight;
+          activeWeight += stock.weight;
+        }
+      });
+
+      dayData['綜合績效'] = activeWeight > 0 ? weightedSum / activeWeight : 0;
+    });
+
+    return sortedData;
+  }, [results]);
+
+  // 「加碼策略」報酬率走勢比較(不含本金):跟 chartData 同樣的組合邏輯,
+  // 但資料來源改成每檔標的的 topUpValueSeries(只有加碼部位、不含一次性本金),
+  // 只有實際發生過加碼的標的才會被畫進來與計入加權綜合績效。
+  const topUpChartData = useMemo(() => {
+    if (!results || results.length === 0) return [];
+    const validResults = results.filter(
+      (r) => !r.isExcluded && r.topUpEvents && r.topUpEvents.length > 0
+    );
+    if (validResults.length === 0) return [];
+    const dateMap = {};
+
+    validResults.forEach((stock) => {
+      (stock.topUpValueSeries || []).forEach((point) => {
+        if (point.pct === null) return;
+        if (!dateMap[point.date]) dateMap[point.date] = { date: point.date };
+        dateMap[point.date][stock.symbol] = point.pct;
       });
     });
 
@@ -2472,11 +2420,9 @@ const App = () => {
       {!loading && !printMode && (
         <button
           onClick={() => runBacktest()}
-          disabled={
-            allocationError && Object.values(enabledInputs).every((v) => v)
-          }
+          disabled={!hasSelectedStock}
           className={`sm:hidden fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
-            allocationError && Object.values(enabledInputs).every((v) => v)
+            !hasSelectedStock
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
           }`}
@@ -2895,32 +2841,20 @@ const App = () => {
 
                 <div className="flex justify-between items-end mb-1">
                   <label className="text-xs text-slate-400 font-bold">
-                    標的選擇 & 配置
+                    標的選擇
                   </label>
-                  <span
-                    className={`text-xs font-mono font-bold ${
-                      allocationError ? 'text-rose-400' : 'text-emerald-400'
-                    }`}
-                  >
-                    勾選權重:{' '}
-                    {Math.round(
-                      Object.values(allocations).reduce(
-                        (a, b, i) => a + (enabledInputs[i] ? b : 0),
-                        0
-                      ) * 10
-                    ) / 10}
-                    %
+                  <span className="text-xs font-mono font-bold text-emerald-400">
+                    已勾選 {inputs.filter((v, i) => v && enabledInputs[i]).length} 檔
+                    (平均分配本金)
                   </span>
                 </div>
                 {inputs.map((val, idx) => {
-                  const percent = allocations[idx] || 0;
-                  const amountWan = (totalCapital * (percent / 100)) / 10000;
                   const isEnabled = enabledInputs[idx];
 
                   return (
                     <div
                       key={idx}
-                      className={`flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 transition-opacity ${
+                      className={`flex items-center gap-2 sm:gap-3 transition-opacity ${
                         isEnabled ? 'opacity-100' : 'opacity-50'
                       }`}
                     >
@@ -2934,7 +2868,7 @@ const App = () => {
                           <Square className="w-5 h-5" />
                         )}
                       </button>
-                      <div className="relative w-24 sm:w-28 shrink-0">
+                      <div className="relative flex-1 sm:w-40">
                         <input
                           type="text"
                           onFocus={handleInputFocus}
@@ -2951,62 +2885,6 @@ const App = () => {
                             {stockNames[val]}
                           </div>
                         )}
-                      </div>
-                      <div
-                        className={`flex-1 flex items-center gap-2 w-full sm:w-auto ${
-                          val && isEnabled
-                            ? 'opacity-100'
-                            : 'opacity-30 pointer-events-none'
-                        }`}
-                      >
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          step="0.5"
-                          value={percent}
-                          onChange={(e) =>
-                            handleAllocationChange(idx, e.target.value)
-                          }
-                          className={`flex-1 h-1.5 rounded-lg appearance-none cursor-pointer ${
-                            allocationError
-                              ? 'bg-rose-900/50 accent-rose-500'
-                              : 'bg-slate-700 accent-emerald-500'
-                          }`}
-                        />
-                        <div className="relative w-12 sm:w-14 shrink-0">
-                          <SmartNumberInput
-                            value={Math.round(percent * 10) / 10}
-                            onChange={(val) => handleAllocationChange(idx, val)}
-                            className={`w-full bg-transparent border rounded px-1 text-right font-mono text-xs focus:outline-none ${
-                              allocationError
-                                ? 'text-rose-400 border-rose-900/50'
-                                : 'text-white border-slate-700 focus:border-blue-500'
-                            }`}
-                          />
-                          <span className="absolute right-5 -top-3 text-[14px] text-slate-500">
-                            %
-                          </span>
-                        </div>
-                        <div className="relative w-14 sm:w-16 shrink-0 flex items-center gap-1">
-                          <div className="relative flex-1">
-                            <SmartNumberInput
-                              value={Math.round(amountWan * 10) / 10}
-                              onChange={(val) => handleAmountChange(idx, val)}
-                              className={`w-full bg-slate-800 border rounded px-1 text-right font-mono text-xs focus:outline-none text-emerald-400 border-slate-600 focus:ring-1 focus:ring-emerald-500`}
-                            />
-                            <span className="absolute right-0.5 -top-2.5 text-[13px] text-slate-500">
-                              萬
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => handleAmountChange(idx, 100)}
-                            className="text-[13px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-1.5 py-1 rounded border border-slate-600 whitespace-nowrap flex items-center"
-                            title="設為100萬"
-                          >
-                            <MousePointerClick className="w-3 h-3 mr-0.5" /> 100
-                          </button>
-                        </div>
                       </div>
                     </div>
                   );
@@ -3120,14 +2998,9 @@ const App = () => {
                   )}
                   <button
                     onClick={() => runBacktest()}
-                    disabled={
-                      loading ||
-                      (allocationError &&
-                        Object.values(enabledInputs).every((v) => v))
-                    }
+                    disabled={loading || !hasSelectedStock}
                     className={`w-full py-4 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all ${
-                      allocationError &&
-                      Object.values(enabledInputs).every((v) => v)
+                      !hasSelectedStock
                         ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                         : 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white'
                     }`}
@@ -4303,79 +4176,84 @@ const App = () => {
               </div>
             </div>
 
-            {periodStats && (
+            {topUpChartData.length > 0 && (
               <div className={`p-6 rounded-xl shadow-lg no-print ${cardClass}`}>
                 <h3
-                  className={`font-bold mb-4 flex items-center gap-2 ${textClass.sub}`}
+                  className={`font-bold mb-1 flex items-center gap-2 ${textClass.sub}`}
                 >
-                  <Clock className="w-5 h-5 text-purple-400" />
-                  資產配置多週期總報酬
+                  <Flame className={`w-5 h-5 ${textClass.warn}`} />
+                  加碼策略報酬率走勢比較(不含本金)
                 </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left whitespace-nowrap">
-                    <thead
-                      className={`border-b ${
-                        printMode
-                          ? 'bg-gray-100 border-gray-200'
-                          : 'bg-slate-900/50 border-slate-700'
-                      }`}
-                    >
-                      <tr>
-                        <th className="px-4 py-3">期間</th>
-                        <th className="px-4 py-3">起始日期</th>
-                        <th className="px-4 py-3 text-right">總報酬率</th>
-                      </tr>
-                    </thead>
-                    <tbody
-                      className={`divide-y ${
-                        printMode ? 'divide-gray-200' : 'divide-slate-700'
-                      }`}
-                    >
-                      {periodStats.map((stat, i) => {
-                        if (!stat) return null;
-                        const label =
-                          stat.months >= 12
-                            ? `${stat.months / 12} 年`
-                            : `${stat.months} 個月`;
-                        return (
-                          <tr
-                            key={i}
-                            className={`transition-colors ${
-                              printMode
-                                ? 'hover:bg-gray-50'
-                                : 'hover:bg-slate-700/30'
-                            }`}
-                          >
-                            <td
-                              className={`px-4 py-3 font-bold ${textClass.main}`}
-                            >
-                              {label}
-                            </td>
-                            <td
-                              className={`px-4 py-3 font-mono ${textClass.sub}`}
-                            >
-                              {stat.startDate}{' '}
-                              {stat.isPartial && (
-                                <span className="text-[14px] opacity-70">
-                                  (成立以來)
-                                </span>
-                              )}
-                            </td>
-                            <td
-                              className={`px-4 py-3 text-right font-mono font-bold ${
-                                stat.roi >= 0
-                                  ? textClass.warn
-                                  : textClass.highlight
-                              }`}
-                            >
-                              {stat.roi > 0 ? '+' : ''}
-                              {stat.roi.toFixed(2)}%
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className={`text-[13px] mb-4 ${textClass.sub} opacity-80`}>
+                  只計算「每月固定日期加碼」與「K線穿越均線加碼」買進的股數與報酬,不含最上面的一次性本金,用來單獨檢視加碼策略本身的績效。
+                </div>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer>
+                    <LineChart data={topUpChartData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke={printMode ? '#e5e7eb' : '#334155'}
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(s) => s.slice(5)}
+                        minTickGap={30}
+                        tick={{
+                          fill: printMode ? '#333' : '#94a3b8',
+                          fontSize: 10,
+                        }}
+                      />
+                      <YAxis
+                        tickFormatter={(v) => `${v}%`}
+                        tick={{
+                          fill: printMode ? '#333' : '#94a3b8',
+                          fontSize: 10,
+                        }}
+                        width={35}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: printMode ? '#fff' : '#1e293b',
+                          border: printMode
+                            ? '1px solid #ccc'
+                            : '1px solid #475569',
+                          color: printMode ? '#000' : '#f8fafc',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(val) => [`${Number(val).toFixed(2)}%`]}
+                        labelFormatter={(l) => `日期: ${l}`}
+                      />
+                      <Legend />
+                      <ReferenceLine y={0} stroke="#64748b" />
+                      {results.map((r, i) =>
+                        !r.isExcluded &&
+                        r.topUpEvents &&
+                        r.topUpEvents.length > 0 ? (
+                          <Line
+                            key={r.symbol}
+                            type="monotone"
+                            dataKey={r.symbol}
+                            stroke={COLORS[i % COLORS.length]}
+                            dot={false}
+                            activeDot={{ r: 6 }}
+                            strokeWidth={1.5}
+                            connectNulls
+                          />
+                        ) : null
+                      )}
+                      <Line
+                        type="monotone"
+                        dataKey="綜合績效"
+                        name="⭐ 綜合績效 (加碼部位)"
+                        stroke="#facc15"
+                        strokeWidth={3}
+                        dot={false}
+                        activeDot={{ r: 8 }}
+                        connectNulls
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             )}
