@@ -3117,16 +3117,28 @@ const App = () => {
                               </td>
                               {RANKING_PERIODS.map((p) => {
                                 const rank = row.ranks[p.key];
+                                const retPct = row.returns[p.key];
                                 return (
                                   <td
                                     key={p.key}
-                                    className={`px-2 py-1.5 border border-slate-700 font-bold font-mono ${
-                                      rank === 1
-                                        ? 'text-rose-400'
-                                        : 'text-slate-300'
-                                    }`}
+                                    className="px-2 py-1.5 border border-slate-700 font-mono whitespace-nowrap"
                                   >
-                                    {rank ?? '—'}
+                                    <span
+                                      className={`font-bold ${
+                                        rank === 1
+                                          ? 'text-rose-400'
+                                          : 'text-slate-300'
+                                      }`}
+                                    >
+                                      {rank ?? '—'}
+                                    </span>
+                                    {typeof retPct === 'number' &&
+                                      Number.isFinite(retPct) && (
+                                        <span className="text-[10px] text-slate-500 ml-1">
+                                          {retPct > 0 ? '+' : ''}
+                                          {retPct.toFixed(1)}%
+                                        </span>
+                                      )}
                                   </td>
                                 );
                               })}
