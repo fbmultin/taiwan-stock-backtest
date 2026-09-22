@@ -90,7 +90,7 @@ export const preprocessPriceSeries = (stockResult) => {
 //   - 三線依 ma20 → ma60 → ma120 的順序檢查,共用同一個每月觸發次數上限,
 //     誰先用完額度、之後的觸發即使進入區間也不會真的買進(但狀態仍會更新,
 //     離開/再進入區間的判斷不受額度用完影響)。
-const buildMonthlyInvestDates = (days, investDay) => {
+export const buildMonthlyInvestDates = (days, investDay) => {
   const byMonth = new Map();
   days.forEach((d) => {
     const monthKey = d.date.slice(0, 7);

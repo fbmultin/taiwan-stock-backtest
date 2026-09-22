@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TW_STOCK_NAMES from './data/twStockNames';
 import TW_STOCK_SPLITS from './data/twStockSplits';
 import DcaOptimizer from './DcaOptimizer';
+import { buildMonthlyInvestDates } from './dcaEngine';
 import {
   fetchStockPriceData,
   fetchIndexPriceData,
@@ -724,6 +725,13 @@ const App = () => {
   );
 
   const [totalCapital, setTotalCapital] = useState(6000000);
+
+  // 定期定額加碼開關:開啟後,在原本一次性投入的本金之外,
+  // 每個月固定日期(monthlyTopUpDay)額外加碼投入 monthlyTopUpAmount 元,
+  // 從回測起始日持續到結束日,所有比較中的標的都會套用同一組設定。
+  const [monthlyTopUpEnabled, setMonthlyTopUpEnabled] = useState(false);
+  const [monthlyTopUpDay, setMonthlyTopUpDay] = useState(5);
+  const [monthlyTopUpAmount, setMonthlyTopUpAmount] = useState(10000);
 
   const [allocations, setAllocations] = useState({
     0: 16.6666,
@@ -1775,6 +1783,45 @@ const App = () => {
           });
           if (periodDividends < 0) periodDividends = 0;
 
+          // 定期定額加碼開關:在一次性本金之外,計算「實際投入本金/股數/配息現金」。
+          // 關閉時邏輯與過去完全相同(shares 固定 = allocated/initialPrice,
+          // dividendCash = shares * periodDividends);開啟時改成逐日模擬——
+          // 每個月固定日期加碼買進、股數隨時間增加,配息現金則依「當下實際持有股數」
+          // 逐次入帳,而不是用回測結束時的股數去回推整個期間的配息。
+          const weight = finalAllocations[stock.inputIndex] || 0;
+          const allocated = totalCapital * (weight / 100);
+          let shares = initialPrice > 0 ? allocated / initialPrice : 0;
+          let totalInvested = allocated;
+          let dividendCash = 0;
+
+          const topUpDateSet =
+            monthlyTopUpEnabled && monthlyTopUpAmount > 0
+              ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
+              : null;
+          const divAmountByDate = new Map();
+          validDivTimestamps.forEach((ts) => {
+            const keySec = Math.floor(ts / 1000);
+            const divInfo =
+              stock.dividendsMap[keySec.toString()] ||
+              stock.dividendsMap[keySec] ||
+              stock.dividendsMap[ts];
+            divAmountByDate.set(
+              new Date(ts).toISOString().split('T')[0],
+              divInfo?.amount || 0
+            );
+          });
+          filteredData.forEach((day) => {
+            if (topUpDateSet && topUpDateSet.has(day.date)) {
+              shares += monthlyTopUpAmount / day.price;
+              totalInvested += monthlyTopUpAmount;
+            }
+            const divAmount = divAmountByDate.get(day.date);
+            if (divAmount) dividendCash += shares * divAmount;
+          });
+
+          const finalMarketValue = shares * finalPrice;
+          const finalStockDividends = dividendCash;
+
           const totalReturnVal = finalPrice - initialPrice + periodDividends;
           const totalReturnPct = (totalReturnVal / initialPrice) * 100;
           const priceReturnPct =
@@ -1906,8 +1953,6 @@ const App = () => {
             }
           }
 
-          const weight = finalAllocations[stock.inputIndex] || 0;
-
           return {
             symbol: stock.symbol,
             stockName: stock.stockName,
@@ -1959,25 +2004,15 @@ const App = () => {
             usedCache: !!stock.fromCache,
             cachedAt: stock.cachedAt || null,
             dividendDataIncomplete: !!stock.dividendDataIncomplete,
+            allocatedCapital: totalInvested,
+            finalMarketValue,
+            finalStockDividends,
+            finalTotalValue: finalMarketValue + finalStockDividends,
           };
         })
         .filter((r) => r !== null);
 
-      const resultsWithValues = finalResults.map((r) => {
-        const allocated = totalCapital * (r.weight / 100);
-        const shares = allocated / r.initialPrice;
-        const finalMarketValue = shares * r.finalPrice;
-        const finalStockDividends = shares * r.totalDividends;
-        return {
-          ...r,
-          allocatedCapital: allocated,
-          finalMarketValue,
-          finalStockDividends,
-          finalTotalValue: finalMarketValue + finalStockDividends,
-        };
-      });
-
-      setResults(resultsWithValues);
+      setResults(finalResults);
       finishLoading();
       setProgress(100);
       setTimeout(() => setLoading(false), 500);
@@ -2377,6 +2412,54 @@ const App = () => {
                   <div className="text-[14px] text-slate-500 text-right">
                     = {Math.round(totalCapital).toLocaleString()} 元
                   </div>
+                </div>
+                <div className="flex flex-col gap-2 bg-slate-800/60 border border-slate-700 rounded-lg p-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={monthlyTopUpEnabled}
+                      onChange={() => setMonthlyTopUpEnabled((v) => !v)}
+                    />
+                    <span className="text-xs text-slate-300 font-bold">
+                      定期定額加碼開關
+                    </span>
+                  </label>
+                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                    開啟後,在上面的一次性本金之外,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
+                  </div>
+                  {monthlyTopUpEnabled && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[11px] text-slate-500 mb-1">
+                          每月投入日(1~31)
+                        </div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={monthlyTopUpDay}
+                          onChange={(e) =>
+                            setMonthlyTopUpDay(parseInt(e.target.value, 10) || 1)
+                          }
+                          className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-slate-500 mb-1">
+                          每月加碼金額(元)
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          value={monthlyTopUpAmount}
+                          onChange={(e) =>
+                            setMonthlyTopUpAmount(parseFloat(e.target.value) || 0)
+                          }
+                          className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <label className="text-xs text-slate-400 font-bold">
