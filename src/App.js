@@ -4214,16 +4214,41 @@ const App = () => {
                         width={35}
                       />
                       <Tooltip
-                        contentStyle={{
-                          backgroundColor: printMode ? '#fff' : '#1e293b',
-                          border: printMode
-                            ? '1px solid #ccc'
-                            : '1px solid #475569',
-                          color: printMode ? '#000' : '#f8fafc',
-                          borderRadius: '8px',
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload || payload.length === 0)
+                            return null;
+                          // 依需求把提示框內容改成「百分比在前、股代號在後」,
+                          // 並依百分比由高到低排序,而不是照線條原本的順序顯示。
+                          const sortedPayload = [...payload]
+                            .filter((p) => typeof p.value === 'number')
+                            .sort((a, b) => b.value - a.value);
+                          return (
+                            <div
+                              style={{
+                                backgroundColor: printMode ? '#fff' : '#1e293b',
+                                border: printMode
+                                  ? '1px solid #ccc'
+                                  : '1px solid #475569',
+                                color: printMode ? '#000' : '#f8fafc',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                fontSize: '12px',
+                              }}
+                            >
+                              <div style={{ marginBottom: 4, fontWeight: 'bold' }}>
+                                日期: {label}
+                              </div>
+                              {sortedPayload.map((p) => (
+                                <div key={p.dataKey} style={{ color: p.color }}>
+                                  {Number(p.value).toFixed(2)}%{' '}
+                                  {p.dataKey === '綜合績效'
+                                    ? '綜合績效'
+                                    : p.dataKey}
+                                </div>
+                              ))}
+                            </div>
+                          );
                         }}
-                        formatter={(val) => [`${Number(val).toFixed(2)}%`]}
-                        labelFormatter={(l) => `日期: ${l}`}
                       />
                       <Legend />
                       <ReferenceLine y={0} stroke="#64748b" />
