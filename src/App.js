@@ -435,11 +435,17 @@ const computeStockReturnForRange = (stock, rangeStart, rangeEnd) => {
   return ((finalPrice - initialPrice + periodDividends) / initialPrice) * 100;
 };
 
+// 排名表(含加碼)每一檔標的假設投入的本金:固定 100 萬,不隨畫面上「總投入本金」
+// 設定值變動,讓每一檔在同一個固定基準下互相比較排名,不受目前總本金/勾選標的
+// 檔數的影響。
+const RANKING_TABLE_STOCK_PRINCIPAL = 1000000;
+
 // 排名表(含加碼)用的單一標的、單一區間報酬率:套用目前畫面上「加碼策略設定」
 // 當下的設定值(每月固定日期加碼/K線穿越均線加碼,可以只開一個、兩個都開),
 // 逐日模擬股數/投入金額/配息現金的變化,算法跟主要回測 runBacktest 開啟加碼時
-// 完全相同,只是這裡假設把目前設定的「總投入本金」整筆都投入這一檔(不依實際
-// 多檔配置權重去分攤),讓每一檔在同一組金額基準下互相比較排名。
+// 完全相同,只是這裡假設每一檔各自投入固定 RANKING_TABLE_STOCK_PRINCIPAL
+// (不依實際多檔配置權重去分攤、也不隨畫面上的「總投入本金」變動),
+// 讓每一檔在同一組金額基準下互相比較排名。
 // klineMaSeries 是呼叫端(updateRankingTable)針對這檔標的的完整歷史預先算好一次
 // 的均線序列查詢結構(buildKlineMaSeries 的回傳值,klineTopUpEnabled 關閉時傳 null
 // 即可),避免同一檔標的的 9 個區間各自重算一次均線;klineConfig 則是目前畫面上
@@ -1393,7 +1399,7 @@ const App = () => {
               rangeStart,
               rangeEnd,
               {
-                totalCapital,
+                totalCapital: RANKING_TABLE_STOCK_PRINCIPAL,
                 monthlyTopUpEnabled,
                 monthlyTopUpDay,
                 monthlyTopUpAmount,
@@ -3976,7 +3982,7 @@ const App = () => {
                         .filter(Boolean)
                         .join('+')}
                       ,{monthlyTopUpIncludeLumpSum ? '含' : '不含'}
-                      最上面的一次性本金),假設把目前設定的總投入本金整筆投入該檔標的計算,
+                      最上面的一次性本金),假設每一檔各自固定投入 100 萬計算(不受上方「總投入本金」與勾選標的檔數影響),
                       跟下面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
                       這段區間內完全沒有實際加碼買進時顯示「—」。該區間損益金額最高的標的以紅色標示。
                     </div>

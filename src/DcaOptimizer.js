@@ -131,6 +131,10 @@ const describeConfig = (config) => {
 // 解析使用者輸入的股票代碼:逗號、全形逗號、頓號、空白都當分隔符,
 // 自動去除空白、轉大寫、去重複,最多取前 MAX_COMPARE_SYMBOLS 檔。
 export const MAX_COMPARE_SYMBOLS = 5;
+
+// 股票代碼輸入框預設帶入的常用標的組合,方便使用者不用每次都手動輸入;
+// 游標一移入輸入框(focus)就清空,讓使用者可以直接開始輸入自己要的代碼。
+const DEFAULT_SYMBOL_INPUT = '00913,00947,00935,00891,00904';
 export const parseSymbolsInput = (raw) => {
   const parts = (raw || '')
     .split(/[,，、\s]+/)
@@ -326,7 +330,7 @@ const ResultDetailCard = ({ item, badge, isLight }) => {
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function DcaOptimizer({ isLight = false }) {
-  const [symbolInput, setSymbolInput] = useState('');
+  const [symbolInput, setSymbolInput] = useState(DEFAULT_SYMBOL_INPUT);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 3);
@@ -700,6 +704,9 @@ export default function DcaOptimizer({ isLight = false }) {
               type="text"
               value={symbolInput}
               onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
+              onFocus={() => {
+                if (symbolInput === DEFAULT_SYMBOL_INPUT) setSymbolInput('');
+              }}
               placeholder="例如 0050,0056,2330"
               className={`w-full mt-1 ${inputClass}`}
             />
