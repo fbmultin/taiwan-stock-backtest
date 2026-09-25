@@ -60,10 +60,230 @@ import {
   Moon,
 } from 'lucide-react';
 
-// 「K線穿越均線加碼」開關(klineTopUpEnabled)開啟時的規則寫死、不提供額外設定:
-// 月線(MA20)/季線(MA60)/半年線(MA120)共用同一個「每個月最多觸發幾次」的額度,
-// 詳見 runBacktest 內的計算邏輯與 dcaEngine.js 的同名規則。
-const KLINE_TOPUP_MONTHLY_CAP = 1;
+// 「K線穿越均線加碼」三種子模式的顯示文字與預設開關值,詳見設計文件
+// 「K線穿越均線加碼規則重新設計」。跌破加碼延用最初就有的邏輯,預設開啟;
+// 回檔加碼/站回加碼是新增的子模式,預設關閉,使用者要自己勾選開啟。
+const KLINE_SUBMODE_KEYS = ['breakdown', 'pullback', 'recovery'];
+const KLINE_SUBMODE_LABELS = {
+  breakdown: '跌破加碼',
+  pullback: '回檔加碼',
+  recovery: '站回加碼',
+};
+const DEFAULT_KLINE_SUBMODE_ENABLED = () => ({
+  breakdown: true,
+  pullback: false,
+  recovery: false,
+});
+// 金字塔倍數的常用預設組合(第一個「均等」等於沒有金字塔效果,方便使用者比較);
+// 使用者仍可在下面自訂欄位個別覆寫任一均線的倍數。
+const KLINE_PYRAMID_PRESETS = [
+  { name: '均等(1x/1x/1x)', values: { ma20: 1, ma60: 1, ma120: 1 } },
+  { name: '溫和遞增(1x/1.5x/2x)', values: { ma20: 1, ma60: 1.5, ma120: 2 } },
+  { name: '陡升(1x/2x/3x)', values: { ma20: 1, ma60: 2, ma120: 3 } },
+];
+
+// 建立某檔標的完整歷史的均線序列查詢結構,給下面 createKlineTopUpEngine 的
+// 「回檔加碼」上升趨勢判斷、「盤整偵測」trailing window 計算使用——兩者都需要
+// 往回看「今天」之前 N 個交易日的均線值,只看完整歷史(不受回測區間起點限制)
+// 才不會在區間剛開始的幾天因為看不到足夠的歷史資料而誤判。
+const buildKlineMaSeries = (stock) => {
+  const list = preprocessPriceSeries(stock).map((d) => ({
+    date: d.date,
+    ma20: d.ma20,
+    ma60: d.ma60,
+    ma120: d.ma120,
+  }));
+  const indexByDate = new Map();
+  list.forEach((d, i) => indexByDate.set(d.date, i));
+  return { list, indexByDate };
+};
+
+// K線穿越均線加碼的完整判斷引擎:三種子模式(跌破/回檔/站回)+ 每條均線各自獨立
+// 的交易日冷卻期 + 金字塔倍數 × 距上次加碼遞減折扣 + 盤整偵測(避開情境二)+
+// 總量保護機制(第三層)。computeStockReturnForRangeWithTopUp(排名表)與主回測
+// 迴圈(runBacktest)共用同一份邏輯,避免兩處分別維護、改一邊忘了改另一邊。
+// 回傳的 evaluateDay(day, dayIndex) 每天呼叫一次(day 依序來自 filteredData,
+// dayIndex 是這次回測範圍內的第幾天,從0起算,用來計算冷卻期與遞減折扣經過的
+// 交易日數),回傳這一天(可能橫跨多條均線)發生的加碼/跳過事件陣列。
+const createKlineTopUpEngine = (maSeries, opts) => {
+  const {
+    subModeConfig,
+    cooldownDays,
+    pyramidMultiplier,
+    pullbackLookbackDays,
+    pullbackTolerancePct,
+    recoveryConfirmDays,
+    decayWindowDays,
+    decayFloorPct,
+    chopEnabled,
+    chopWindowDays,
+    chopThresholdPct,
+    totalCapEnabled,
+    totalCapCount,
+  } = opts;
+  const { list, indexByDate } = maSeries;
+
+  let klinePrevLow = null;
+  const prevMaByLine = { ma20: null, ma60: null, ma120: null };
+  const lineState = {};
+  MA_LINE_KEYS.forEach((lineKey) => {
+    lineState[lineKey] = {
+      // 距上次加碼的遞減折扣:不分子模式,同一條均線只要「最近一次成功加碼」算起。
+      lastTopUpDayIndex: null,
+      // 每條均線 × 每種子模式各自獨立的冷卻計時器(互不阻擋)。
+      lastTopUpDayIndexBySubmode: { breakdown: null, pullback: null, recovery: null },
+      recoveryBelowActive: false,
+      recoveryAboveStreak: 0,
+    };
+  });
+  let totalTopUpCount = 0;
+
+  const evaluateDay = (day, dayIndex) => {
+    const events = [];
+    const fullIdx = indexByDate.get(day.date);
+    const hasLow = typeof day.low === 'number' && Number.isFinite(day.low);
+
+    MA_LINE_KEYS.forEach((lineKey) => {
+      const modes = subModeConfig[lineKey] || {};
+      if (!modes.breakdown && !modes.pullback && !modes.recovery) return;
+
+      const entry = fullIdx !== undefined ? list[fullIdx] : null;
+      const ma = entry ? entry[lineKey] : null;
+      if (ma === null || ma === undefined || !(ma > 0)) return;
+      const prevMa = prevMaByLine[lineKey];
+      const state = lineState[lineKey];
+
+      // 上升趨勢判斷(回檔加碼用):回看 N 個交易日,若目前均線值高於 N 天前均線值,
+      // 即視為上升——只用已經過去的資料,trailing window,無 look-ahead bias。
+      let isUpTrend = false;
+      if (modes.pullback && fullIdx !== undefined) {
+        const pastIdx = fullIdx - pullbackLookbackDays;
+        const pastMa = pastIdx >= 0 && list[pastIdx] ? list[pastIdx][lineKey] : null;
+        if (pastMa !== null && pastMa !== undefined && pastMa > 0) {
+          isUpTrend = ma > pastMa;
+        }
+      }
+
+      // 站回加碼狀態機:用收盤價判斷站上/站下均線。belowActive 一旦為 true,
+      // 之後每天收盤價站上均線就累加 aboveStreak;streak 達「確認天數+1」時
+      // 視為條件成立(N=0 時,站回當天 streak=1 就成立,等同立刻買進)。
+      // 條件成立但被冷卻期/盤整/總量上限擋下時,狀態刻意不重置,讓它有機會在
+      // 之後解除限制的那一天補上觸發,而不是憑空消失。
+      let recoveryConditionMet = false;
+      if (modes.recovery && typeof day.price === 'number' && day.price > 0) {
+        if (day.price < ma) {
+          state.recoveryBelowActive = true;
+          state.recoveryAboveStreak = 0;
+        } else if (state.recoveryBelowActive) {
+          state.recoveryAboveStreak += 1;
+          recoveryConditionMet = state.recoveryAboveStreak >= recoveryConfirmDays + 1;
+        }
+      }
+
+      // 跌破加碼:延用最初就有的判斷——前一日最低點高於前一日均線(完全站上),
+      // 且今日最低點跌破或觸及今日均線。
+      const breakdownTriggered =
+        modes.breakdown &&
+        klinePrevLow !== null &&
+        prevMa !== null &&
+        prevMa > 0 &&
+        klinePrevLow > prevMa &&
+        hasLow &&
+        day.low <= ma;
+
+      // 回檔加碼:上升趨勢中,價格接近或觸及均線但未跌破(容忍度可設定)。
+      const pullbackTriggered =
+        modes.pullback &&
+        isUpTrend &&
+        hasLow &&
+        day.low >= ma &&
+        day.low <= ma * (1 + pullbackTolerancePct / 100);
+
+      // 同一天同一條均線最多只算一種子模式觸發,優先序:跌破 > 站回 > 回檔。
+      let subMode = null;
+      if (breakdownTriggered) subMode = 'breakdown';
+      else if (recoveryConditionMet) subMode = 'recovery';
+      else if (pullbackTriggered) subMode = 'pullback';
+
+      if (subMode) {
+        // 盤整偵測(避開情境二):trailing window 只看已經過去(含今天)的均線值,
+        // 若判定為盤整,這條均線本次的所有加碼子模式全部跳過,不只是打折。
+        let isChop = false;
+        if (chopEnabled && fullIdx !== undefined && fullIdx - chopWindowDays + 1 >= 0) {
+          let maxV = -Infinity;
+          let minV = Infinity;
+          for (let i = fullIdx - chopWindowDays + 1; i <= fullIdx; i++) {
+            const v = list[i] ? list[i][lineKey] : null;
+            if (v === null || v === undefined || !(v > 0)) continue;
+            if (v > maxV) maxV = v;
+            if (v < minV) minV = v;
+          }
+          if (maxV > -Infinity && minV < Infinity) {
+            isChop = (maxV - minV) / ma < chopThresholdPct / 100;
+          }
+        }
+
+        if (isChop) {
+          events.push({
+            lineKey,
+            subMode,
+            ratio: 0,
+            skipReason: '判定為盤整',
+          });
+        } else {
+          const lastSub = state.lastTopUpDayIndexBySubmode[subMode];
+          const cooldownOk =
+            lastSub === null || dayIndex - lastSub >= cooldownDays[lineKey];
+          const capOk = !totalCapEnabled || totalTopUpCount < totalCapCount;
+
+          if (!cooldownOk) {
+            events.push({ lineKey, subMode, ratio: 0, skipReason: '冷卻期未滿' });
+          } else if (!capOk) {
+            events.push({
+              lineKey,
+              subMode,
+              ratio: 0,
+              skipReason: '已達合計加碼次數上限',
+            });
+          } else {
+            const multiplier = pyramidMultiplier[lineKey] || 1;
+            const lastAny = state.lastTopUpDayIndex;
+            let decayRatio = 1;
+            if (lastAny !== null && decayWindowDays > 0) {
+              const gap = dayIndex - lastAny;
+              if (gap < decayWindowDays) {
+                const floor = decayFloorPct / 100;
+                decayRatio = floor + (1 - floor) * (gap / decayWindowDays);
+              }
+            }
+            events.push({
+              lineKey,
+              subMode,
+              ratio: multiplier * decayRatio,
+              multiplier,
+              decayRatio,
+              skipReason: null,
+            });
+            state.lastTopUpDayIndex = dayIndex;
+            state.lastTopUpDayIndexBySubmode[subMode] = dayIndex;
+            if (subMode === 'recovery') {
+              state.recoveryBelowActive = false;
+              state.recoveryAboveStreak = 0;
+            }
+            totalTopUpCount += 1;
+          }
+        }
+      }
+
+      prevMaByLine[lineKey] = ma;
+    });
+
+    klinePrevLow = hasLow ? day.low : null;
+    return events;
+  };
+
+  return { evaluateDay };
+};
 
 const COLORS = [
   '#3b82f6',
@@ -439,9 +659,11 @@ const computeStockReturnForRange = (stock, rangeStart, rangeEnd) => {
 // 逐日模擬股數/投入金額/配息現金的變化,算法跟主要回測 runBacktest 開啟加碼時
 // 完全相同,只是這裡假設把目前設定的「總投入本金」整筆都投入這一檔(不依實際
 // 多檔配置權重去分攤),讓每一檔在同一組金額基準下互相比較排名。
-// maByDateFull 是呼叫端(updateRankingTable)針對這檔標的的完整歷史預先算好一次
-// 的均線對照表(klineTopUpEnabled 關閉時傳 null 即可),避免同一檔標的的 9 個區間
-// 各自重算一次均線。資料不足、或這個區間內完全沒有實際加碼買進時回傳 null。
+// klineMaSeries 是呼叫端(updateRankingTable)針對這檔標的的完整歷史預先算好一次
+// 的均線序列查詢結構(buildKlineMaSeries 的回傳值,klineTopUpEnabled 關閉時傳 null
+// 即可),避免同一檔標的的 9 個區間各自重算一次均線;klineConfig 則是目前畫面上
+// 的 K 線加碼參數(getKlineConfig 的回傳值)。資料不足、或這個區間內完全沒有
+// 實際加碼買進時回傳 null。
 const computeStockReturnForRangeWithTopUp = (
   stock,
   rangeStart,
@@ -455,7 +677,8 @@ const computeStockReturnForRangeWithTopUp = (
     monthlyTopUpAmount,
     monthlyTopUpIncludeLumpSum,
     klineTopUpEnabled,
-    maByDateFull,
+    klineMaSeries,
+    klineConfig,
   } = config;
 
   if (!stock.data || stock.data.length === 0) return null;
@@ -514,12 +737,12 @@ const computeStockReturnForRangeWithTopUp = (
       ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
       : null;
 
-  let klinePrevLow = null;
-  const klinePrevMaByLine = { ma20: null, ma60: null, ma120: null };
-  let klineMonthKey = null;
-  let klineMonthlyTriggerCount = 0;
+  const klineEngine =
+    klineTopUpEnabled && klineMaSeries && klineConfig
+      ? createKlineTopUpEngine(klineMaSeries, klineConfig)
+      : null;
 
-  filteredData.forEach((day) => {
+  filteredData.forEach((day, dayIndex) => {
     const divAmount = divAmountByDate.get(day.date);
     if (divAmount) {
       dividendCash += shares * divAmount;
@@ -531,42 +754,15 @@ const computeStockReturnForRangeWithTopUp = (
       hadTopUpEvent = true;
     }
 
-    if (maByDateFull) {
-      const monthKey = day.date.slice(0, 7);
-      if (monthKey !== klineMonthKey) {
-        klineMonthKey = monthKey;
-        klineMonthlyTriggerCount = 0;
-      }
-      const mas = maByDateFull.get(day.date);
-      const hasLow = typeof day.low === 'number' && Number.isFinite(day.low);
-
-      MA_LINE_KEYS.forEach((lineKey) => {
-        const ma = mas ? mas[lineKey] : null;
-        if (ma === null || ma === undefined || !(ma > 0)) return;
-        const prevMa = klinePrevMaByLine[lineKey];
-        const triggeredToday =
-          klinePrevLow !== null &&
-          prevMa !== null &&
-          prevMa > 0 &&
-          klinePrevLow > prevMa &&
-          hasLow &&
-          day.low <= ma;
-        if (!triggeredToday) return;
-
-        const withinCap = klineMonthlyTriggerCount < KLINE_TOPUP_MONTHLY_CAP;
-        if (withinCap && monthlyTopUpAmount > 0) {
-          shares += monthlyTopUpAmount / day.price;
-          totalInvested += monthlyTopUpAmount;
-          klineMonthlyTriggerCount += 1;
-          hadTopUpEvent = true;
-        }
-      });
-
-      klinePrevLow = hasLow ? day.low : null;
-      MA_LINE_KEYS.forEach((lineKey) => {
-        const ma = mas ? mas[lineKey] : null;
-        klinePrevMaByLine[lineKey] =
-          ma !== null && ma !== undefined && ma > 0 ? ma : null;
+    if (klineEngine && monthlyTopUpAmount > 0) {
+      const events = klineEngine.evaluateDay(day, dayIndex);
+      events.forEach((ev) => {
+        if (ev.skipReason) return;
+        const amount = monthlyTopUpAmount * ev.ratio;
+        if (amount <= 0) return;
+        shares += amount / day.price;
+        totalInvested += amount;
+        hadTopUpEvent = true;
       });
     }
   });
@@ -976,6 +1172,64 @@ const App = () => {
     useState(true);
   const anyTopUpEnabled = monthlyTopUpEnabled || klineTopUpEnabled;
 
+  // 「K線穿越均線加碼」重新設計後的參數,詳見「K線穿越均線加碼規則重新設計」文件。
+  // 三種子模式(跌破/回檔/站回)每條均線各自獨立開關;跌破加碼延用最初就有的邏輯,
+  // 預設開啟,回檔/站回是新增子模式,預設關閉。
+  const [klineSubModeEnabled, setKlineSubModeEnabled] = useState(() => ({
+    ma20: DEFAULT_KLINE_SUBMODE_ENABLED(),
+    ma60: DEFAULT_KLINE_SUBMODE_ENABLED(),
+    ma120: DEFAULT_KLINE_SUBMODE_ENABLED(),
+  }));
+  // 每條均線各自獨立的交易日冷卻期(取代原本三線共用的「每月最多1次」)。
+  const [klineCooldownDays, setKlineCooldownDays] = useState({
+    ma20: 20,
+    ma60: 20,
+    ma120: 20,
+  });
+  // 均線層級倍數(金字塔配置):預設採「溫和遞增」組合,使用者可透過下面的預設
+  // 按鈕快速套用整組,或個別覆寫任一均線的數字(自訂欄位)。
+  const [klinePyramidMultiplier, setKlinePyramidMultiplier] = useState({
+    ma20: 1,
+    ma60: 1.5,
+    ma120: 2,
+  });
+  // 回檔加碼:上升趨勢判斷回看天數、均線接近容忍度(±X%)。
+  const [klinePullbackLookbackDays, setKlinePullbackLookbackDays] = useState(20);
+  const [klinePullbackTolerancePct, setKlinePullbackTolerancePct] = useState(1);
+  // 站回加碼:站上均線後需維持幾個交易日才算確認(0 = 站上當天立刻買進)。
+  const [klineRecoveryConfirmDays, setKlineRecoveryConfirmDays] = useState(2);
+  // 距上次加碼折扣係數(遞減):距上次成功加碼未滿此天數,金額依比例打折,
+  // 下限為 decayFloorPct;滿此天數(或首次加碼)則不打折。
+  const [klineDecayWindowDays, setKlineDecayWindowDays] = useState(20);
+  const [klineDecayFloorPct, setKlineDecayFloorPct] = useState(50);
+  // 盤整偵測(避開情境二):trailing window 內均線最高最低差幅低於門檻即判定盤整,
+  // 該均線本次所有子模式全部跳過。
+  const [klineChopEnabled, setKlineChopEnabled] = useState(true);
+  const [klineChopWindowDays, setKlineChopWindowDays] = useState(10);
+  const [klineChopThresholdPct, setKlineChopThresholdPct] = useState(2);
+  // 總量保護機制(第三層):所有均線/子模式合計加碼次數上限,達到後即使符合
+  // 子模式與冷卻期條件也不再加碼。
+  const [klineTotalCapEnabled, setKlineTotalCapEnabled] = useState(true);
+  const [klineTotalCapCount, setKlineTotalCapCount] = useState(12);
+
+  // 把目前畫面上的 K 線加碼參數彙整成 createKlineTopUpEngine 要吃的設定物件,
+  // updateRankingTable 與 runBacktest 共用,避免兩處各自組一次容易漏改。
+  const getKlineConfig = () => ({
+    subModeConfig: klineSubModeEnabled,
+    cooldownDays: klineCooldownDays,
+    pyramidMultiplier: klinePyramidMultiplier,
+    pullbackLookbackDays: klinePullbackLookbackDays,
+    pullbackTolerancePct: klinePullbackTolerancePct,
+    recoveryConfirmDays: klineRecoveryConfirmDays,
+    decayWindowDays: klineDecayWindowDays,
+    decayFloorPct: klineDecayFloorPct,
+    chopEnabled: klineChopEnabled,
+    chopWindowDays: klineChopWindowDays,
+    chopThresholdPct: klineChopThresholdPct,
+    totalCapEnabled: klineTotalCapEnabled,
+    totalCapCount: klineTotalCapCount,
+  });
+
   // 標的選擇 & 配置:已移除手動拉桿/百分比/金額調整,一律採「已勾選標的平均分配本金」,
   // enabledInputs 一變動就由下面的 useEffect 自動重新平均分配 allocations。
   const [allocations, setAllocations] = useState({
@@ -1295,20 +1549,13 @@ const App = () => {
       // 兩個都開)。K線用的均線每檔標的只算一次(用完整歷史),9 個區間共用,
       // 不用每個區間各自重算一次均線。
       if (anyTopUpEnabled) {
-        const maByDateFullByStock = new Map();
+        const klineMaSeriesByStock = new Map();
         if (klineTopUpEnabled) {
           successfulData.forEach((stock) => {
-            maByDateFullByStock.set(
-              stock.symbol,
-              new Map(
-                preprocessPriceSeries(stock).map((d) => [
-                  d.date,
-                  { ma20: d.ma20, ma60: d.ma60, ma120: d.ma120 },
-                ])
-              )
-            );
+            klineMaSeriesByStock.set(stock.symbol, buildKlineMaSeries(stock));
           });
         }
+        const klineConfig = klineTopUpEnabled ? getKlineConfig() : null;
 
         const topUpRows = successfulData.map((stock) => {
           const returns = {};
@@ -1326,9 +1573,10 @@ const App = () => {
                 monthlyTopUpAmount,
                 monthlyTopUpIncludeLumpSum,
                 klineTopUpEnabled,
-                maByDateFull: klineTopUpEnabled
-                  ? maByDateFullByStock.get(stock.symbol)
+                klineMaSeries: klineTopUpEnabled
+                  ? klineMaSeriesByStock.get(stock.symbol)
                   : null,
+                klineConfig,
               }
             );
             returns[period.key] = result ? result.pct : null;
@@ -2280,18 +2528,20 @@ const App = () => {
               ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
               : null;
 
-          // K線穿越均線加碼(規則寫死,由獨立的 klineTopUpEnabled 開關控制,
-          // 不提供額外設定):月線(MA20)/季線(MA60)/半年線(MA120)都用
-          // stock.data 的完整歷史算均線(跟定期定額最佳化分頁算法相同),
-          // 再依日期對回 filteredData 使用。
-          const maByDate = klineTopUpEnabled
-            ? new Map(
-                preprocessPriceSeries(stock).map((d) => [
-                  d.date,
-                  { ma20: d.ma20, ma60: d.ma60, ma120: d.ma120 },
-                ])
-              )
+          // K線穿越均線加碼:由獨立的 klineTopUpEnabled 開關控制,實際規則(三種
+          // 子模式、每條均線各自獨立的冷卻期/倍數、盤整偵測、總量上限)由使用者在
+          // 「加碼策略設定」面板調整,詳見 createKlineTopUpEngine。月線(MA20)/
+          // 季線(MA60)/半年線(MA120)都用 stock.data 的完整歷史算均線(跟定期
+          // 定額最佳化分頁算法相同),才能在回測區間剛開始的幾天也看得到足夠的
+          // 歷史資料做趨勢/盤整判斷。
+          const klineMaSeries = klineTopUpEnabled
+            ? buildKlineMaSeries(stock)
             : null;
+          const klineConfig = klineTopUpEnabled ? getKlineConfig() : null;
+          const klineEngine =
+            klineMaSeries && klineConfig
+              ? createKlineTopUpEngine(klineMaSeries, klineConfig)
+              : null;
           const divAmountByDate = new Map();
           validDivTimestamps.forEach((ts) => {
             const keySec = Math.floor(ts / 1000);
@@ -2325,14 +2575,6 @@ const App = () => {
           let topUpOnlyInvested = 0;
           let topUpOnlyDividendCash = 0;
           const topUpValueSeries = [];
-          // K線加碼:記錄「前一天」最低價與各均線值(每檔標的自己一組狀態),
-          // 邏輯與 dcaEngine.js 的 runDcaStrategy 完全相同——前一天最低價要高於
-          // 前一天均線(代表前一天整天沒碰到均線),今天最低價才跌破今天均線時觸發,
-          // 避免股價與均線糾結、來回穿越時天天觸發。
-          let klinePrevLow = null;
-          const klinePrevMaByLine = { ma20: null, ma60: null, ma120: null };
-          let klineMonthKey = null;
-          let klineMonthlyTriggerCount = 0;
 
           filteredData.forEach((day, dayIndex) => {
             // 配息入帳要用「當天加碼買進之前」持有的股數:除息當天才買進的這一筆,
@@ -2374,74 +2616,52 @@ const App = () => {
               });
             }
 
-            if (maByDate) {
-              const monthKey = day.date.slice(0, 7);
-              if (monthKey !== klineMonthKey) {
-                klineMonthKey = monthKey;
-                klineMonthlyTriggerCount = 0;
-              }
-              const mas = maByDate.get(day.date);
-              const hasLow =
-                typeof day.low === 'number' && Number.isFinite(day.low);
-
-              MA_LINE_KEYS.forEach((lineKey) => {
-                const ma = mas ? mas[lineKey] : null;
-                if (ma === null || ma === undefined || !(ma > 0)) return;
-                const prevMa = klinePrevMaByLine[lineKey];
-                const triggeredToday =
-                  klinePrevLow !== null &&
-                  prevMa !== null &&
-                  prevMa > 0 &&
-                  klinePrevLow > prevMa &&
-                  hasLow &&
-                  day.low <= ma;
-                if (!triggeredToday) return;
-
-                const withinCap =
-                  klineMonthlyTriggerCount < KLINE_TOPUP_MONTHLY_CAP;
-                if (withinCap && monthlyTopUpAmount > 0) {
-                  const boughtShares = monthlyTopUpAmount / day.price;
+            if (klineEngine && monthlyTopUpAmount > 0) {
+              const events = klineEngine.evaluateDay(day, dayIndex);
+              events.forEach((ev) => {
+                const amount = monthlyTopUpAmount * ev.ratio;
+                if (!ev.skipReason && amount > 0) {
+                  const boughtShares = amount / day.price;
                   shares += boughtShares;
-                  totalInvested += monthlyTopUpAmount;
+                  totalInvested += amount;
                   topUpOnlyShares += boughtShares;
-                  topUpOnlyInvested += monthlyTopUpAmount;
-                  klineMonthlyTriggerCount += 1;
+                  topUpOnlyInvested += amount;
                   topUpEvents.push({
                     date: day.date,
                     symbol: stock.symbol,
                     stockName: stock.stockName,
                     source: 'kline',
-                    lineKey,
-                    lineLabel: MA_LINE_LABELS[lineKey],
+                    lineKey: ev.lineKey,
+                    lineLabel: MA_LINE_LABELS[ev.lineKey],
+                    subMode: ev.subMode,
+                    subModeLabel: KLINE_SUBMODE_LABELS[ev.subMode],
+                    multiplier: ev.multiplier,
+                    decayRatio: ev.decayRatio,
                     price: day.price,
                     shares: boughtShares,
-                    amount: monthlyTopUpAmount,
+                    amount,
                     skipped: false,
                     ...makeReturnPct(day.price),
                   });
                 } else {
-                  // 當月三線共用的加碼額度已被用掉,這次穿越不會真的買進,
-                  // 但仍記錄下來讓使用者知道「有觸發、但沒成交」。
+                  // 冷卻期未滿/判定為盤整/已達總量上限,這次觸發不會真的買進,
+                  // 但仍記錄下來讓使用者知道「有觸發、但沒成交」與原因。
                   topUpEvents.push({
                     date: day.date,
                     symbol: stock.symbol,
                     stockName: stock.stockName,
                     source: 'kline',
-                    lineKey,
-                    lineLabel: MA_LINE_LABELS[lineKey],
+                    lineKey: ev.lineKey,
+                    lineLabel: MA_LINE_LABELS[ev.lineKey],
+                    subMode: ev.subMode,
+                    subModeLabel: KLINE_SUBMODE_LABELS[ev.subMode],
                     price: day.price,
                     shares: 0,
                     amount: 0,
                     skipped: true,
+                    skipReason: ev.skipReason,
                   });
                 }
-              });
-
-              klinePrevLow = hasLow ? day.low : null;
-              MA_LINE_KEYS.forEach((lineKey) => {
-                const ma = mas ? mas[lineKey] : null;
-                klinePrevMaByLine[lineKey] =
-                  ma !== null && ma !== undefined && ma > 0 ? ma : null;
               });
             }
 
@@ -3215,9 +3435,7 @@ const App = () => {
                   </label>
                   {showKlineTopUpInfo && (
                     <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                      開啟後套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
-                      (MA20)/季線 (MA60)/半年線
-                      (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與下面設定的「每次加碼金額」相同。這兩個開關可以各自獨立開關,也可以同時開啟。
+                      開啟後可分別針對月線(MA20)/季線(MA60)/半年線(MA120)勾選三種加碼子模式:跌破加碼(股價跌破均線)、回檔加碼(上升趨勢中拉回接近均線)、站回加碼(跌破後收復均線)。每條均線各自有獨立的交易日冷卻期(取代舊版「每月最多1次」),加碼金額 = 下面設定的「每次加碼金額」× 該均線的金字塔倍數 × 距上次加碼的遞減折扣係數,並可另外開啟盤整偵測(避免盤整期間頻繁小幅加碼)與總量保護機制(合計加碼次數上限)。這兩個加碼開關(定期定額/K線)可以各自獨立開關,也可以同時開啟。
                     </div>
                   )}
                   {anyTopUpEnabled && (
@@ -3296,6 +3514,246 @@ const App = () => {
                         </div>
                       </div>
                     </>
+                  )}
+                  {klineTopUpEnabled && (
+                    <div
+                      className={`flex flex-col gap-3 rounded-lg p-2.5 border ${
+                        isLight ? 'bg-white border-slate-300' : 'bg-slate-900/60 border-slate-700'
+                      }`}
+                    >
+                      <div className={`text-[11px] font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                        K線穿越均線加碼細部設定
+                      </div>
+                      {MA_LINE_KEYS.map((lineKey) => (
+                        <div key={lineKey} className="flex flex-col gap-1.5">
+                          <div className={`text-[11px] font-bold ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                            {MA_LINE_LABELS[lineKey]}
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1">
+                            {KLINE_SUBMODE_KEYS.map((subKey) => (
+                              <label
+                                key={subKey}
+                                className={`flex items-center gap-1 text-[11px] cursor-pointer ${isLight ? 'text-slate-600' : 'text-slate-400'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={klineSubModeEnabled[lineKey][subKey]}
+                                  onChange={() =>
+                                    setKlineSubModeEnabled((prev) => ({
+                                      ...prev,
+                                      [lineKey]: {
+                                        ...prev[lineKey],
+                                        [subKey]: !prev[lineKey][subKey],
+                                      },
+                                    }))
+                                  }
+                                />
+                                {KLINE_SUBMODE_LABELS[subKey]}
+                              </label>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                                冷卻天數(交易日)
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                value={klineCooldownDays[lineKey]}
+                                onChange={(e) =>
+                                  setKlineCooldownDays((prev) => ({
+                                    ...prev,
+                                    [lineKey]: parseInt(e.target.value, 10) || 0,
+                                  }))
+                                }
+                                className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                              />
+                            </div>
+                            <div>
+                              <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                                金字塔倍數
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.1}
+                                value={klinePyramidMultiplier[lineKey]}
+                                onChange={(e) =>
+                                  setKlinePyramidMultiplier((prev) => ({
+                                    ...prev,
+                                    [lineKey]: parseFloat(e.target.value) || 0,
+                                  }))
+                                }
+                                className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      <div>
+                        <div className={`text-[10px] mb-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                          金字塔倍數常用組合
+                        </div>
+                        <div className="grid grid-cols-1 gap-1">
+                          {KLINE_PYRAMID_PRESETS.map((preset) => (
+                            <button
+                              key={preset.name}
+                              type="button"
+                              onClick={() => setKlinePyramidMultiplier(preset.values)}
+                              className={`text-[11px] rounded p-1.5 border ${
+                                isLight
+                                  ? 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'
+                                  : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                              }`}
+                            >
+                              {preset.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                            回檔:上升趨勢回看天數
+                          </div>
+                          <input
+                            type="number"
+                            min={1}
+                            value={klinePullbackLookbackDays}
+                            onChange={(e) =>
+                              setKlinePullbackLookbackDays(parseInt(e.target.value, 10) || 1)
+                            }
+                            className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                          />
+                        </div>
+                        <div>
+                          <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                            回檔:均線接近容忍度(±%)
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={klinePullbackTolerancePct}
+                            onChange={(e) =>
+                              setKlinePullbackTolerancePct(parseFloat(e.target.value) || 0)
+                            }
+                            className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                          站回:確認天數(0=站上當天立刻買進)
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          value={klineRecoveryConfirmDays}
+                          onChange={(e) =>
+                            setKlineRecoveryConfirmDays(parseInt(e.target.value, 10) || 0)
+                          }
+                          className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                            距上次遞減:折扣視窗(交易日)
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            value={klineDecayWindowDays}
+                            onChange={(e) =>
+                              setKlineDecayWindowDays(parseInt(e.target.value, 10) || 0)
+                            }
+                            className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                          />
+                        </div>
+                        <div>
+                          <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                            距上次遞減:折扣下限(%)
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={klineDecayFloorPct}
+                            onChange={(e) =>
+                              setKlineDecayFloorPct(parseFloat(e.target.value) || 0)
+                            }
+                            className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                          />
+                        </div>
+                      </div>
+                      <label className={`flex items-center gap-2 cursor-pointer text-[11px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        <input
+                          type="checkbox"
+                          checked={klineChopEnabled}
+                          onChange={() => setKlineChopEnabled((v) => !v)}
+                        />
+                        啟用盤整偵測(避開情境二)
+                      </label>
+                      {klineChopEnabled && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                              盤整判斷視窗(交易日)
+                            </div>
+                            <input
+                              type="number"
+                              min={1}
+                              value={klineChopWindowDays}
+                              onChange={(e) =>
+                                setKlineChopWindowDays(parseInt(e.target.value, 10) || 1)
+                              }
+                              className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                            />
+                          </div>
+                          <div>
+                            <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                              盤整閾值(%)
+                            </div>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={klineChopThresholdPct}
+                              onChange={(e) =>
+                                setKlineChopThresholdPct(parseFloat(e.target.value) || 0)
+                              }
+                              className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <label className={`flex items-center gap-2 cursor-pointer text-[11px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        <input
+                          type="checkbox"
+                          checked={klineTotalCapEnabled}
+                          onChange={() => setKlineTotalCapEnabled((v) => !v)}
+                        />
+                        啟用總量保護機制(合計加碼次數上限)
+                      </label>
+                      {klineTotalCapEnabled && (
+                        <div>
+                          <div className={`text-[10px] mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                            所有均線/子模式合計加碼次數上限
+                          </div>
+                          <input
+                            type="number"
+                            min={1}
+                            value={klineTotalCapCount}
+                            onChange={(e) =>
+                              setKlineTotalCapCount(parseInt(e.target.value, 10) || 1)
+                            }
+                            className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
@@ -4790,6 +5248,9 @@ const App = () => {
                                           進場價
                                         </th>
                                         <th className="py-2 text-right">
+                                          金額
+                                        </th>
+                                        <th className="py-2 text-right">
                                           至期末不含息報酬
                                         </th>
                                         <th className="py-2 pr-2 text-right">
@@ -4831,7 +5292,7 @@ const App = () => {
                                           <td className={`py-2 ${textClass.sub}`}>
                                             {e.source === 'monthly'
                                               ? '定期定額'
-                                              : `K線·${e.lineLabel}`}
+                                              : `K線·${e.lineLabel}·${e.subModeLabel || ''}`}
                                           </td>
                                           <td
                                             className={`py-2 font-mono text-right ${textClass.main}`}
@@ -4840,13 +5301,29 @@ const App = () => {
                                           </td>
                                           {e.skipped ? (
                                             <td
-                                              colSpan="2"
+                                              colSpan="3"
                                               className="py-2 pr-2 text-center text-slate-500 italic"
                                             >
-                                              當月加碼額度已滿,未成交
+                                              {e.skipReason || '未達加碼門檻,未成交'}
                                             </td>
                                           ) : (
                                             <>
+                                              <td
+                                                className={`py-2 font-mono text-right ${textClass.main}`}
+                                              >
+                                                {Math.round(e.amount).toLocaleString()}
+                                                {e.source === 'kline' &&
+                                                  (e.multiplier !== 1 ||
+                                                    (e.decayRatio !== undefined &&
+                                                      e.decayRatio !== 1)) && (
+                                                    <div className="text-[10px] font-normal text-slate-500">
+                                                      {e.multiplier?.toFixed(1)}x層級
+                                                      {e.decayRatio !== undefined
+                                                        ? ` × ${Math.round(e.decayRatio * 100)}%遞減`
+                                                        : ''}
+                                                    </div>
+                                                  )}
+                                              </td>
                                               <td
                                                 className={`py-2 font-mono text-right ${
                                                   e.priceReturnPct >= 0
