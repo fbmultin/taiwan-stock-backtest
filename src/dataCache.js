@@ -2,12 +2,19 @@
 //
 // 資料策略(ETF回測比較、定期定額策略最佳化兩個分頁共用):
 //   1. 所有計算終點固定為「前一個交易日」，不計算當天資料(見 tradingCalendar.js)。
-//   2. 讀取順序:優先讀 localStorage 快取，快取有資料就直接用，完全不打 API。
-//   3. 只有該股票代碼從來沒有成功查詢過，才會發出即時抓取，依序嘗試
-//      FinMind → 證交所(TWSE)官方資料 → Yahoo Finance 三層備援。
-//   4. 快取「永久有效」，不設時效限制、也不因為快取涵蓋的區間不同而失效；
-//      第一次成功抓取時就一次抓最近 FETCH_HISTORY_YEARS 年的完整歷史，
-//      之後不論回測期間怎麼調整，只要落在這個範圍內都直接從快取切片。
+//   2. 讀取順序:優先讀 localStorage 快取；但每次都會檢查快取的最後一筆日期
+//      是否已經跟得上目前的「前一個交易日」，跟得上才直接用、完全不打 API。
+//   3. 該股票代碼從來沒有成功查詢過、或快取的最後一筆日期比「前一個交易日」
+//      還舊(表示已經過了至少一個新的交易日，快取沒有涵蓋到)，都會發出即時
+//      抓取，依序嘗試 FinMind → 證交所(TWSE)官方資料 → Yahoo Finance 三層
+//      備援，抓到後覆蓋快取。三個來源都失敗時(例如離線、或資料源當天還沒
+//      更新)才退回使用現有的舊快取繼續計算，並標記 stale:true，讓呼叫端
+//      可以在結果頁提示使用者「資料只更新到某天」，不會又靜默用了過期資料。
+//      （這是之前的已知問題：舊版快取一旦存在就永久沿用、完全不管多舊，
+//      導致換了新的一天之後，回測抓到的還是好幾天前的舊資料。）
+//   4. 快取範圍:第一次成功抓取(或判定需要更新)時，一次抓最近
+//      FETCH_HISTORY_YEARS 年的完整歷史，之後不論回測期間怎麼調整，
+//      只要落在這個範圍內都直接從快取切片，不用每次都重新請求整段歷史。
 //   5. localStorage 的 key 統一用 `stock_price_<代碼>` 命名，兩個分頁共用同一份資料，
 //      彼此都看得到對方已經抓過的標的、不會重複打 API。
 import TW_STOCK_NAMES from './data/twStockNames';
@@ -484,14 +491,26 @@ const priceCacheMissingHighLow = (data) =>
   data.length === 0 ||
   data.some((d) => typeof d.high !== 'number' || typeof d.low !== 'number');
 
-// 股價/配息資料的對外主要入口:cache-first。
-// 只要 localStorage 已經有這檔代碼的快取(不論是多久以前存的)且格式完整,
-// 就直接回傳、完全不打 API;「這檔代碼從來沒有成功查詢過」或「快取是舊格式
-// 缺高低價」都會發出即時抓取(FinMind → TWSE → Yahoo 三層備援),一次抓最近
-// FETCH_HISTORY_YEARS 年的完整歷史,抓到後永久存快取(覆蓋舊格式快取)。
+// 股價/配息資料的對外主要入口:cache-first、但加上「快取是否跟得上最新交易日」
+// 的檢查,不是原本那種「快取一旦存在就永久沿用、完全不管多舊」的做法(那樣會
+// 導致像 09/18 之後就再也抓不到新資料的問題:同一天內重複執行回測直接吃快取,
+// 但只要換了一天、有新的交易日資料,就會嘗試重新即時抓取(FinMind → TWSE →
+// Yahoo 三層備援)來補上快取沒有的最新資料,抓到後覆蓋快取;
+// 只有在即時抓取三個來源都失敗時(例如離線、或當天資料源都還沒更新),才會
+// 退回使用現有的舊快取繼續計算,並標記 stale:true,讓呼叫端可以在結果頁
+// 提示使用者「資料只更新到某天」,而不是又靜默用了過期資料。
 export const fetchStockPriceData = async (symbol) => {
   const cached = loadPriceCache(symbol);
-  if (cached && cached.data && cached.data.length > 0 && !priceCacheMissingHighLow(cached.data)) {
+  const cacheUsable =
+    cached && cached.data && cached.data.length > 0 && !priceCacheMissingHighLow(cached.data);
+  const lastCompletedTradingDay = getLastCompletedTradingDay();
+  const latestNeededDateStr = lastCompletedTradingDay.toISOString().split('T')[0];
+  const cacheLastDateStr = cacheUsable
+    ? cached.data[cached.data.length - 1].date
+    : null;
+  const cacheIsFresh = cacheUsable && cacheLastDateStr >= latestNeededDateStr;
+
+  if (cacheIsFresh) {
     return {
       symbol,
       data: cached.data,
@@ -506,20 +525,50 @@ export const fetchStockPriceData = async (symbol) => {
   }
 
   const startDate = getFetchAnchorStartDate();
-  const endDate = getLastCompletedTradingDay();
+  const endDate = lastCompletedTradingDay;
   const result = await attemptLiveFetch(symbol, startDate, endDate);
   if (result && result.data.length > 0) {
-    savePriceCache(symbol, result);
-    return { ...result, fromCache: false };
+    const newLastDateStr = result.data[result.data.length - 1].date;
+    // 避免資料源這次剛好抓到比現有快取還舊/還少的異常結果,反而把好的快取蓋掉。
+    if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
+      savePriceCache(symbol, result);
+      return { ...result, fromCache: false };
+    }
+  }
+
+  if (cacheUsable) {
+    // 即時抓取沒有拿到更新的資料(三個來源都失敗,或抓到的反而更舊),
+    // 退回使用現有快取繼續計算,並標記 stale,讓呼叫端知道這不是最新資料。
+    return {
+      symbol,
+      data: cached.data,
+      divDates: cached.divDates || [],
+      dividendsMap: cached.dividendsMap || {},
+      usedSymbol: cached.usedSymbol || symbol,
+      source: cached.source || '',
+      dividendDataIncomplete: cached.dividendDataIncomplete || false,
+      fromCache: true,
+      cachedAt: cached.cachedAt,
+      stale: true,
+    };
   }
   return null;
 };
 
-// 大盤指數(預設為加權指數 ^TWII)走同一套「永久快取、只查一次」邏輯,
-// 但指數代號在 FinMind / TWSE 都查不到資料,直接走 Yahoo Finance 這條管道。
+// 大盤指數(預設為加權指數 ^TWII)走同一套「快取但檢查新舊」邏輯(同上
+// fetchStockPriceData 的說明),但指數代號在 FinMind / TWSE 都查不到資料,
+// 直接走 Yahoo Finance 這條管道。
 export const fetchIndexPriceData = async (symbol = '^TWII') => {
   const cached = loadPriceCache(symbol);
-  if (cached && cached.data && cached.data.length > 0) {
+  const cacheUsable = cached && cached.data && cached.data.length > 0;
+  const lastCompletedTradingDay = getLastCompletedTradingDay();
+  const latestNeededDateStr = lastCompletedTradingDay.toISOString().split('T')[0];
+  const cacheLastDateStr = cacheUsable
+    ? cached.data[cached.data.length - 1].date
+    : null;
+  const cacheIsFresh = cacheUsable && cacheLastDateStr >= latestNeededDateStr;
+
+  if (cacheIsFresh) {
     return {
       symbol,
       data: cached.data,
@@ -532,14 +581,30 @@ export const fetchIndexPriceData = async (symbol = '^TWII') => {
     };
   }
   const startDate = getFetchAnchorStartDate();
-  const endDate = getLastCompletedTradingDay();
+  const endDate = lastCompletedTradingDay;
   const result = await fetchWithSuffix(symbol, symbol, startDate, endDate).catch(
     () => null
   );
   if (result && result.data.length > 0) {
-    const withSource = { ...result, source: 'Yahoo' };
-    savePriceCache(symbol, withSource);
-    return { ...withSource, fromCache: false };
+    const newLastDateStr = result.data[result.data.length - 1].date;
+    if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
+      const withSource = { ...result, source: 'Yahoo' };
+      savePriceCache(symbol, withSource);
+      return { ...withSource, fromCache: false };
+    }
+  }
+  if (cacheUsable) {
+    return {
+      symbol,
+      data: cached.data,
+      divDates: cached.divDates || [],
+      dividendsMap: cached.dividendsMap || {},
+      usedSymbol: cached.usedSymbol || symbol,
+      source: cached.source || 'Yahoo',
+      fromCache: true,
+      cachedAt: cached.cachedAt,
+      stale: true,
+    };
   }
   return null;
 };
