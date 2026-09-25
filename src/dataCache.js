@@ -555,9 +555,69 @@ export const fetchStockPriceData = async (symbol) => {
   return null;
 };
 
+// 大盤加權指數(^TWII)官方資料來源:證交所「每日市場成交資訊」(FMTQIK),
+// 跟個股用的 STOCK_DAY 同一個 /exchangeReport/ 家族、免金鑰、CORS 開放,
+// 不需要透過容易逾時故障的公用代理伺服器(下面 fetchWithSuffix 那條 Yahoo
+// 管道就得繞這些代理,常常是整次回測抓資料最慢、也最容易整個失敗的一步——
+// 一旦失敗就完全抓不到大盤資料,所有標的的β值都會顯示「資料不足」)。
+// 回傳格式跟個股資料相同的 {date, timestamp, price} 陣列,只是指數沒有
+// 高低價、也沒有除息,β值計算只需要 date/price 兩個欄位,故不補這兩者。
+const fetchTWSEIndexMonth = async (year, month) => {
+  const dateParam = `${year}${String(month).padStart(2, '0')}01`;
+  const url = `https://www.twse.com.tw/exchangeReport/FMTQIK?response=json&date=${dateParam}`;
+  try {
+    const res = await fetchWithTimeout(url, {}, 10000);
+    const json = await res.json();
+    if (json.stat !== 'OK' || !Array.isArray(json.data)) return [];
+    return json.data
+      .map((row) => {
+        const dateStr = rocDateToISO(row[0]);
+        // 「發行量加權股價指數」欄位(FMTQIK 固定第5欄,index 4)。
+        const close = parseFloat(String(row[4]).replace(/,/g, ''));
+        if (!dateStr || !Number.isFinite(close)) return null;
+        return {
+          date: dateStr,
+          timestamp: new Date(dateStr).getTime(),
+          price: close,
+        };
+      })
+      .filter((r) => r !== null);
+  } catch (e) {
+    return [];
+  }
+};
+
+// 一次最多同時對證交所發出這麼多個月的並發請求、分批循序等待,避免一次
+// 送出過多並發請求;實際上絕大多數情況(已有快取、只補最近幾天缺口)
+// 只會落在第一批就結束,並不會真的跑到很多批。
+const TWSE_INDEX_BATCH_MONTHS = 12;
+
+const fetchIndexFromTWSERange = async (startDate, endDate) => {
+  const months = [];
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  while (cursor <= last) {
+    months.push({ year: cursor.getFullYear(), month: cursor.getMonth() + 1 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  if (months.length === 0) return [];
+
+  const merged = [];
+  for (let i = 0; i < months.length; i += TWSE_INDEX_BATCH_MONTHS) {
+    const batch = months.slice(i, i + TWSE_INDEX_BATCH_MONTHS);
+    const batchResults = await Promise.all(
+      batch.map((m) => fetchTWSEIndexMonth(m.year, m.month))
+    );
+    merged.push(...batchResults.flat());
+  }
+  return merged.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+};
+
 // 大盤指數(預設為加權指數 ^TWII)走同一套「快取但檢查新舊」邏輯(同上
-// fetchStockPriceData 的說明),但指數代號在 FinMind / TWSE 都查不到資料,
-// 直接走 Yahoo Finance 這條管道。
+// fetchStockPriceData 的說明),但抓取策略跟個股不同:優先用上面的證交所
+// FMTQIK 管道,而且只補抓快取缺少的部分(已有快取時通常只差幾天,幾乎
+// 立即完成);只有完全沒有快取(第一次用)或這次 TWSE 抓取失敗時,才退回
+// 原本效率較差、也較不穩定的 Yahoo Finance 管道(整段 20 年歷史一次抓)。
 export const fetchIndexPriceData = async (symbol = '^TWII') => {
   const cached = loadPriceCache(symbol);
   const cacheUsable = cached && cached.data && cached.data.length > 0;
@@ -580,19 +640,64 @@ export const fetchIndexPriceData = async (symbol = '^TWII') => {
       cachedAt: cached.cachedAt,
     };
   }
-  const startDate = getFetchAnchorStartDate();
+
+  const anchorStartDate = getFetchAnchorStartDate();
   const endDate = lastCompletedTradingDay;
-  const result = await fetchWithSuffix(symbol, symbol, startDate, endDate).catch(
-    () => null
-  );
-  if (result && result.data.length > 0) {
-    const newLastDateStr = result.data[result.data.length - 1].date;
-    if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
-      const withSource = { ...result, source: 'Yahoo' };
-      savePriceCache(symbol, withSource);
-      return { ...withSource, fromCache: false };
+  // 已有快取時只補抓快取最後一天之後的缺口;完全沒有快取時才需要抓整段
+  // 20 年歷史(逐月分批向 TWSE 要,不受下面 Yahoo 那條路徑的並發限制)。
+  const gapStartDate = cacheUsable
+    ? new Date(new Date(cacheLastDateStr).getTime() + 24 * 60 * 60 * 1000)
+    : anchorStartDate;
+
+  let mergedData = null;
+  let usedSource = null;
+
+  if (gapStartDate <= endDate) {
+    const twseData = await fetchIndexFromTWSERange(gapStartDate, endDate).catch(
+      () => []
+    );
+    if (twseData && twseData.length > 0) {
+      const byDate = new Map();
+      if (cacheUsable) cached.data.forEach((d) => byDate.set(d.date, d));
+      twseData.forEach((d) => byDate.set(d.date, d));
+      mergedData = Array.from(byDate.values()).sort((a, b) =>
+        a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+      );
+      usedSource = 'TWSE';
     }
   }
+
+  if (!mergedData) {
+    // TWSE 這次沒補到新資料(缺口本身沒有新交易日、或 TWSE 這次抓取失敗),
+    // 退回原本的 Yahoo Finance 管道,一樣抓整段 20 年歷史。
+    const result = await fetchWithSuffix(
+      symbol,
+      symbol,
+      anchorStartDate,
+      endDate
+    ).catch(() => null);
+    if (result && result.data.length > 0) {
+      const newLastDateStr = result.data[result.data.length - 1].date;
+      if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
+        mergedData = result.data;
+        usedSource = 'Yahoo';
+      }
+    }
+  }
+
+  if (mergedData) {
+    const withSource = {
+      symbol,
+      data: mergedData,
+      divDates: [],
+      dividendsMap: {},
+      usedSymbol: symbol,
+      source: usedSource,
+    };
+    savePriceCache(symbol, withSource);
+    return { ...withSource, fromCache: false };
+  }
+
   if (cacheUsable) {
     return {
       symbol,
