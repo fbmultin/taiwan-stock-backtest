@@ -166,16 +166,29 @@ const calculateRiskProfile = (prices, printMode) => {
   };
 };
 
+// 相鄰兩筆資料點間隔超過這個天數,就不當作「一天」的報酬率使用——台灣最長的
+// 連續休市(春節調整假)大約9天,這裡抓寬鬆一點的門檻避免誤傷正常假期,但仍
+// 能擋下「抓取來源漏掉整個月資料」這種真正的缺口(見 dataCache.js 的
+// fetchTWSEIndexMonth 註解:大盤指數冷抓時,真實網路環境偶爾會有個別月份
+// 抓取失敗,若不擋住,前後兩筆資料實際上差了快一個月,卻會被誤算成單日報酬,
+// 把β值計算用的變異數嚴重灌水,算出離譜偏低、接近0的β值)。
+const MAX_GAP_DAYS_FOR_DAILY_RETURN = 15;
+
 // 把價格序列轉成「日期 -> 當日報酬率」的對照表,供計算β值時依日期比對用。
 const buildDailyReturnsByDate = (data) => {
   const map = new Map();
   if (!data || data.length < 2) return map;
   for (let i = 1; i < data.length; i++) {
-    const prev = data[i - 1].price;
-    const curr = data[i].price;
-    if (prev > 0 && curr !== null && curr !== undefined) {
-      map.set(data[i].date, (curr - prev) / prev);
-    }
+    const prevPoint = data[i - 1];
+    const currPoint = data[i];
+    const prev = prevPoint.price;
+    const curr = currPoint.price;
+    if (!(prev > 0) || curr === null || curr === undefined) continue;
+    const prevTs = prevPoint.timestamp ?? new Date(prevPoint.date).getTime();
+    const currTs = currPoint.timestamp ?? new Date(currPoint.date).getTime();
+    const gapDays = (currTs - prevTs) / 86400000;
+    if (gapDays > MAX_GAP_DAYS_FOR_DAILY_RETURN) continue;
+    map.set(currPoint.date, (curr - prev) / prev);
   }
   return map;
 };

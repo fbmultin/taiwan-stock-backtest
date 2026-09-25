@@ -579,13 +579,27 @@ export const fetchStockPriceData = async (symbol) => {
 // 一旦失敗就完全抓不到大盤資料,所有標的的β值都會顯示「資料不足」)。
 // 回傳格式跟個股資料相同的 {date, timestamp, price} 陣列,只是指數沒有
 // 高低價、也沒有除息,β值計算只需要 date/price 兩個欄位,故不補這兩者。
-const fetchTWSEIndexMonth = async (year, month) => {
+// 一次全歷史冷抓要對 TWSE 連續發出上百個月份的請求,實際跑在真實使用者的
+// 瀏覽器/網路環境下,偶爾會有個別月份逾時或被暫時拒絕(跟乾淨測試環境下
+// 100% 成功不同)。單一月份失敗不會拋錯,只會讓那個月「看起來沒有交易日」,
+// 但後面 buildDailyReturnsByDate 是用「陣列中相鄰兩筆」而不是「相鄰兩個
+// 日曆天」在算報酬率,一旦有整月資料漏抓,前後兩筆實際上差了快一個月,
+// 卻會被誤算成「一天」的報酬率,把β值的變異數嚴重灌水、算出離譜偏低的β值。
+// 這裡先在來源端加一次重試,盡量把缺口補起來;下面 buildDailyReturnsByDate
+// 另外還會擋掉重試後仍然存在的異常大缺口,兩層一起防呆。
+const fetchTWSEIndexMonth = async (year, month, attempt = 0) => {
   const dateParam = `${year}${String(month).padStart(2, '0')}01`;
   const url = `https://www.twse.com.tw/exchangeReport/FMTQIK?response=json&date=${dateParam}`;
   try {
     const res = await fetchWithTimeout(url, {}, 10000);
     const json = await res.json();
-    if (json.stat !== 'OK' || !Array.isArray(json.data)) return [];
+    if (json.stat !== 'OK' || !Array.isArray(json.data)) {
+      if (attempt < 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        return fetchTWSEIndexMonth(year, month, attempt + 1);
+      }
+      return [];
+    }
     return json.data
       .map((row) => {
         const dateStr = rocDateToISO(row[0]);
@@ -600,6 +614,10 @@ const fetchTWSEIndexMonth = async (year, month) => {
       })
       .filter((r) => r !== null);
   } catch (e) {
+    if (attempt < 1) {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return fetchTWSEIndexMonth(year, month, attempt + 1);
+    }
     return [];
   }
 };
