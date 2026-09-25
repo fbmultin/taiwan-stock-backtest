@@ -354,23 +354,25 @@ const applySplitAdjustments = (stock) => {
   return notes;
 };
 
-// 標的組合排名表:固定對應「回測投資年限」裡的相對區間 + 2 個固定起始日快捷鈕,
-// 跟目前實際選擇的回測投資年限無關,一律同時算這幾組區間的排名。
+// 標的組合排名表:固定使用這裡列出的一組區間,完全跟左欄「回測投資年限」脫鉤——
+// 不論使用者目前選了哪個投資年限,排名表永遠同時計算這幾組固定區間的排名。
 const RANKING_PERIODS = [
   { key: 'ytd', label: '今年' },
-  { key: '3m', label: '3個月', months: 3 },
-  { key: '6m', label: '半年', months: 6 },
+  { key: '1q', label: '近1季', months: 3 },
+  { key: '2q', label: '近2季', months: 6 },
+  { key: '3q', label: '近3季', months: 9 },
   { key: '12m', label: '近1年', months: 12 },
+  { key: '18m', label: '近1.5年', months: 18 },
   { key: '2y', label: '近2年', months: 24 },
+  { key: '30m', label: '近2.5年', months: 30 },
   { key: '3y', label: '近3年', months: 36 },
+  { key: '4y', label: '近4年', months: 48 },
   { key: '5y', label: '近5年', months: 60 },
-  { key: 'fixed1', label: '2026/6/22', fixedStart: '2026-06-22' },
-  { key: 'fixed2', label: '2026/7/29', fixedStart: '2026-07-29' },
 ];
 
 // 算法跟 runBacktest 裡「無加碼」時的起訖日推算完全同一套邏輯(結束日固定為
-// 前一個交易日、起訖日都避開非交易日),只是這裡一次算 9 組固定區間、跟使用者
-// 目前實際選的「回測投資年限」無關。
+// 前一個交易日、起訖日都避開非交易日),只是這裡一次算 RANKING_PERIODS 這組固定
+// 區間、跟使用者目前實際選的「回測投資年限」無關。
 const computeRankingPeriodRange = (period) => {
   const rangeEnd = getLastCompletedTradingDay();
   let rangeStart;
