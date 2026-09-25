@@ -353,13 +353,14 @@ const applySplitAdjustments = (stock) => {
   return notes;
 };
 
-// 標的組合排名表:固定對應「回測投資年限」裡的 6 個相對區間 + 2 個固定起始日快捷鈕,
-// 跟目前實際選擇的回測投資年限無關,一律同時算這 8 組區間的排名。
+// 標的組合排名表:固定對應「回測投資年限」裡的相對區間 + 2 個固定起始日快捷鈕,
+// 跟目前實際選擇的回測投資年限無關,一律同時算這幾組區間的排名。
 const RANKING_PERIODS = [
   { key: 'ytd', label: '今年' },
   { key: '3m', label: '3個月', months: 3 },
   { key: '6m', label: '半年', months: 6 },
   { key: '12m', label: '近1年', months: 12 },
+  { key: '2y', label: '近2年', months: 24 },
   { key: '3y', label: '近3年', months: 36 },
   { key: '5y', label: '近5年', months: 60 },
   { key: 'fixed1', label: '2026/6/22', fixedStart: '2026-06-22' },
@@ -367,7 +368,7 @@ const RANKING_PERIODS = [
 ];
 
 // 算法跟 runBacktest 裡「無加碼」時的起訖日推算完全同一套邏輯(結束日固定為
-// 前一個交易日、起訖日都避開非交易日),只是這裡一次算 8 組固定區間、跟使用者
+// 前一個交易日、起訖日都避開非交易日),只是這裡一次算 9 組固定區間、跟使用者
 // 目前實際選的「回測投資年限」無關。
 const computeRankingPeriodRange = (period) => {
   const rangeEnd = getLastCompletedTradingDay();
@@ -3095,7 +3096,7 @@ const App = () => {
                     </button>
                   </div>
                   <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                    列出目前已勾選標的,在「回測投資年限」的 6 個區間及 2 個固定起始日下的含息報酬率排名(1
+                    列出目前已勾選標的,在「回測投資年限」的 7 個區間及 2 個固定起始日下的含息報酬率排名(1
                     =表現最好,以紅字標示)。只算已勾選的標的、不含加碼,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
                   </div>
                   {rankingError && (
@@ -3109,34 +3110,32 @@ const App = () => {
                         <thead>
                           <tr>
                             <th className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 sticky left-0"></th>
-                            {RANKING_PERIODS.map((p) => (
+                            {rankingData.rows.map((row) => (
                               <th
-                                key={p.key}
+                                key={row.symbol}
+                                title={row.stockName}
                                 className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 whitespace-nowrap font-mono"
                               >
-                                {p.label}
+                                {row.symbol}
                               </th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {rankingData.rows.map((row, i) => (
+                          {RANKING_PERIODS.map((p, i) => (
                             <tr
-                              key={row.symbol}
+                              key={p.key}
                               className={i % 2 === 0 ? 'bg-slate-800/70' : 'bg-slate-800/30'}
                             >
-                              <td
-                                title={row.stockName}
-                                className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap"
-                              >
-                                {row.symbol}
+                              <td className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap">
+                                {p.label}
                               </td>
-                              {RANKING_PERIODS.map((p) => {
+                              {rankingData.rows.map((row) => {
                                 const rank = row.ranks[p.key];
                                 const retPct = row.returns[p.key];
                                 return (
                                   <td
-                                    key={p.key}
+                                    key={row.symbol}
                                     className="px-2 py-1.5 border border-slate-700 font-mono whitespace-nowrap"
                                   >
                                     <div className="flex flex-col items-center leading-tight">
