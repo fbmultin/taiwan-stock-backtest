@@ -967,6 +967,8 @@ const App = () => {
   // false = 不做一次性投入,完全從零開始,只靠加碼逐步建立部位。
   const [monthlyTopUpEnabled, setMonthlyTopUpEnabled] = useState(false);
   const [klineTopUpEnabled, setKlineTopUpEnabled] = useState(false);
+  const [showMonthlyTopUpInfo, setShowMonthlyTopUpInfo] = useState(false);
+  const [showKlineTopUpInfo, setShowKlineTopUpInfo] = useState(false);
   const [monthlyTopUpDay, setMonthlyTopUpDay] = useState(5);
   const [monthlyTopUpAmount, setMonthlyTopUpAmount] = useState(10000);
   const [monthlyTopUpIncludeLumpSum, setMonthlyTopUpIncludeLumpSum] =
@@ -3152,10 +3154,25 @@ const App = () => {
                     <span className={`text-xs ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                       每月固定日期加碼
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowMonthlyTopUpInfo((v) => !v)}
+                      title="說明"
+                      className={`flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded border transition-colors ${
+                        isLight
+                          ? 'text-slate-500 border-slate-300 hover:bg-slate-200'
+                          : 'text-slate-400 border-slate-600 hover:bg-slate-700'
+                      }`}
+                    >
+                      <Info className="w-3 h-3" />
+                      說明
+                    </button>
                   </label>
-                  <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                    開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
-                  </div>
+                  {showMonthlyTopUpInfo && (
+                    <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                      開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
+                    </div>
+                  )}
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -3165,12 +3182,27 @@ const App = () => {
                     <span className={`text-xs ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                       K線穿越均線加碼
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowKlineTopUpInfo((v) => !v)}
+                      title="說明"
+                      className={`flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded border transition-colors ${
+                        isLight
+                          ? 'text-slate-500 border-slate-300 hover:bg-slate-200'
+                          : 'text-slate-400 border-slate-600 hover:bg-slate-700'
+                      }`}
+                    >
+                      <Info className="w-3 h-3" />
+                      說明
+                    </button>
                   </label>
-                  <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                    開啟後套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
-                    (MA20)/季線 (MA60)/半年線
-                    (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與下面設定的「每次加碼金額」相同。這兩個開關可以各自獨立開關,也可以同時開啟。
-                  </div>
+                  {showKlineTopUpInfo && (
+                    <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                      開啟後套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
+                      (MA20)/季線 (MA60)/半年線
+                      (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與下面設定的「每次加碼金額」相同。這兩個開關可以各自獨立開關,也可以同時開啟。
+                    </div>
+                  )}
                   {anyTopUpEnabled && (
                     <>
                       <div
@@ -4264,11 +4296,6 @@ const App = () => {
                                   </span>
                                 )}
                               </div>
-                              {idx === 0 && (
-                                <span className="bg-yellow-500 text-slate-900 text-[14px] px-1.5 py-0.5 rounded font-bold">
-                                  TOP 1
-                                </span>
-                              )}
                               <div className="flex gap-1 flex-wrap">
                                 {(item.isShortHistory || item.isYoungStock) && (
                                   <span
