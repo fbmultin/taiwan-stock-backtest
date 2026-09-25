@@ -4879,18 +4879,6 @@ const App = () => {
                                       : '資料不足'}
                                   </span>
                                 )}
-                                {item.feeRate !== undefined && (
-                                  <span
-                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費)。下面「扣管理費後」的含息報酬,是把這個費率換算成逐日累計的管理費成本金額,從期末含息總值裡再扣一次估算出來的。"
-                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      isLight
-                                        ? 'text-fuchsia-700 border-fuchsia-200 bg-fuchsia-50'
-                                        : 'text-fuchsia-400 border-fuchsia-900/50 bg-fuchsia-900/20'
-                                    }`}
-                                  >
-                                    管理費(年化) {item.feeRate.toFixed(2)}%
-                                  </span>
-                                )}
                               </div>
                             </div>
                             <div className="text-right">
@@ -5038,6 +5026,25 @@ const App = () => {
                                   {item.annualizedDividendYield.toFixed(1)}%
                                 </span>
                               </div>
+                              {item.feeRate !== undefined && (
+                                <div
+                                  className={`flex justify-between border-t border-dashed pt-1 mt-1 ${
+                                    isLight
+                                      ? 'border-gray-300'
+                                      : 'border-slate-600/50'
+                                  }`}
+                                >
+                                  <span
+                                    className={textClass.sub}
+                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費)。右上角「扣管理費後」的含息報酬,是把這個費率換算成逐日累計的管理費成本金額,從期末含息總值裡再扣一次估算出來的。"
+                                  >
+                                    管理費(年化)
+                                  </span>
+                                  <span className="font-mono text-fuchsia-500/70">
+                                    {item.feeRate.toFixed(2)}%
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div className={`space-y-0.5 sm:border-l sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 flex flex-col justify-center ${isLight ? 'border-slate-300' : 'border-slate-700/50'}`}>
                               <div
