@@ -1154,6 +1154,9 @@ const App = () => {
   const [rankingLoading, setRankingLoading] = useState(false);
   const [rankingError, setRankingError] = useState('');
   const [rankingData, setRankingData] = useState(null);
+  // 排名表區塊的捲動錨點:按下「更新排名表」(尤其是常駐浮動鈕)算完後,自動
+  // 捲到這裡讓使用者能快速看到表格,不用自己找。
+  const rankingTableAnchorRef = useRef(null);
   // 排名表(含加碼):只在目前有勾選任一加碼開關時才會一併計算,套用當下的
   // 加碼策略設定(每月固定日期加碼/K線穿越均線加碼)。
   const [rankingDataTopUp, setRankingDataTopUp] = useState(null);
@@ -1435,6 +1438,13 @@ const App = () => {
       } else {
         setRankingDataTopUp(null);
       }
+
+      // 算完後自動捲到排名表區塊,方便從畫面任何位置按浮動鈕更新後能馬上看到結果,
+      // 不用自己找表格在哪裡。
+      rankingTableAnchorRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
     } catch (e) {
       setRankingError('計算排名時發生錯誤,請稍後再試。');
     } finally {
@@ -3992,6 +4002,9 @@ const App = () => {
                     );
                   })}
                 </div>
+
+                {/* 排名表區塊的捲動錨點,見上方 rankingTableAnchorRef 註解 */}
+                <div ref={rankingTableAnchorRef} />
 
                 {anyTopUpEnabled && (
                   <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
