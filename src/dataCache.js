@@ -441,10 +441,26 @@ export const PRICE_CACHE_PREFIX = 'stock_price_';
 
 const cacheKeyFor = (symbol) => `${PRICE_CACHE_PREFIX}${symbol}`;
 
+// 快取格式版本號:每次改版都幫舊快取蓋一個版本戳記,讀取時只要版本對不上
+// 就直接當作沒有快取(不是「跟得上最新交易日」的判斷,是更前面一關)。
+// 用意是修正「大盤指數改走證交所官方資料」那次以前,使用者瀏覽器裡已經
+// 存在的舊快取(可能是透過不穩定 Yahoo 代理抓到、內容本身就有問題的資料)——
+// 舊版邏輯只看「日期有沒有跟上」,即使資料內容是錯的也會被當成可用快取,
+// 之後每次只補最新幾天的缺口,錯誤的歷史數字永遠不會被重新抓取覆蓋掉,
+// 導致β值算出來一直不對,使用者只能自己手動清瀏覽器 localStorage 才能修正。
+// 現在改成:只要版本號不符(包含完全沒有這個欄位的舊快取),一律視同沒有
+// 快取,強制整檔重新即時抓取一次(走新的、已修正的資料來源管道),抓到後
+// 用新版本號重新存檔,之後就正常沿用「只補缺口」的邏輯,不需要使用者自己
+// 動手清快取。日後如果又發現快取內容本身有問題,把這個數字再往上加一即可。
+const CACHE_SCHEMA_VERSION = 2;
+
 export const loadPriceCache = (symbol) => {
   try {
     const raw = localStorage.getItem(cacheKeyFor(symbol));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.schemaVersion !== CACHE_SCHEMA_VERSION) return null;
+    return parsed;
   } catch (e) {
     return null;
   }
@@ -455,6 +471,7 @@ export const savePriceCache = (symbol, result) => {
     localStorage.setItem(
       cacheKeyFor(symbol),
       JSON.stringify({
+        schemaVersion: CACHE_SCHEMA_VERSION,
         data: result.data,
         divDates: result.divDates,
         dividendsMap: result.dividendsMap,
