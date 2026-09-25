@@ -3114,33 +3114,16 @@ const App = () => {
         </div>
       )}
 
-      {/* 浮動按鈕:「重新執行回測」,不論電腦版或手機版都常駐顯示,方便隨時重新執行
-          回測,按下即直接(重新)開始回測;沿用主要開始回測按鈕的 disabled 判斷,
-          避免在設定不合法時誤觸 */}
-      {!loading && !printMode && (
-        <button
-          onClick={() => runBacktest()}
-          disabled={!hasSelectedStock}
-          className={`fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
-            !hasSelectedStock
-              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
-              : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
-          }`}
-          title="重新執行回測"
-        >
-          <Zap className="w-6 h-6 fill-current" />
-        </button>
-      )}
-
-      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示,方便不用捲到排名表
-          區塊就能隨時重新抓資料計算;放在跟「重新執行回測」「收起設定/回去改設定」
-          同一側(右下角),夾在兩者中間;純圖示的圓形按鈕,只用一個符號示意,不額外
-          放文字 */}
-      {!loading && !printMode && (
+      {/* 浮動按鈕(最上面,bottom-36):依目前是「設定頁」還是「結果頁」切換內容,
+          不論電腦版或手機版都常駐顯示。設定區展開中(設定頁,isConfigExpanded)時
+          是「更新排名表」,方便不用捲到排名表區塊就能隨時重新抓資料計算;設定區
+          已收合(結果頁)時,換成「回去改設定」,按下直接展開設定區並捲回最上方,
+          不用自己往上滑找 */}
+      {!loading && !printMode && (isConfigExpanded ? (
         <button
           onClick={updateRankingTable}
           disabled={rankingLoading || !hasSelectedStock}
-          className={`fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print transition-colors ${
+          className={`fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print transition-colors ${
             rankingLoading || !hasSelectedStock
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
               : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/40'
@@ -3153,27 +3136,51 @@ const App = () => {
             <Table2 className="w-6 h-6" />
           )}
         </button>
-      )}
-
-      {/* 浮動按鈕:「收起設定/回去改設定」,取代原本只在手機版顯示的「快速跳到最底」,
-          不論電腦版或手機版都常駐顯示;跟頁面最上方原本就有的「收起設定/回去改
-          設定」按鈕共用同一個 isConfigExpanded 狀態與文字/圖示邏輯,方便在任何
-          位置都能直接展開/收合設定區,不用自己捲到最上面才能按 */}
-      {!loading && !printMode && (
+      ) : (
         <button
           onClick={() => {
-            setIsConfigExpanded((v) => !v);
-            // 不論展開或收合,都捲到最上方,讓使用者馬上看到切換後的畫面
+            setIsConfigExpanded(true);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
-          className="fixed bottom-5 right-4 z-30 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-xl shadow-violet-900/40 flex items-center justify-center no-print"
-          title={isConfigExpanded ? '收起設定' : '回去改設定'}
+          className="fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-xl shadow-violet-900/40 flex items-center justify-center no-print"
+          title="回去改設定"
         >
-          {isConfigExpanded ? (
-            <ChevronUp className="w-6 h-6" />
-          ) : (
-            <ChevronDown className="w-6 h-6" />
-          )}
+          <ChevronDown className="w-6 h-6" />
+        </button>
+      ))}
+
+      {/* 浮動按鈕(中間,bottom-20):「重新執行回測」,不論設定頁或結果頁、電腦版或
+          手機版都常駐顯示,方便隨時重新執行回測,按下即直接(重新)開始回測;沿用
+          主要開始回測按鈕的 disabled 判斷,避免在設定不合法時誤觸 */}
+      {!loading && !printMode && (
+        <button
+          onClick={() => runBacktest()}
+          disabled={!hasSelectedStock}
+          className={`fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
+            !hasSelectedStock
+              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
+              : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
+          }`}
+          title="重新執行回測"
+        >
+          <Zap className="w-6 h-6 fill-current" />
+        </button>
+      )}
+
+      {/* 浮動按鈕(最下面,bottom-5):「快速跳到最底」,不論設定頁或結果頁、電腦版或
+          手機版都常駐顯示,提供快速跳到頁面最底部的捷徑 */}
+      {!loading && !printMode && (
+        <button
+          onClick={() =>
+            window.scrollTo({
+              top: document.body.scrollHeight,
+              behavior: 'smooth',
+            })
+          }
+          className="fixed bottom-5 right-4 z-30 w-12 h-12 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-900/40 flex items-center justify-center no-print"
+          title="快速跳到最底"
+        >
+          <ChevronDown className="w-6 h-6" />
         </button>
       )}
 
