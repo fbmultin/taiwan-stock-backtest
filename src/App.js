@@ -435,6 +435,153 @@ const computeStockReturnForRange = (stock, rangeStart, rangeEnd) => {
   return ((finalPrice - initialPrice + periodDividends) / initialPrice) * 100;
 };
 
+// 排名表(含加碼)用的單一標的、單一區間報酬率:套用目前畫面上「加碼策略設定」
+// 當下的設定值(每月固定日期加碼/K線穿越均線加碼,可以只開一個、兩個都開),
+// 逐日模擬股數/投入金額/配息現金的變化,算法跟主要回測 runBacktest 開啟加碼時
+// 完全相同,只是這裡假設把目前設定的「總投入本金」整筆都投入這一檔(不依實際
+// 多檔配置權重去分攤),讓每一檔在同一組金額基準下互相比較排名。
+// maByDateFull 是呼叫端(updateRankingTable)針對這檔標的的完整歷史預先算好一次
+// 的均線對照表(klineTopUpEnabled 關閉時傳 null 即可),避免同一檔標的的 9 個區間
+// 各自重算一次均線。資料不足、或這個區間內完全沒有實際加碼買進時回傳 null。
+const computeStockReturnForRangeWithTopUp = (
+  stock,
+  rangeStart,
+  rangeEnd,
+  config
+) => {
+  const {
+    totalCapital,
+    monthlyTopUpEnabled,
+    monthlyTopUpDay,
+    monthlyTopUpAmount,
+    monthlyTopUpIncludeLumpSum,
+    klineTopUpEnabled,
+    maByDateFull,
+  } = config;
+
+  if (!stock.data || stock.data.length === 0) return null;
+  const firstDataDate = new Date(stock.data[0].date);
+  if (firstDataDate.getTime() > rangeStart.getTime() + 86400000 * 5) return null;
+
+  const startIdx = stock.data.findIndex((d) => new Date(d.date) >= rangeStart);
+  if (startIdx === -1) return null;
+  let endIdx = -1;
+  for (let i = stock.data.length - 1; i >= 0; i--) {
+    if (new Date(stock.data[i].date) <= rangeEnd) {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx === -1 || endIdx <= startIdx) return null;
+
+  const filteredData = stock.data.slice(startIdx, endIdx + 1);
+  const initialPrice = filteredData[0].price;
+  const finalPrice = filteredData[filteredData.length - 1].price;
+  if (!(initialPrice > 0)) return null;
+
+  const periodStartTs = new Date(filteredData[0].date).getTime();
+  const periodEndTs = new Date(
+    filteredData[filteredData.length - 1].date
+  ).getTime();
+
+  // 除息當天可能剛好也是加碼日,配息入帳要用「當天加碼買進之前」持有的股數,
+  // 所以先建好「日期 -> 配息金額」對照表,逐日模擬時才能先算配息、再處理加碼。
+  const divAmountByDate = new Map();
+  (stock.divDates || []).forEach((ts) => {
+    if (ts >= periodStartTs && ts <= periodEndTs) {
+      const keySec = Math.floor(ts / 1000);
+      const divInfo =
+        stock.dividendsMap[keySec.toString()] ||
+        stock.dividendsMap[keySec] ||
+        stock.dividendsMap[ts];
+      if (divInfo) {
+        divAmountByDate.set(
+          new Date(ts).toISOString().split('T')[0],
+          divInfo.amount
+        );
+      }
+    }
+  });
+
+  const anyTopUp = monthlyTopUpEnabled || klineTopUpEnabled;
+  const useLumpSum = !anyTopUp || monthlyTopUpIncludeLumpSum;
+  let shares = useLumpSum && initialPrice > 0 ? totalCapital / initialPrice : 0;
+  let totalInvested = useLumpSum ? totalCapital : 0;
+  let dividendCash = 0;
+  let hadTopUpEvent = false;
+
+  const topUpDateSet =
+    monthlyTopUpEnabled && monthlyTopUpAmount > 0
+      ? buildMonthlyInvestDates(filteredData, monthlyTopUpDay)
+      : null;
+
+  let klinePrevLow = null;
+  const klinePrevMaByLine = { ma20: null, ma60: null, ma120: null };
+  let klineMonthKey = null;
+  let klineMonthlyTriggerCount = 0;
+
+  filteredData.forEach((day) => {
+    const divAmount = divAmountByDate.get(day.date);
+    if (divAmount) {
+      dividendCash += shares * divAmount;
+    }
+
+    if (topUpDateSet && topUpDateSet.has(day.date)) {
+      shares += monthlyTopUpAmount / day.price;
+      totalInvested += monthlyTopUpAmount;
+      hadTopUpEvent = true;
+    }
+
+    if (maByDateFull) {
+      const monthKey = day.date.slice(0, 7);
+      if (monthKey !== klineMonthKey) {
+        klineMonthKey = monthKey;
+        klineMonthlyTriggerCount = 0;
+      }
+      const mas = maByDateFull.get(day.date);
+      const hasLow = typeof day.low === 'number' && Number.isFinite(day.low);
+
+      MA_LINE_KEYS.forEach((lineKey) => {
+        const ma = mas ? mas[lineKey] : null;
+        if (ma === null || ma === undefined || !(ma > 0)) return;
+        const prevMa = klinePrevMaByLine[lineKey];
+        const triggeredToday =
+          klinePrevLow !== null &&
+          prevMa !== null &&
+          prevMa > 0 &&
+          klinePrevLow > prevMa &&
+          hasLow &&
+          day.low <= ma;
+        if (!triggeredToday) return;
+
+        const withinCap = klineMonthlyTriggerCount < KLINE_TOPUP_MONTHLY_CAP;
+        if (withinCap && monthlyTopUpAmount > 0) {
+          shares += monthlyTopUpAmount / day.price;
+          totalInvested += monthlyTopUpAmount;
+          klineMonthlyTriggerCount += 1;
+          hadTopUpEvent = true;
+        }
+      });
+
+      klinePrevLow = hasLow ? day.low : null;
+      MA_LINE_KEYS.forEach((lineKey) => {
+        const ma = mas ? mas[lineKey] : null;
+        klinePrevMaByLine[lineKey] =
+          ma !== null && ma !== undefined && ma > 0 ? ma : null;
+      });
+    }
+  });
+
+  // useLumpSum 為 false(不列入一次性本金)時,如果這段區間內一次加碼都沒觸發到,
+  // totalInvested 會是 0,代表這個區間根本沒有任何實際投入,回傳 null 顯示「—」,
+  // 不要硬套用「無加碼」時的起訖價公式(那是完全不同的情境,湊出來的數字沒有意義)。
+  if (totalInvested <= 0) return null;
+  if (!useLumpSum && !hadTopUpEvent) return null;
+
+  const finalMarketValue = shares * finalPrice;
+  return ((finalMarketValue + dividendCash - totalInvested) / totalInvested) * 100;
+};
+
 const CustomizedDot = (props) => {
   const { cx, cy, payload, divDates } = props;
   const isExDiv =
@@ -866,6 +1013,9 @@ const App = () => {
   const [rankingLoading, setRankingLoading] = useState(false);
   const [rankingError, setRankingError] = useState('');
   const [rankingData, setRankingData] = useState(null);
+  // 排名表(含加碼):只在目前有勾選任一加碼開關時才會一併計算,套用當下的
+  // 加碼策略設定(每月固定日期加碼/K線穿越均線加碼)。
+  const [rankingDataTopUp, setRankingDataTopUp] = useState(null);
 
   useEffect(() => {
     try {
@@ -1054,6 +1204,22 @@ const App = () => {
       });
       setStockNames((prev) => ({ ...prev, ...newNamesMap }));
 
+      // 每個區間各自排名(報酬率高到低,1 = 表現最好),缺資料(null)的標的不參與排名。
+      // 純本金、含加碼兩份排名表共用同一套排名邏輯,差別只在 rows 是怎麼算出來的。
+      const buildRanks = (rows) => {
+        const ranksByRow = rows.map(() => ({}));
+        RANKING_PERIODS.forEach((period) => {
+          rows
+            .map((row, i) => ({ i, val: row.returns[period.key] }))
+            .filter((x) => typeof x.val === 'number' && Number.isFinite(x.val))
+            .sort((a, b) => b.val - a.val)
+            .forEach((x, rankIdx) => {
+              ranksByRow[x.i][period.key] = rankIdx + 1;
+            });
+        });
+        return ranksByRow;
+      };
+
       const rows = successfulData.map((stock) => {
         const returns = {};
         RANKING_PERIODS.forEach((period) => {
@@ -1066,29 +1232,137 @@ const App = () => {
         });
         return { symbol: stock.symbol, stockName: stock.stockName, returns };
       });
-
-      // 每個區間各自排名(報酬率高到低,1 = 表現最好),缺資料(null)的標的不參與排名。
-      const ranksByRow = rows.map(() => ({}));
-      RANKING_PERIODS.forEach((period) => {
-        rows
-          .map((row, i) => ({ i, val: row.returns[period.key] }))
-          .filter((x) => typeof x.val === 'number' && Number.isFinite(x.val))
-          .sort((a, b) => b.val - a.val)
-          .forEach((x, rankIdx) => {
-            ranksByRow[x.i][period.key] = rankIdx + 1;
-          });
-      });
-
+      const ranksByRow = buildRanks(rows);
       setRankingData({
         rows: rows.map((row, i) => ({ ...row, ranks: ranksByRow[i] })),
         updatedAt: new Date(),
       });
+
+      // 排名表(含加碼):只有目前畫面上「加碼策略設定」有勾選任一個開關時才一併算,
+      // 套用當下實際的設定值(每月固定日期加碼/K線穿越均線加碼,可以只開一個、
+      // 兩個都開)。K線用的均線每檔標的只算一次(用完整歷史),9 個區間共用,
+      // 不用每個區間各自重算一次均線。
+      if (anyTopUpEnabled) {
+        const maByDateFullByStock = new Map();
+        if (klineTopUpEnabled) {
+          successfulData.forEach((stock) => {
+            maByDateFullByStock.set(
+              stock.symbol,
+              new Map(
+                preprocessPriceSeries(stock).map((d) => [
+                  d.date,
+                  { ma20: d.ma20, ma60: d.ma60, ma120: d.ma120 },
+                ])
+              )
+            );
+          });
+        }
+
+        const topUpRows = successfulData.map((stock) => {
+          const returns = {};
+          RANKING_PERIODS.forEach((period) => {
+            const { rangeStart, rangeEnd } = computeRankingPeriodRange(period);
+            returns[period.key] = computeStockReturnForRangeWithTopUp(
+              stock,
+              rangeStart,
+              rangeEnd,
+              {
+                totalCapital,
+                monthlyTopUpEnabled,
+                monthlyTopUpDay,
+                monthlyTopUpAmount,
+                monthlyTopUpIncludeLumpSum,
+                klineTopUpEnabled,
+                maByDateFull: klineTopUpEnabled
+                  ? maByDateFullByStock.get(stock.symbol)
+                  : null,
+              }
+            );
+          });
+          return { symbol: stock.symbol, stockName: stock.stockName, returns };
+        });
+        const topUpRanksByRow = buildRanks(topUpRows);
+        setRankingDataTopUp({
+          rows: topUpRows.map((row, i) => ({
+            ...row,
+            ranks: topUpRanksByRow[i],
+          })),
+          updatedAt: new Date(),
+        });
+      } else {
+        setRankingDataTopUp(null);
+      }
     } catch (e) {
       setRankingError('計算排名時發生錯誤,請稍後再試。');
     } finally {
       setRankingLoading(false);
     }
   };
+
+  // 標的組合排名表的表格本體:純本金、含加碼兩份表格共用同一套渲染邏輯,
+  // 差別只在傳入的 data(rankingData 或 rankingDataTopUp)。
+  const renderRankingTable = (data) => (
+    <div className="overflow-x-auto">
+      <table className="text-xs text-center border-collapse min-w-full">
+        <thead>
+          <tr>
+            <th className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 sticky left-0"></th>
+            {data.rows.map((row) => (
+              <th
+                key={row.symbol}
+                title={row.stockName}
+                className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 whitespace-nowrap font-mono"
+              >
+                {row.symbol}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {RANKING_PERIODS.map((p, i) => (
+            <tr
+              key={p.key}
+              className={i % 2 === 0 ? 'bg-slate-800/70' : 'bg-slate-800/30'}
+            >
+              <td className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap">
+                {p.label}
+              </td>
+              {data.rows.map((row) => {
+                const rank = row.ranks[p.key];
+                const retPct = row.returns[p.key];
+                return (
+                  <td
+                    key={row.symbol}
+                    className="px-2 py-1.5 border border-slate-700 font-mono whitespace-nowrap"
+                  >
+                    <div className="flex flex-col items-center leading-tight">
+                      <span
+                        className={`font-bold ${
+                          rank === 1 ? 'text-rose-400' : 'text-slate-300'
+                        }`}
+                      >
+                        {rank ?? '—'}
+                      </span>
+                      {typeof retPct === 'number' &&
+                        Number.isFinite(retPct) && (
+                          <span className="text-[10px] text-slate-500">
+                            {retPct > 0 ? '+' : ''}
+                            {retPct.toFixed(1)}%
+                          </span>
+                        )}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-[13px] text-slate-500 mt-1">
+        更新時間: {data.updatedAt.toLocaleString('zh-TW')}
+      </div>
+    </div>
+  );
 
   const handlePrint = () => {
     setIsConfigExpanded(false);
@@ -3108,71 +3382,30 @@ const App = () => {
                       {rankingError}
                     </div>
                   )}
-                  {rankingData && (
-                    <div className="overflow-x-auto">
-                      <table className="text-xs text-center border-collapse min-w-full">
-                        <thead>
-                          <tr>
-                            <th className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 sticky left-0"></th>
-                            {rankingData.rows.map((row) => (
-                              <th
-                                key={row.symbol}
-                                title={row.stockName}
-                                className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 whitespace-nowrap font-mono"
-                              >
-                                {row.symbol}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {RANKING_PERIODS.map((p, i) => (
-                            <tr
-                              key={p.key}
-                              className={i % 2 === 0 ? 'bg-slate-800/70' : 'bg-slate-800/30'}
-                            >
-                              <td className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap">
-                                {p.label}
-                              </td>
-                              {rankingData.rows.map((row) => {
-                                const rank = row.ranks[p.key];
-                                const retPct = row.returns[p.key];
-                                return (
-                                  <td
-                                    key={row.symbol}
-                                    className="px-2 py-1.5 border border-slate-700 font-mono whitespace-nowrap"
-                                  >
-                                    <div className="flex flex-col items-center leading-tight">
-                                      <span
-                                        className={`font-bold ${
-                                          rank === 1
-                                            ? 'text-rose-400'
-                                            : 'text-slate-300'
-                                        }`}
-                                      >
-                                        {rank ?? '—'}
-                                      </span>
-                                      {typeof retPct === 'number' &&
-                                        Number.isFinite(retPct) && (
-                                          <span className="text-[10px] text-slate-500">
-                                            {retPct > 0 ? '+' : ''}
-                                            {retPct.toFixed(1)}%
-                                          </span>
-                                        )}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="text-[13px] text-slate-500 mt-1">
-                        更新時間: {rankingData.updatedAt.toLocaleString('zh-TW')}
-                      </div>
-                    </div>
-                  )}
+                  {rankingData && renderRankingTable(rankingData)}
                 </div>
+
+                {anyTopUpEnabled && (
+                  <div className="mt-4 pt-3 border-t border-slate-700/60">
+                    <label className="text-xs text-slate-400 font-bold">
+                      標的組合排名表(含加碼)
+                    </label>
+                    <div className="text-[11px] text-slate-500 leading-relaxed mb-2 mt-1">
+                      套用目前的加碼策略設定(
+                      {[
+                        monthlyTopUpEnabled && '每月固定日期加碼',
+                        klineTopUpEnabled && 'K線穿越均線加碼',
+                      ]
+                        .filter(Boolean)
+                        .join('+')}
+                      ,{monthlyTopUpIncludeLumpSum ? '含' : '不含'}
+                      最上面的一次性本金),假設把目前設定的總投入本金整筆投入該檔標的計算,
+                      跟上面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
+                      這段區間內完全沒有實際加碼買進時顯示「—」。
+                    </div>
+                    {rankingDataTopUp && renderRankingTable(rankingDataTopUp)}
+                  </div>
+                )}
               </div>
 
               <div className="lg:col-span-3 min-w-0 mt-4 lg:mt-0">
