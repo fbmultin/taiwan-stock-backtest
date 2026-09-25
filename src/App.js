@@ -2348,8 +2348,9 @@ const App = () => {
           const filteredData = rawData;
           if (filteredData.length < 1) return null;
 
-          // 查得到公開年化管理費率(經理費+保管費,%)才會有值,查不到就是 undefined,
-          // 下面逐日模擬時只有查得到才會另外累計管理費成本、算出「扣管理費後」的報酬。
+          // 查得到公開年化管理費率(經理費+保管費,%)才會有值,查不到就是 undefined。
+          // 市場成交價本身已經是基金淨值扣除這個費用後的結果,所以這裡只拿來顯示
+          // 「管理費(年化)」這個資訊性徽章,不會再從報酬率額外扣一次,避免重複扣減。
           const feeRatePct = TW_ETF_FEES[stock.symbol];
 
           const startData = filteredData[0];
@@ -2455,26 +2456,7 @@ const App = () => {
           let topUpOnlyDividendCash = 0;
           const topUpValueSeries = [];
 
-          // 逐日累計管理費成本(只有查得到 feeRatePct 才會累計):用「前一天收盤時
-          // 持有的股數與市值」乘上「這兩個交易日之間經過的實際曆日天數/365」乘上
-          // 年化費率,近似模擬基金公司每天從淨值提列費用的做法;股數隨加碼增加時,
-          // 之後的區間自然會用增加後的股數去算,不需要另外處理。
-          let feeCostAccrued = 0;
-
           filteredData.forEach((day, dayIndex) => {
-            if (feeRatePct !== undefined && dayIndex > 0 && shares > 0) {
-              const prevDay = filteredData[dayIndex - 1];
-              const daysElapsed =
-                (day.timestamp - prevDay.timestamp) / (1000 * 60 * 60 * 24);
-              if (daysElapsed > 0) {
-                feeCostAccrued +=
-                  (daysElapsed / 365) *
-                  (feeRatePct / 100) *
-                  shares *
-                  prevDay.price;
-              }
-            }
-
             // 配息入帳要用「當天加碼買進之前」持有的股數:除息當天才買進的這一筆,
             // 現實中還沒資格領當天的配息,所以要先算配息、再處理當天的加碼買進,
             // 順序對調的話,萬一加碼日剛好跟除息日同一天,會多算到不該有的配息。
@@ -2601,18 +2583,6 @@ const App = () => {
               ? ((finalMarketValue - totalInvested) / totalInvested) * 100
               : ((finalPrice - initialPrice) / initialPrice) * 100;
 
-          // 扣除管理費成本後的含息報酬:用上面逐日累計的 feeCostAccrued(估算的管理費
-          // 總成本金額)直接從期末含息總值裡再扣一次,只有查得到 feeRatePct 才會算,
-          // 查不到就是 undefined,卡片那邊不顯示這個數字。
-          const feeCostAdjustedReturnPct =
-            feeRatePct !== undefined && totalInvested > 0
-              ? ((finalMarketValue +
-                  finalStockDividends -
-                  feeCostAccrued -
-                  totalInvested) /
-                  totalInvested) *
-                100
-              : undefined;
           const dividendYield = (periodDividends / initialPrice) * 100;
 
           let annualizedDividendYield = 0;
@@ -2770,15 +2740,9 @@ const App = () => {
             ...(calcBeta
               ? { beta: calculateBeta(filteredData, benchmarkReturnsByDate) }
               : {}),
-            // 只有查得到公開費率的 ETF 才會有這幾個欄位,查不到就不放(而不是塞 0/null),
-            // 卡片那邊用「有沒有這些欄位」決定要不要顯示管理費徽章、扣管理費後報酬。
-            ...(feeRatePct !== undefined
-              ? {
-                  feeRate: feeRatePct,
-                  feeCostAccrued,
-                  feeCostAdjustedReturnPct,
-                }
-              : {}),
+            // 只有查得到公開費率的 ETF 才會有這個欄位,查不到就不放(而不是塞 0/null),
+            // 卡片那邊用「有沒有這個欄位」決定要不要顯示管理費徽章。
+            ...(feeRatePct !== undefined ? { feeRate: feeRatePct } : {}),
             frequencyLabel: getFrequencyLabel(stock.divDates),
             weight,
             divDates: stock.divDates,
@@ -4892,20 +4856,6 @@ const App = () => {
                                 {item.totalReturnPct > 0 ? '+' : ''}
                                 {item.totalReturnPct.toFixed(2)}%
                               </div>
-                              {item.feeCostAdjustedReturnPct !== undefined && (
-                                <div
-                                  className={`text-[14px] font-mono ${
-                                    item.feeCostAdjustedReturnPct >= 0
-                                      ? textClass.warn
-                                      : textClass.highlight
-                                  }`}
-                                  title={`用年化管理費率 ${item.feeRate.toFixed(2)}% 換算逐日累計的管理費成本(約 $${Math.round(item.feeCostAccrued).toLocaleString()}),從含息總報酬再扣一次估算出來的數字,僅供參考。`}
-                                >
-                                  扣管理費後{' '}
-                                  {item.feeCostAdjustedReturnPct > 0 ? '+' : ''}
-                                  {item.feeCostAdjustedReturnPct.toFixed(2)}%
-                                </div>
-                              )}
                               <div
                                 className={`text-[14px] font-mono ${
                                   item.finalTotalValue - item.allocatedCapital >= 0
@@ -5036,7 +4986,7 @@ const App = () => {
                                 >
                                   <span
                                     className={textClass.sub}
-                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費)。右上角「扣管理費後」的含息報酬,是把這個費率換算成逐日累計的管理費成本金額,從期末含息總值裡再扣一次估算出來的。"
+                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費),僅供參考。基金公司每天直接從淨值提列這筆費用,不會另外從投資人帳戶扣款,所以左邊算出來的含息報酬本身已經反映了這個成本,不需要也不會再額外扣一次。"
                                   >
                                     管理費(年化)
                                   </span>
