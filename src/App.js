@@ -3114,32 +3114,35 @@ const App = () => {
         </div>
       )}
 
-      {/* 手機版浮動按鈕:不論設定頁或結果頁、頁面內容多長,都常駐顯示。還沒有結果時
-          是「重新執行回測」,按下直接(重新)開始回測;已經在看結果頁時,巧妙切換成
-          「回去改設定」,直接捲回頁面最上方的設定區,不用自己往上滑找;圖示/文字
-          跟著切換(結果頁用往上箭頭表示回上一頁),讓使用者一眼就知道現在按下去會
-          做什麼 */}
+      {/* 手機版浮動按鈕:不論設定頁或結果頁、頁面內容多長,都常駐顯示。設定區還展開時
+          (isConfigExpanded)是「重新執行回測」,按下直接(重新)開始回測;設定區已經
+          收合、在看結果頁時(isConfigExpanded 為 false,跟頁面最上方那顆「收起設定/
+          回去改設定」按鈕共用同一個狀態),巧妙切換成「回去改設定」,直接呼叫
+          setIsConfigExpanded(true) 把設定區重新展開(不只是捲動畫面),再捲回最上方
+          讓使用者看到展開的設定;圖示/文字跟著切換,讓使用者一眼就知道現在按下去
+          會做什麼 */}
       {!loading && !printMode && (
         <button
           onClick={() => {
-            if (results) {
+            if (!isConfigExpanded) {
+              setIsConfigExpanded(true);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             } else {
               runBacktest();
             }
           }}
-          disabled={!results && !hasSelectedStock}
+          disabled={isConfigExpanded && !hasSelectedStock}
           className={`sm:hidden fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
-            !results && !hasSelectedStock
+            isConfigExpanded && !hasSelectedStock
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
-              : results
+              : !isConfigExpanded
               ? 'bg-gradient-to-r from-sky-500 to-blue-600 shadow-sky-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
           }`}
-          title={results ? '回去改設定' : '重新執行回測'}
+          title={!isConfigExpanded ? '回去改設定' : '重新執行回測'}
         >
-          {results ? (
-            <ChevronUp className="w-6 h-6" />
+          {!isConfigExpanded ? (
+            <ChevronDown className="w-6 h-6" />
           ) : (
             <Zap className="w-6 h-6 fill-current" />
           )}
