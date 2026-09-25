@@ -1212,6 +1212,8 @@ const App = () => {
             ? 6
             : timeRange === '12m'
             ? 12
+            : timeRange === '2y'
+            ? 24
             : timeRange === '3y'
             ? 36
             : timeRange === '5y'
@@ -2680,12 +2682,12 @@ const App = () => {
           <div
             className={`transition-all duration-300 ease-in-out overflow-hidden ${
               isConfigExpanded
-                ? 'max-h-[1500px] opacity-100'
+                ? 'max-h-[8000px] opacity-100'
                 : 'max-h-0 opacity-0'
             }`}
           >
-            <div className="grid lg:grid-cols-12 lg:items-start gap-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-              <div className="lg:col-span-4 space-y-4 border-b lg:border-b-0 lg:border-r border-slate-700 pb-4 lg:pb-0 pr-0 lg:pr-4">
+            <div className="grid lg:grid-cols-12 lg:items-start gap-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700 min-w-0">
+              <div className="lg:col-span-4 min-w-0 space-y-4 border-b lg:border-b-0 lg:border-r border-slate-700 pb-4 lg:pb-0 pr-0 lg:pr-4">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs text-slate-400 font-bold">
                     總投入本金 (萬元)
@@ -2828,7 +2830,7 @@ const App = () => {
                     回測投資年限
                   </label>
                   <div className="grid grid-cols-3 gap-1">
-                    {['ytd', '3m', '6m', '12m', '3y', '5y'].map((t) => (
+                    {['ytd', '3m', '6m', '12m', '2y', '3y', '5y'].map((t) => (
                       <button
                         key={t}
                         onClick={() => setTimeRange(t)}
@@ -2846,6 +2848,8 @@ const App = () => {
                           ? '半年'
                           : t === '12m'
                           ? '近1年'
+                          : t === '2y'
+                          ? '近2年'
                           : t === '3y'
                           ? '近3年'
                           : '近5年'}
@@ -2983,7 +2987,7 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="lg:col-span-5 space-y-3">
+              <div className="lg:col-span-5 min-w-0 space-y-3">
                 <div className="flex flex-wrap items-center gap-2 mb-4 bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">
                   <span className="text-xs text-slate-400 font-bold mr-2">
                     <Database className="w-4 h-4 inline mr-1" />
@@ -3171,7 +3175,7 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="lg:col-span-3 mt-4 lg:mt-0">
+              <div className="lg:col-span-3 min-w-0 mt-4 lg:mt-0">
                 <div className="flex flex-col gap-2">
                   <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
                     <div className="relative flex-shrink-0">
@@ -3331,6 +3335,8 @@ const App = () => {
                       ? '半年'
                       : timeRange === '12m'
                       ? '近1年'
+                      : timeRange === '2y'
+                      ? '近2年'
                       : timeRange === '3y'
                       ? '近3年'
                       : '近5年'}
