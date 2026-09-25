@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TW_STOCK_NAMES from './data/twStockNames';
 import TW_STOCK_SPLITS from './data/twStockSplits';
+import TW_ETF_FEES from './data/twEtfFees';
 import DcaOptimizer from './DcaOptimizer';
 import {
   buildMonthlyInvestDates,
@@ -2733,6 +2734,11 @@ const App = () => {
             ...(calcBeta
               ? { beta: calculateBeta(filteredData, benchmarkReturnsByDate) }
               : {}),
+            // 只有查得到公開費率的 ETF 才會有這個欄位,查不到就不放(而不是塞 0),
+            // 卡片那邊用「有沒有這個欄位」決定要不要顯示管理費徽章。
+            ...(TW_ETF_FEES[stock.symbol] !== undefined
+              ? { feeRate: TW_ETF_FEES[stock.symbol] }
+              : {}),
             frequencyLabel: getFrequencyLabel(stock.divDates),
             weight,
             divDates: stock.divDates,
@@ -4833,9 +4839,29 @@ const App = () => {
                                       : '資料不足'}
                                   </span>
                                 )}
+                                {item.feeRate !== undefined && (
+                                  <span
+                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費)。基金公司每天直接從淨值提列這筆費用,不會另外從你的帳戶扣款,所以市場成交價、以及下面的含息報酬,本身就已經是「扣除管理費後」的數字,不用也不應該再手動扣一次。"
+                                    className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                      isLight
+                                        ? 'text-fuchsia-700 border-fuchsia-200 bg-fuchsia-50'
+                                        : 'text-fuchsia-400 border-fuchsia-900/50 bg-fuchsia-900/20'
+                                    }`}
+                                  >
+                                    管理費(年化) {item.feeRate.toFixed(2)}%
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <div className="text-right">
+                              {item.feeRate !== undefined && (
+                                <div
+                                  className={`text-[13px] ${textClass.sub}`}
+                                  title="市場成交價已反映內扣管理費,此含息報酬即為扣除管理費後的數字"
+                                >
+                                  含息報酬(已扣管理費)
+                                </div>
+                              )}
                               <div
                                 className={`text-lg sm:text-xl font-bold font-mono ${
                                   item.totalReturnPct >= 0
