@@ -953,6 +953,9 @@ const App = () => {
   const [klineTopUpEnabled, setKlineTopUpEnabled] = useState(false);
   const [showMonthlyTopUpInfo, setShowMonthlyTopUpInfo] = useState(false);
   const [showKlineTopUpInfo, setShowKlineTopUpInfo] = useState(false);
+  // 「K線穿越均線加碼細部設定」裡,簡易模式的規則說明文字預設收合,
+  // 按下「說明」展開鈕才顯示,避免每次都佔掉一大塊畫面空間。
+  const [showKlineSimpleModeInfo, setShowKlineSimpleModeInfo] = useState(false);
   const [monthlyTopUpDay, setMonthlyTopUpDay] = useState(5);
   const [monthlyTopUpAmount, setMonthlyTopUpAmount] = useState(10000);
   const [monthlyTopUpIncludeLumpSum, setMonthlyTopUpIncludeLumpSum] =
@@ -3134,6 +3137,28 @@ const App = () => {
         </button>
       )}
 
+      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示(不像上面兩個只在
+          手機版才出現),方便不用捲到排名表區塊就能隨時重新抓資料計算 */}
+      {!loading && !printMode && (
+        <button
+          onClick={updateRankingTable}
+          disabled={rankingLoading || !hasSelectedStock}
+          className={`fixed bottom-5 left-4 z-30 rounded-full shadow-xl flex items-center gap-1.5 px-4 py-3 no-print transition-colors ${
+            rankingLoading || !hasSelectedStock
+              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
+              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/40'
+          }`}
+          title="更新排名表"
+        >
+          {rankingLoading ? (
+            <RefreshCw className="w-5 h-5 animate-spin" />
+          ) : (
+            <Table2 className="w-5 h-5" />
+          )}
+          <span className="text-sm font-bold">更新排名表</span>
+        </button>
+      )}
+
       <header
         className={`border-b shadow-xl sm:sticky sm:top-0 z-20 no-print ${
           isLight
@@ -3410,9 +3435,26 @@ const App = () => {
                         </button>
                       </div>
                       {klineSimpleMode ? (
-                        <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                          簡易模式=延續先前版本的規則:只偵測「跌破加碼」,MA20/60/120 權重相同、金額不打折、不做盤整偵測、也沒有總量上限;冷卻期改為每條均線各自 21 個交易日(約一個月),修正了先前「同一次假跌破可能跨月被重複計入兩次」的漏洞。想調整細部規則(回檔/站回子模式、金字塔倍數、遞減折扣、盤整偵測、總量上限)請切換到「進階模式」。
-                        </div>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setShowKlineSimpleModeInfo((v) => !v)}
+                            title="說明"
+                            className={`self-start flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded border transition-colors ${
+                              isLight
+                                ? 'text-slate-500 border-slate-300 hover:bg-slate-200'
+                                : 'text-slate-400 border-slate-600 hover:bg-slate-700'
+                            }`}
+                          >
+                            <Info className="w-3 h-3" />
+                            說明
+                          </button>
+                          {showKlineSimpleModeInfo && (
+                            <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                              簡易模式=延續先前版本的規則:只偵測「跌破加碼」,MA20/60/120 權重相同、金額不打折、不做盤整偵測、也沒有總量上限;冷卻期改為每條均線各自 21 個交易日(約一個月),修正了先前「同一次假跌破可能跨月被重複計入兩次」的漏洞。想調整細部規則(回檔/站回子模式、金字塔倍數、遞減折扣、盤整偵測、總量上限)請切換到「進階模式」。
+                            </div>
+                          )}
+                        </>
                       ) : (
                       <>
                       <button
