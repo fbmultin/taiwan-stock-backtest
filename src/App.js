@@ -23,9 +23,6 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
   ReferenceLine,
 } from 'recharts';
 import {
@@ -4087,126 +4084,64 @@ const App = () => {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 print-grid">
-              <div
-                className={`lg:col-span-2 p-6 rounded-2xl shadow-xl relative overflow-hidden ${cardClass} ${
-                  isLight
-                    ? 'bg-white'
-                    : 'bg-gradient-to-br from-slate-800 to-slate-900'
-                }`}
-              >
-                <div className="absolute top-0 right-0 p-4 opacity-10">
-                  <Wallet
-                    className={`w-24 h-24 sm:w-32 sm:h-32 ${textClass.main}`}
-                  />
-                </div>
-                <h3
-                  className={`${textClass.sub} text-sm font-bold uppercase tracking-wider mb-2`}
-                >
-                  期末資產總值 (含息)
-                </h3>
-                <div
-                  className={`text-3xl sm:text-4xl lg:text-5xl font-bold font-mono mb-6 ${textClass.main}`}
-                >
+            <div
+              className={`p-3 sm:p-4 rounded-2xl shadow-xl flex flex-wrap items-center gap-x-5 gap-y-2 animate-in fade-in slide-in-from-bottom-4 print-grid ${cardClass}`}
+            >
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-[14px] ${textClass.sub}`}>
+                  期末資產總值(含息)
+                </span>
+                <span className={`font-mono font-bold text-base sm:text-lg ${textClass.main}`}>
                   $
                   {Math.round(
                     portfolioSummary.grandTotalValue
                   ).toLocaleString()}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div
-                    className={`p-3 rounded-lg border ${
-                      isLight
-                        ? 'bg-gray-50 border-gray-200'
-                        : 'bg-slate-700/50 border-slate-600'
-                    }`}
-                  >
-                    <div className={`${textClass.sub} text-xs mb-1`}>
-                      總投入本金
-                    </div>
-                    <div className={`text-lg font-mono ${textClass.main}`}>
-                      $
-                      {Math.round(
-                        portfolioSummary.totalInvested
-                      ).toLocaleString()}
-                    </div>
-                  </div>
-                  <div
-                    className={`p-3 rounded-lg border ${
-                      isLight
-                        ? 'bg-blue-50 border-blue-200'
-                        : 'bg-blue-900/30 border-blue-800/50'
-                    }`}
-                  >
-                    <div className={`text-xs mb-1 ${textClass.blue}`}>
-                      資本利得 (價差)
-                    </div>
-                    <div className={`text-lg font-mono ${textClass.blue}`}>
-                      $
-                      {Math.round(
-                        portfolioSummary.grandTotalMarketValue -
-                          portfolioSummary.totalInvested
-                      ).toLocaleString()}
-                    </div>
-                  </div>
-                  <div
-                    className={`p-3 rounded-lg border ${
-                      isLight
-                        ? 'bg-emerald-50 border-emerald-200'
-                        : 'bg-emerald-900/30 border-emerald-800/50'
-                    }`}
-                  >
-                    <div className={`text-xs mb-1 ${textClass.highlight}`}>
-                      總領股息
-                    </div>
-                    <div className={`text-lg font-mono ${textClass.highlight}`}>
-                      +$
-                      {Math.round(
-                        portfolioSummary.grandTotalDividends
-                      ).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
+                </span>
               </div>
-
-              <div
-                className={`p-6 rounded-2xl shadow-xl flex flex-col items-center justify-center relative ${cardClass}`}
-              >
-                <h3
-                  className={`absolute top-6 left-6 text-sm font-bold uppercase ${textClass.sub}`}
+              <div className={`hidden sm:block w-px h-5 ${isLight ? 'bg-slate-300' : 'bg-slate-700'}`} />
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-[14px] ${textClass.sub}`}>總投入本金</span>
+                <span className={`font-mono font-bold text-base sm:text-lg ${textClass.main}`}>
+                  $
+                  {Math.round(
+                    portfolioSummary.totalInvested
+                  ).toLocaleString()}
+                </span>
+              </div>
+              <div className={`hidden sm:block w-px h-5 ${isLight ? 'bg-slate-300' : 'bg-slate-700'}`} />
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-[14px] ${textClass.blue}`}>資本利得(價差)</span>
+                <span className={`font-mono font-bold text-base sm:text-lg ${textClass.blue}`}>
+                  $
+                  {Math.round(
+                    portfolioSummary.grandTotalMarketValue -
+                      portfolioSummary.totalInvested
+                  ).toLocaleString()}
+                </span>
+              </div>
+              <div className={`hidden sm:block w-px h-5 ${isLight ? 'bg-slate-300' : 'bg-slate-700'}`} />
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-[14px] ${textClass.highlight}`}>總領股息</span>
+                <span className={`font-mono font-bold text-base sm:text-lg ${textClass.highlight}`}>
+                  +$
+                  {Math.round(
+                    portfolioSummary.grandTotalDividends
+                  ).toLocaleString()}
+                </span>
+              </div>
+              <div className={`hidden sm:block w-px h-5 ${isLight ? 'bg-slate-300' : 'bg-slate-700'}`} />
+              <div className="flex items-baseline gap-1.5 sm:ml-auto">
+                <span className={`text-[14px] ${textClass.sub}`}>組合總報酬率</span>
+                <span
+                  className={`font-mono font-bold text-base sm:text-lg ${
+                    portfolioSummary.grandTotalRoi >= 0
+                      ? textClass.highlight
+                      : textClass.warn
+                  }`}
                 >
-                  組合總報酬率
-                </h3>
-                <div className="relative w-40 h-40 mt-4">
-                  <ResponsiveContainer>
-                    <PieChart>
-                      <Pie
-                        data={[{ value: 100 }]}
-                        dataKey="value"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={70}
-                        fill={isLight ? '#e5e7eb' : '#334155'}
-                        stroke="none"
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="absolute inset-0 flex items-center justify-center flex-col">
-                    <span
-                      className={`text-3xl font-bold font-mono ${
-                        portfolioSummary.grandTotalRoi >= 0
-                          ? textClass.highlight
-                          : textClass.warn
-                      }`}
-                    >
-                      {portfolioSummary.grandTotalRoi > 0 ? '+' : ''}
-                      {portfolioSummary.grandTotalRoi.toFixed(1)}%
-                    </span>
-                    <span className={`text-xs ${textClass.sub}`}>ROI</span>
-                  </div>
-                </div>
+                  {portfolioSummary.grandTotalRoi > 0 ? '+' : ''}
+                  {portfolioSummary.grandTotalRoi.toFixed(1)}%
+                </span>
               </div>
             </div>
 
@@ -4437,6 +4372,25 @@ const App = () => {
                               >
                                 {item.totalReturnPct > 0 ? '+' : ''}
                                 {item.totalReturnPct.toFixed(2)}%
+                              </div>
+                              <div
+                                className={`text-[14px] font-mono ${
+                                  item.finalTotalValue - item.allocatedCapital >= 0
+                                    ? textClass.warn
+                                    : textClass.highlight
+                                }`}
+                                title="淨報酬:含配息後的損益金額(期末含息值 - 投入本金)"
+                              >
+                                淨報酬{' '}
+                                {item.finalTotalValue - item.allocatedCapital >= 0
+                                  ? '+'
+                                  : '-'}
+                                $
+                                {Math.round(
+                                  Math.abs(
+                                    item.finalTotalValue - item.allocatedCapital
+                                  )
+                                ).toLocaleString()}
                               </div>
                             </div>
                           </div>
