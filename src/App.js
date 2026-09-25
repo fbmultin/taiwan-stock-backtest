@@ -1350,6 +1350,11 @@ const App = () => {
 
   // 標的組合排名表的表格本體:純本金、含加碼兩份表格共用同一套渲染邏輯,
   // 差別只在傳入的 data(rankingData 或 rankingDataTopUp)。
+  // 走勢比較圖(報酬率/加碼策略)共用:圖例與提示框裡,股代碼後面加上股名方便辨識,
+  // 查不到股名(例如尚未抓取過)就只顯示代碼。
+  const formatLineLabel = (symbol) =>
+    stockNames[symbol] ? `${symbol} ${stockNames[symbol]}` : symbol;
+
   const renderRankingTable = (data) => (
     <div className="overflow-x-auto">
       <table className="text-xs text-center border-collapse min-w-full">
@@ -1795,18 +1800,36 @@ const App = () => {
 
       let globalLatestDivDate = null;
       let globalCalcEndDate = rangeEnd;
+      // 之前這裡完全沒有留下任何紀錄,使用者只會看到結果頁的截止日莫名比預期早,
+      // 卻查不出原因(例如某標的資料來源當天還沒更新收盤價)。現在把是哪一檔、
+      // 資料只到哪一天記下來,顯示在結果頁的「截止日由 XXX 限制」提示裡。
+      let dataStaleLimiter = null;
       // 修改 2:從所有 ETF 的最後一筆資料,找出共同覆蓋到的最後日期
       // 這樣可以自動處理國定假日 / ETF 個別休市的情況
       if (successfulData && successfulData.length > 0) {
-        const lastDatesPerStock = successfulData
-          .filter((s) => s.data && s.data.length > 0)
-          .map((s) => new Date(s.data[s.data.length - 1].date));
+        const stocksWithData = successfulData.filter(
+          (s) => s.data && s.data.length > 0
+        );
+        const lastDatesPerStock = stocksWithData.map(
+          (s) => new Date(s.data[s.data.length - 1].date)
+        );
         if (lastDatesPerStock.length > 0) {
           const earliestLastDate = new Date(
             Math.min(...lastDatesPerStock.map((d) => d.getTime()))
           );
           if (earliestLastDate < rangeEnd) {
             globalCalcEndDate = earliestLastDate;
+            const laggingSymbols = stocksWithData
+              .filter(
+                (s) =>
+                  new Date(s.data[s.data.length - 1].date).getTime() ===
+                  earliestLastDate.getTime()
+              )
+              .map((s) => s.symbol);
+            dataStaleLimiter = {
+              symbols: laggingSymbols,
+              lastDate: earliestLastDate.toISOString().split('T')[0],
+            };
           }
         }
       }
@@ -1852,6 +1875,8 @@ const App = () => {
             globalLatestDivDate = new Date(maxDivTs);
             globalCalcEndDate = pulledBackDate;
             endDateLimiter = candidateEndLimiter;
+            // 除息日限制是比資料只更新到某天更明確的原因,兩者衝突時以這個為準顯示
+            dataStaleLimiter = null;
           };
 
           if (independentCycleMode) {
@@ -2098,6 +2123,7 @@ const App = () => {
         endDate: globalCalcEndDate.toISOString().split('T')[0],
         limitingStock: limitingStockSymbol,
         endDateLimiter: endDateLimiter,
+        dataStaleLimiter: dataStaleLimiter,
         mode: strictTimeMode
           ? 'strict'
           : independentCycleMode
@@ -3776,6 +3802,15 @@ const App = () => {
                             (截止日由 {comparisonInfo.endDateLimiter} 限制)
                           </span>
                         )}
+                        {comparisonInfo.dataStaleLimiter && (
+                          <span
+                            className="text-amber-500 ml-1"
+                            title={`${comparisonInfo.dataStaleLimiter.symbols.join('、')} 的股價資料目前只更新到 ${comparisonInfo.dataStaleLimiter.lastDate},其餘標的的截止日因此被限制到同一天,才能公平比較`}
+                          >
+                            (截止日由 {comparisonInfo.dataStaleLimiter.symbols.join('、')} 資料只更新到{' '}
+                            {comparisonInfo.dataStaleLimiter.lastDate} 限制)
+                          </span>
+                        )}
                         <button
                           onClick={() => {
                             setAdjustStart(comparisonInfo.startDate);
@@ -3962,20 +3997,52 @@ const App = () => {
                   回測報告
                 </h2>
                 {cycleInfoText && (
-                  <span className="text-xs text-purple-400 bg-purple-900/20 px-2 py-0.5 rounded border border-purple-800/50">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'text-purple-700 bg-purple-50 border-purple-300'
+                        : 'text-purple-400 bg-purple-900/20 border-purple-800/50'
+                    }`}
+                  >
                     {cycleInfoText}
                   </span>
                 )}
                 {comparisonInfo?.limitingStock && !strictTimeMode && comparisonInfo?.mode !== 'cycle' && (
-                  <span className="text-xs text-amber-400 bg-amber-900/20 px-2 py-0.5 rounded border border-amber-800/50 flex items-center gap-1">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded border flex items-center gap-1 ${
+                      isLight
+                        ? 'text-amber-700 bg-amber-50 border-amber-300'
+                        : 'text-amber-400 bg-amber-900/20 border-amber-800/50'
+                    }`}
+                  >
                     <Info className="w-3 h-3" />
                     起始日由 {comparisonInfo.limitingStock} 資料起始較晚限制
                   </span>
                 )}
                 {comparisonInfo?.endDateLimiter && !strictTimeMode && (
-                  <span className="text-xs text-amber-400 bg-amber-900/20 px-2 py-0.5 rounded border border-amber-800/50 flex items-center gap-1">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded border flex items-center gap-1 ${
+                      isLight
+                        ? 'text-amber-700 bg-amber-50 border-amber-300'
+                        : 'text-amber-400 bg-amber-900/20 border-amber-800/50'
+                    }`}
+                  >
                     <Info className="w-3 h-3" />
                     截止日由 {comparisonInfo.endDateLimiter} 近期除息限制
+                  </span>
+                )}
+                {comparisonInfo?.dataStaleLimiter && (
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded border flex items-center gap-1 ${
+                      isLight
+                        ? 'text-amber-700 bg-amber-50 border-amber-300'
+                        : 'text-amber-400 bg-amber-900/20 border-amber-800/50'
+                    }`}
+                    title={`${comparisonInfo.dataStaleLimiter.symbols.join('、')} 的股價資料目前只更新到 ${comparisonInfo.dataStaleLimiter.lastDate}`}
+                  >
+                    <Info className="w-3 h-3" />
+                    截止日由 {comparisonInfo.dataStaleLimiter.symbols.join('、')} 資料只更新到{' '}
+                    {comparisonInfo.dataStaleLimiter.lastDate} 限制
                   </span>
                 )}
               </div>
@@ -4849,16 +4916,41 @@ const App = () => {
                       width={35}
                     />
                     <Tooltip
-                      contentStyle={{
-                        backgroundColor: isLight ? '#fff' : '#1e293b',
-                        border: isLight
-                          ? '1px solid #ccc'
-                          : '1px solid #475569',
-                        color: isLight ? '#000' : '#f8fafc',
-                        borderRadius: '8px',
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload || payload.length === 0)
+                          return null;
+                        // 比照「加碼策略報酬率走勢比較」的規則:依報酬率由高到低排序,
+                        // 且股代碼後面加上股名方便辨識,而不是只顯示代碼、照線條原本順序。
+                        const sortedPayload = [...payload]
+                          .filter((p) => typeof p.value === 'number')
+                          .sort((a, b) => b.value - a.value);
+                        return (
+                          <div
+                            style={{
+                              backgroundColor: isLight ? '#fff' : '#1e293b',
+                              border: isLight
+                                ? '1px solid #ccc'
+                                : '1px solid #475569',
+                              color: isLight ? '#000' : '#f8fafc',
+                              borderRadius: '8px',
+                              padding: '8px 12px',
+                              fontSize: '12px',
+                            }}
+                          >
+                            <div style={{ marginBottom: 4, fontWeight: 'bold' }}>
+                              日期: {label}
+                            </div>
+                            {sortedPayload.map((p) => (
+                              <div key={p.dataKey} style={{ color: p.color }}>
+                                {Number(p.value).toFixed(2)}%{' '}
+                                {p.dataKey === '綜合績效'
+                                  ? '綜合績效'
+                                  : formatLineLabel(p.dataKey)}
+                              </div>
+                            ))}
+                          </div>
+                        );
                       }}
-                      formatter={(val) => [`${Number(val).toFixed(2)}%`]}
-                      labelFormatter={(l) => `日期: ${l}`}
                     />
                     <Legend />
                     <ReferenceLine y={0} stroke="#64748b" />
@@ -4867,6 +4959,7 @@ const App = () => {
                         key={r.symbol}
                         type="monotone"
                         dataKey={r.symbol}
+                        name={formatLineLabel(r.symbol)}
                         stroke={COLORS[i % COLORS.length]}
                         dot={(props) => (
                           <CustomizedDot {...props} divDates={r.divDates} />
@@ -4955,7 +5048,7 @@ const App = () => {
                                   {Number(p.value).toFixed(2)}%{' '}
                                   {p.dataKey === '綜合績效'
                                     ? '綜合績效'
-                                    : p.dataKey}
+                                    : formatLineLabel(p.dataKey)}
                                 </div>
                               ))}
                             </div>
@@ -4972,6 +5065,7 @@ const App = () => {
                             key={r.symbol}
                             type="monotone"
                             dataKey={r.symbol}
+                            name={formatLineLabel(r.symbol)}
                             stroke={COLORS[i % COLORS.length]}
                             dot={false}
                             activeDot={{ r: 6 }}
