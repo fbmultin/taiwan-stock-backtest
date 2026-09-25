@@ -578,7 +578,11 @@ const computeStockReturnForRangeWithTopUp = (
   if (!useLumpSum && !hadTopUpEvent) return null;
 
   const finalMarketValue = shares * finalPrice;
-  return ((finalMarketValue + dividendCash - totalInvested) / totalInvested) * 100;
+  const netProfit = finalMarketValue + dividendCash - totalInvested;
+  return {
+    pct: (netProfit / totalInvested) * 100,
+    netProfit,
+  };
 };
 
 const CustomizedDot = (props) => {
@@ -1308,9 +1312,10 @@ const App = () => {
 
         const topUpRows = successfulData.map((stock) => {
           const returns = {};
+          const netProfits = {};
           RANKING_PERIODS.forEach((period) => {
             const { rangeStart, rangeEnd } = computeRankingPeriodRange(period);
-            returns[period.key] = computeStockReturnForRangeWithTopUp(
+            const result = computeStockReturnForRangeWithTopUp(
               stock,
               rangeStart,
               rangeEnd,
@@ -1326,8 +1331,15 @@ const App = () => {
                   : null,
               }
             );
+            returns[period.key] = result ? result.pct : null;
+            netProfits[period.key] = result ? result.netProfit : null;
           });
-          return { symbol: stock.symbol, stockName: stock.stockName, returns };
+          return {
+            symbol: stock.symbol,
+            stockName: stock.stockName,
+            returns,
+            netProfits,
+          };
         });
         const topUpRanksByRow = buildRanks(topUpRows);
         setRankingDataTopUp({
@@ -1401,6 +1413,7 @@ const App = () => {
               {data.rows.map((row) => {
                 const rank = row.ranks[p.key];
                 const retPct = row.returns[p.key];
+                const netProfit = row.netProfits ? row.netProfits[p.key] : null;
                 return (
                   <td
                     key={row.symbol}
@@ -1427,6 +1440,13 @@ const App = () => {
                           <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                             {retPct > 0 ? '+' : ''}
                             {retPct.toFixed(1)}%
+                          </span>
+                        )}
+                      {typeof netProfit === 'number' &&
+                        Number.isFinite(netProfit) && (
+                          <span className={`text-[10px] ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
+                            {netProfit >= 0 ? '+' : '-'}$
+                            {Math.round(Math.abs(netProfit)).toLocaleString()}
                           </span>
                         )}
                     </div>
