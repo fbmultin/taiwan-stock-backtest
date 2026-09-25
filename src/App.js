@@ -3114,45 +3114,28 @@ const App = () => {
         </div>
       )}
 
-      {/* 手機版浮動按鈕:不論設定頁或結果頁、頁面內容多長,都常駐顯示。設定區還展開時
-          (isConfigExpanded)是「重新執行回測」,按下直接(重新)開始回測;設定區已經
-          收合、在看結果頁時(isConfigExpanded 為 false,跟頁面最上方那顆「收起設定/
-          回去改設定」按鈕共用同一個狀態),巧妙切換成「回去改設定」,直接呼叫
-          setIsConfigExpanded(true) 把設定區重新展開(不只是捲動畫面),再捲回最上方
-          讓使用者看到展開的設定;圖示/文字跟著切換,讓使用者一眼就知道現在按下去
-          會做什麼 */}
+      {/* 浮動按鈕:「重新執行回測」,不論電腦版或手機版都常駐顯示,方便隨時重新執行
+          回測,按下即直接(重新)開始回測;沿用主要開始回測按鈕的 disabled 判斷,
+          避免在設定不合法時誤觸 */}
       {!loading && !printMode && (
         <button
-          onClick={() => {
-            if (!isConfigExpanded) {
-              setIsConfigExpanded(true);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            } else {
-              runBacktest();
-            }
-          }}
-          disabled={isConfigExpanded && !hasSelectedStock}
-          className={`sm:hidden fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
-            isConfigExpanded && !hasSelectedStock
+          onClick={() => runBacktest()}
+          disabled={!hasSelectedStock}
+          className={`fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
+            !hasSelectedStock
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
-              : !isConfigExpanded
-              ? 'bg-gradient-to-r from-sky-500 to-blue-600 shadow-sky-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
           }`}
-          title={!isConfigExpanded ? '回去改設定' : '重新執行回測'}
+          title="重新執行回測"
         >
-          {!isConfigExpanded ? (
-            <ChevronDown className="w-6 h-6" />
-          ) : (
-            <Zap className="w-6 h-6 fill-current" />
-          )}
+          <Zap className="w-6 h-6 fill-current" />
         </button>
       )}
 
-      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示(不像上下兩個只在
-          手機版才出現),方便不用捲到排名表區塊就能隨時重新抓資料計算;放在跟
-          「重新執行回測」「跳到最底」同一側(右下角),夾在兩者中間;跟另外兩顆
-          一樣改成純圖示的圓形按鈕,只用一個符號示意,不額外放文字 */}
+      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示,方便不用捲到排名表
+          區塊就能隨時重新抓資料計算;放在跟「重新執行回測」「收起設定/回去改設定」
+          同一側(右下角),夾在兩者中間;純圖示的圓形按鈕,只用一個符號示意,不額外
+          放文字 */}
       {!loading && !printMode && (
         <button
           onClick={updateRankingTable}
@@ -3172,19 +3155,25 @@ const App = () => {
         </button>
       )}
 
-      {/* 手機版浮動按鈕:不論設定頁或結果頁,都常駐顯示,提供快速跳到頁面最底部的捷徑 */}
+      {/* 浮動按鈕:「收起設定/回去改設定」,取代原本只在手機版顯示的「快速跳到最底」,
+          不論電腦版或手機版都常駐顯示;跟頁面最上方原本就有的「收起設定/回去改
+          設定」按鈕共用同一個 isConfigExpanded 狀態與文字/圖示邏輯,方便在任何
+          位置都能直接展開/收合設定區,不用自己捲到最上面才能按 */}
       {!loading && !printMode && (
         <button
-          onClick={() =>
-            window.scrollTo({
-              top: document.body.scrollHeight,
-              behavior: 'smooth',
-            })
-          }
-          className="sm:hidden fixed bottom-5 right-4 z-30 w-12 h-12 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-900/40 flex items-center justify-center no-print"
-          title="快速跳到最底"
+          onClick={() => {
+            setIsConfigExpanded((v) => !v);
+            // 不論展開或收合,都捲到最上方,讓使用者馬上看到切換後的畫面
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className="fixed bottom-5 right-4 z-30 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-xl shadow-violet-900/40 flex items-center justify-center no-print"
+          title={isConfigExpanded ? '收起設定' : '回去改設定'}
         >
-          <ChevronDown className="w-6 h-6" />
+          {isConfigExpanded ? (
+            <ChevronUp className="w-6 h-6" />
+          ) : (
+            <ChevronDown className="w-6 h-6" />
+          )}
         </button>
       )}
 
