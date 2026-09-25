@@ -59,6 +59,8 @@ import {
   Star,
   Save,
   Scissors,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 // 「K線穿越均線加碼」開關(klineTopUpEnabled)開啟時的規則寫死、不提供額外設定:
@@ -666,7 +668,7 @@ const SmartNumberInput = ({
   );
 };
 
-const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
+const ManualInputModal = ({ missingData, onConfirm, onCancel, isLight = false }) => {
   const [inputs, setInputs] = useState({});
 
   const handleInputChange = (key, value) => {
@@ -688,9 +690,13 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
 
   return (
     <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
-        <div className="flex items-center gap-3 mb-4 text-amber-400">
-          <div className="bg-amber-900/30 p-2 rounded-full">
+      <div
+        className={`${
+          isLight ? 'bg-white border-slate-300 text-black' : 'bg-slate-800 border-slate-600'
+        } border rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200`}
+      >
+        <div className={`flex items-center gap-3 mb-4 ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>
+          <div className={isLight ? 'bg-amber-100 p-2 rounded-full' : 'bg-amber-900/30 p-2 rounded-full'}>
             <AlertTriangle className="w-6 h-6" />
           </div>
           <div>
@@ -699,7 +705,7 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
           </div>
         </div>
 
-        <p className="text-slate-300 text-sm mb-4">
+        <p className={`${isLight ? 'text-slate-600' : 'text-slate-300'} text-sm mb-4`}>
           系統偵測到以下標的在關鍵日期缺少股價。為確保回測準確性，請手動輸入收盤價：
         </p>
 
@@ -714,27 +720,33 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
             return (
               <div
                 key={key}
-                className="flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700"
+                className={`flex items-center justify-between p-3 rounded-lg border ${
+                  isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-900/50 border-slate-700'
+                }`}
               >
                 <div>
-                  <div className="font-bold text-white text-lg">
+                  <div className={`font-bold text-lg ${isLight ? 'text-black' : 'text-white'}`}>
                     {item.symbol}
                     {stockNameDisplay && (
-                      <span className="text-xs font-normal text-slate-400 ml-1">
+                      <span className={`text-xs font-normal ml-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                         {stockNameDisplay}
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-500 font-mono">
+                  <div className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                     {item.date}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400">收盤價:</span>
+                  <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>收盤價:</span>
                   <SmartNumberInput
                     value={inputs[key] || ''}
                     onChange={(val) => handleInputChange(key, val)}
-                    className="w-24 bg-slate-700 border border-slate-500 rounded px-2 py-1 text-right text-white font-mono focus:border-emerald-500 outline-none"
+                    className={`w-24 rounded px-2 py-1 text-right font-mono focus:border-emerald-500 outline-none border ${
+                      isLight
+                        ? 'bg-white border-slate-300 text-black'
+                        : 'bg-slate-700 border-slate-500 text-white'
+                    }`}
                     placeholder="0.00"
                     autoFocus={idx === 0}
                   />
@@ -747,7 +759,11 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
         <div className="flex gap-3">
           <button
             onClick={onCancel}
-            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+            className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+              isLight
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
           >
             取消回測
           </button>
@@ -766,7 +782,7 @@ const ManualInputModal = ({ missingData, onConfirm, onCancel }) => {
 // 執行過程中遇到需要決定的狀況(例如標的資料起始日晚於指定日期、除息日太靠近結束日)時彈出的詢問視窗。
 // 取代先前「依除息日對齊週期/強制固定區間」這類事先勾選好的隱藏規則:改成當下發生了什麼、
 // 有哪些處理方式,直接列出來讓使用者選,選完才繼續往下算。
-const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
+const SituationDecisionModal = ({ situations, onConfirm, onCancel, isLight = false }) => {
   const [choices, setChoices] = useState(() => {
     const initial = {};
     situations.forEach((s) => {
@@ -782,9 +798,13 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
 
   return (
     <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200">
-        <div className="flex items-center gap-3 mb-4 text-amber-400">
-          <div className="bg-amber-900/30 p-2 rounded-full">
+      <div
+        className={`${
+          isLight ? 'bg-white border-slate-300 text-black' : 'bg-slate-800 border-slate-600'
+        } border rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200`}
+      >
+        <div className={`flex items-center gap-3 mb-4 ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>
+          <div className={isLight ? 'bg-amber-100 p-2 rounded-full' : 'bg-amber-900/30 p-2 rounded-full'}>
             <AlertTriangle className="w-6 h-6" />
           </div>
           <div>
@@ -799,12 +819,14 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
           {situations.map((s) => (
             <div
               key={s.key}
-              className="bg-slate-900/50 p-3 rounded-lg border border-slate-700"
+              className={`p-3 rounded-lg border ${
+                isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-900/50 border-slate-700'
+              }`}
             >
-              <div className="font-bold text-white text-sm mb-1">
+              <div className={`font-bold text-sm mb-1 ${isLight ? 'text-black' : 'text-white'}`}>
                 {s.title}
               </div>
-              <p className="text-slate-400 text-xs mb-3 leading-relaxed">
+              <p className={`text-xs mb-3 leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                 {s.description}
               </p>
               <div className="space-y-1.5">
@@ -813,7 +835,11 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
                     key={opt.value}
                     className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs ${
                       choices[s.key] === opt.value
-                        ? 'border-emerald-500 bg-emerald-900/20 text-emerald-300'
+                        ? isLight
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                          : 'border-emerald-500 bg-emerald-900/20 text-emerald-300'
+                        : isLight
+                        ? 'border-slate-300 hover:bg-slate-100 text-slate-600'
                         : 'border-slate-700 hover:bg-slate-800 text-slate-300'
                     }`}
                   >
@@ -827,7 +853,7 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
                     <span>
                       {opt.label}
                       {opt.recommended && (
-                        <span className="ml-1.5 text-[14px] text-emerald-500">
+                        <span className={`ml-1.5 text-[14px] ${isLight ? 'text-emerald-600' : 'text-emerald-500'}`}>
                           (建議)
                         </span>
                       )}
@@ -842,7 +868,11 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
         <div className="flex gap-3">
           <button
             onClick={onCancel}
-            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+            className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+              isLight
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
           >
             取消回測
           </button>
@@ -860,23 +890,42 @@ const SituationDecisionModal = ({ situations, onConfirm, onCancel }) => {
 
 const App = () => {
   const [printMode, setPrintMode] = useState(false);
+  // 亮色/暗色雙主題:預設暗色(維持原本外觀),使用者按右上角按鈕切換,並記住在瀏覽器裡
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('theme');
+      return saved === 'light' || saved === 'dark' ? saved : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      // 私密瀏覽或儲存空間被封鎖時,略過即可,不影響切換功能
+    }
+  }, [theme]);
+  const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+  // 列印預覽本來就會強制切成亮色樣式,跟使用者自己選的亮色主題共用同一套樣式判斷
+  const isLight = printMode || theme === 'light';
   // 兩個分頁:'backtest'=既有的「ETF回測比較」、'dca'=新增的「定期定額策略最佳化」
   const [activeTab, setActiveTab] = useState('backtest');
 
   const textClass = {
-    main: printMode ? 'text-black' : 'text-white',
-    sub: printMode ? 'text-slate-600' : 'text-slate-400',
-    highlight: printMode ? 'text-emerald-700 font-bold' : 'text-emerald-400',
-    warn: printMode ? 'text-rose-700 font-bold' : 'text-rose-400',
-    blue: printMode ? 'text-blue-700' : 'text-blue-300',
-    amber: printMode ? 'text-amber-700' : 'text-amber-400',
+    main: isLight ? 'text-black' : 'text-white',
+    sub: isLight ? 'text-slate-600' : 'text-slate-400',
+    highlight: isLight ? 'text-emerald-700 font-bold' : 'text-emerald-400',
+    warn: isLight ? 'text-rose-700 font-bold' : 'text-rose-400',
+    blue: isLight ? 'text-blue-700' : 'text-blue-300',
+    amber: isLight ? 'text-amber-700' : 'text-amber-400',
   };
 
-  const containerClass = printMode
+  const containerClass = isLight
     ? 'min-h-screen bg-white text-black font-sans p-4 md:p-8'
     : 'min-h-screen bg-slate-900 text-slate-100 font-sans pb-12';
 
-  const cardClass = printMode
+  const cardClass = isLight
     ? 'bg-white border border-slate-300 rounded-xl shadow-sm'
     : 'bg-slate-800 border border-slate-700 rounded-xl shadow-lg';
 
@@ -1306,12 +1355,18 @@ const App = () => {
       <table className="text-xs text-center border-collapse min-w-full">
         <thead>
           <tr>
-            <th className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 sticky left-0"></th>
+            <th
+              className={`px-2 py-1.5 border sticky left-0 ${
+                isLight ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-700 text-slate-200 border-slate-600'
+              }`}
+            ></th>
             {data.rows.map((row) => (
               <th
                 key={row.symbol}
                 title={row.stockName}
-                className="bg-slate-700 text-slate-200 px-2 py-1.5 border border-slate-600 whitespace-nowrap font-mono"
+                className={`px-2 py-1.5 border whitespace-nowrap font-mono ${
+                  isLight ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-700 text-slate-200 border-slate-600'
+                }`}
               >
                 {row.symbol}
               </th>
@@ -1322,9 +1377,21 @@ const App = () => {
           {RANKING_PERIODS.map((p, i) => (
             <tr
               key={p.key}
-              className={i % 2 === 0 ? 'bg-slate-800/70' : 'bg-slate-800/30'}
+              className={
+                isLight
+                  ? i % 2 === 0
+                    ? 'bg-white'
+                    : 'bg-slate-50'
+                  : i % 2 === 0
+                  ? 'bg-slate-800/70'
+                  : 'bg-slate-800/30'
+              }
             >
-              <td className="px-2 py-1.5 border border-slate-700 font-mono font-bold text-slate-200 sticky left-0 bg-inherit whitespace-nowrap">
+              <td
+                className={`px-2 py-1.5 border font-mono font-bold sticky left-0 bg-inherit whitespace-nowrap ${
+                  isLight ? 'border-slate-300 text-slate-700' : 'border-slate-700 text-slate-200'
+                }`}
+              >
                 {p.label}
               </td>
               {data.rows.map((row) => {
@@ -1333,19 +1400,27 @@ const App = () => {
                 return (
                   <td
                     key={row.symbol}
-                    className="px-2 py-1.5 border border-slate-700 font-mono whitespace-nowrap"
+                    className={`px-2 py-1.5 border font-mono whitespace-nowrap ${
+                      isLight ? 'border-slate-300' : 'border-slate-700'
+                    }`}
                   >
                     <div className="flex flex-col items-center leading-tight">
                       <span
                         className={`font-bold ${
-                          rank === 1 ? 'text-rose-400' : 'text-slate-300'
+                          rank === 1
+                            ? isLight
+                              ? 'text-rose-600'
+                              : 'text-rose-400'
+                            : isLight
+                            ? 'text-slate-600'
+                            : 'text-slate-300'
                         }`}
                       >
                         {rank ?? '—'}
                       </span>
                       {typeof retPct === 'number' &&
                         Number.isFinite(retPct) && (
-                          <span className="text-[10px] text-slate-500">
+                          <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                             {retPct > 0 ? '+' : ''}
                             {retPct.toFixed(1)}%
                           </span>
@@ -1358,7 +1433,7 @@ const App = () => {
           ))}
         </tbody>
       </table>
-      <div className="text-[13px] text-slate-500 mt-1">
+      <div className={`text-[13px] mt-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
         更新時間: {data.updatedAt.toLocaleString('zh-TW')}
       </div>
     </div>
@@ -2512,7 +2587,7 @@ const App = () => {
             dataPoints: filteredData.length,
             riskProfile: calculateRiskProfile(
               filteredData.map((d) => d.price),
-              printMode
+              isLight
             ),
             // 未勾選「計算β值」時完全不放這個欄位(而不是塞 null),
             // 讓卡片能區分「沒算」(不顯示徽章)跟「算了但資料不足」(顯示「資料不足」)。
@@ -2725,34 +2800,59 @@ const App = () => {
 
   return (
     <>
-      {/* 分頁切換:既有的「ETF回測比較」與新增的「定期定額策略最佳化」並排 */}
-      <div className="no-print sticky top-0 z-40 flex gap-1 px-2 sm:px-4 bg-slate-900 border-b border-slate-700">
+      {/* 分頁切換:既有的「ETF回測比較」與新增的「定期定額策略最佳化」並排;右上角放亮/暗主題切換鈕,兩個分頁都看得到、按得到 */}
+      <div
+        className={`no-print sticky top-0 z-40 flex items-center justify-between gap-1 px-2 sm:px-4 border-b ${
+          isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-700'
+        }`}
+      >
+        <div className="flex gap-1">
+          <button
+            onClick={() => setActiveTab('backtest')}
+            className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
+              activeTab === 'backtest'
+                ? 'border-emerald-400 text-emerald-400'
+                : isLight
+                ? 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ETF回測比較
+          </button>
+          <button
+            onClick={() => setActiveTab('dca')}
+            className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
+              activeTab === 'dca'
+                ? 'border-emerald-400 text-emerald-400'
+                : isLight
+                ? 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            定期定額策略最佳化
+          </button>
+        </div>
         <button
-          onClick={() => setActiveTab('backtest')}
-          className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
-            activeTab === 'backtest'
-              ? 'border-emerald-400 text-emerald-400'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
+          onClick={toggleTheme}
+          title={theme === 'dark' ? '切換成亮色模式' : '切換成暗色模式'}
+          className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors border shrink-0 ${
+            isLight
+              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+              : 'bg-slate-700 hover:bg-slate-600 text-amber-300 border-slate-600'
           }`}
         >
-          ETF回測比較
-        </button>
-        <button
-          onClick={() => setActiveTab('dca')}
-          className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
-            activeTab === 'dca'
-              ? 'border-emerald-400 text-emerald-400'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          定期定額策略最佳化
+          {theme === 'dark' ? (
+            <Moon className="w-4 h-4" />
+          ) : (
+            <Sun className="w-4 h-4" />
+          )}
         </button>
       </div>
 
       {activeTab === 'dca' && (
         <div className={containerClass}>
           <div className="max-w-6xl mx-auto p-4 sm:p-6">
-            <DcaOptimizer />
+            <DcaOptimizer isLight={isLight} />
           </div>
         </div>
       )}
@@ -2764,6 +2864,7 @@ const App = () => {
           missingData={missingDataList}
           onConfirm={handleManualInputConfirm}
           onCancel={handleManualInputCancel}
+          isLight={isLight}
         />
       )}
 
@@ -2772,6 +2873,7 @@ const App = () => {
           situations={pendingSituations}
           onConfirm={handleResolveSituations}
           onCancel={handleCancelSituations}
+          isLight={isLight}
         />
       )}
 
@@ -2911,7 +3013,7 @@ const App = () => {
 
       <header
         className={`border-b shadow-xl sm:sticky sm:top-0 z-20 no-print ${
-          printMode
+          isLight
             ? 'bg-white border-slate-200'
             : 'bg-slate-800 border-slate-700'
         }`}
@@ -2935,7 +3037,9 @@ const App = () => {
               onClick={() => setIsConfigExpanded(!isConfigExpanded)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium border ${
                 isConfigExpanded
-                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600'
+                  ? isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-300'
+                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20'
               }`}
             >
@@ -2960,24 +3064,40 @@ const App = () => {
                 : 'max-h-0 opacity-0'
             }`}
           >
-            <div className="grid lg:grid-cols-12 lg:items-start gap-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700 min-w-0">
-              <div className="lg:col-span-4 min-w-0 space-y-4 border-b lg:border-b-0 lg:border-r border-slate-700 pb-4 lg:pb-0 pr-0 lg:pr-4">
+            <div
+              className={`grid lg:grid-cols-12 lg:items-start gap-6 p-4 rounded-xl border min-w-0 ${
+                isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-900/50 border-slate-700'
+              }`}
+            >
+              <div
+                className={`lg:col-span-4 min-w-0 space-y-4 border-b lg:border-b-0 lg:border-r pb-4 lg:pb-0 pr-0 lg:pr-4 ${
+                  isLight ? 'border-slate-300' : 'border-slate-700'
+                }`}
+              >
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs text-slate-400 font-bold">
+                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     總投入本金 (萬元)
                   </label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
-                      <DollarSign className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                      <DollarSign className={`w-4 h-4 absolute left-3 top-2.5 ${isLight ? 'text-slate-400' : 'text-slate-500'}`} />
                       <SmartNumberInput
                         value={Math.round((totalCapital / 10000) * 10) / 10}
                         onChange={handleTotalCapitalChange}
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg py-2 pl-9 pr-3 text-white focus:ring-2 focus:ring-emerald-500 font-mono"
+                        className={`w-full rounded-lg py-2 pl-9 pr-3 focus:ring-2 focus:ring-emerald-500 font-mono border ${
+                          isLight
+                            ? 'bg-white border-slate-300 text-slate-900'
+                            : 'bg-slate-800 border-slate-600 text-white'
+                        }`}
                       />
                     </div>
                     <button
                       onClick={setAllEnabledTo100W}
-                      className="bg-slate-700 hover:bg-slate-600 text-white text-[14px] px-2 rounded border border-slate-600 transition-colors whitespace-nowrap"
+                      className={`text-[14px] px-2 rounded border transition-colors whitespace-nowrap ${
+                        isLight
+                          ? 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+                          : 'bg-slate-700 hover:bg-slate-600 text-white border-slate-600'
+                      }`}
                       title="將所有已勾選的標的金額設為100萬"
                     >
                       全設
@@ -2985,12 +3105,16 @@ const App = () => {
                       100萬
                     </button>
                   </div>
-                  <div className="text-[14px] text-slate-500 text-right">
+                  <div className={`text-[14px] text-right ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                     = {Math.round(totalCapital).toLocaleString()} 元
                   </div>
                 </div>
-                <div className="flex flex-col gap-2 bg-slate-800/60 border border-slate-700 rounded-lg p-3">
-                  <div className="text-xs text-slate-300 font-bold">
+                <div
+                  className={`flex flex-col gap-2 rounded-lg p-3 border ${
+                    isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-800/60 border-slate-700'
+                  }`}
+                >
+                  <div className={`text-xs font-bold ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     加碼策略設定
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -2999,11 +3123,11 @@ const App = () => {
                       checked={monthlyTopUpEnabled}
                       onChange={() => setMonthlyTopUpEnabled((v) => !v)}
                     />
-                    <span className="text-xs text-slate-300">
+                    <span className={`text-xs ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                       每月固定日期加碼
                     </span>
                   </label>
-                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                  <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                     開啟後,每個月固定日期額外加碼投入一筆金額,直到回測結束日,所有比較中的標的都套用同一組設定。
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -3012,11 +3136,11 @@ const App = () => {
                       checked={klineTopUpEnabled}
                       onChange={() => setKlineTopUpEnabled((v) => !v)}
                     />
-                    <span className="text-xs text-slate-300">
+                    <span className={`text-xs ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                       K線穿越均線加碼
                     </span>
                   </label>
-                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                  <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                     開啟後套用「K線穿越均線」加碼規則(規則寫死,不額外提供設定):月線
                     (MA20)/季線 (MA60)/半年線
                     (MA120)三條均線共用「每月最多加碼1次」的額度,只要前一天最低價還在均線之上、當天最低價跌破均線就視為觸發,加碼金額與下面設定的「每次加碼金額」相同。這兩個開關可以各自獨立開關,也可以同時開啟。
@@ -3030,7 +3154,7 @@ const App = () => {
                       >
                         {monthlyTopUpEnabled && (
                           <div>
-                            <div className="text-[11px] text-slate-500 mb-1">
+                            <div className={`text-[11px] mb-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                               每月投入日(1~31)
                             </div>
                             <input
@@ -3043,12 +3167,12 @@ const App = () => {
                                   parseInt(e.target.value, 10) || 1
                                 )
                               }
-                              className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                              className={`w-full rounded p-1.5 text-sm border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
                             />
                           </div>
                         )}
                         <div>
-                          <div className="text-[11px] text-slate-500 mb-1">
+                          <div className={`text-[11px] mb-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                             每次加碼金額(元)
                           </div>
                           <input
@@ -3058,12 +3182,12 @@ const App = () => {
                             onChange={(e) =>
                               setMonthlyTopUpAmount(parseFloat(e.target.value) || 0)
                             }
-                            className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-sm"
+                            className={`w-full rounded p-1.5 text-sm border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
                           />
                         </div>
                       </div>
                       <div>
-                        <div className="text-[11px] text-slate-500 mb-1">
+                        <div className={`text-[11px] mb-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                           最上面設定的一次性本金
                         </div>
                         <div className="grid grid-cols-2 gap-1">
@@ -3073,7 +3197,7 @@ const App = () => {
                             className={`text-xs rounded p-1.5 border ${
                               monthlyTopUpIncludeLumpSum
                                 ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
-                                : 'bg-slate-800 border-slate-600 text-slate-400'
+                                : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
                             }`}
                           >
                             列入(本金+加碼)
@@ -3084,7 +3208,7 @@ const App = () => {
                             className={`text-xs rounded p-1.5 border ${
                               !monthlyTopUpIncludeLumpSum
                                 ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
-                                : 'bg-slate-800 border-slate-600 text-slate-400'
+                                : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
                             }`}
                           >
                             不列入(只用加碼)
@@ -3100,7 +3224,7 @@ const App = () => {
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs text-slate-400 font-bold">
+                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     回測投資年限
                   </label>
                   <div className="grid grid-cols-3 gap-1">
@@ -3111,7 +3235,7 @@ const App = () => {
                         className={`py-2 text-[14px] rounded border font-bold ${
                           timeRange === t
                             ? 'bg-emerald-600 border-emerald-500 text-white'
-                            : 'bg-slate-800 border-slate-600 text-slate-400'
+                            : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
                         }`}
                       >
                         {t === 'ytd'
@@ -3151,7 +3275,7 @@ const App = () => {
                           className={`py-2 text-[14px] rounded border font-bold ${
                             isActive
                               ? 'bg-emerald-600 border-emerald-500 text-white'
-                              : 'bg-slate-800 border-slate-600 text-slate-400'
+                              : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
                           }`}
                         >
                           {label}
@@ -3164,7 +3288,7 @@ const App = () => {
                     className={`text-xs w-full py-2 rounded border ${
                       timeRange === 'custom'
                         ? 'bg-emerald-600 border-emerald-500 text-white'
-                        : 'bg-slate-800 border-slate-600 text-slate-400'
+                        : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
                     }`}
                   >
                     自訂區間
@@ -3177,7 +3301,7 @@ const App = () => {
                         setCustomStart(e.target.value);
                         setTimeRange('custom');
                       }}
-                      className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
+                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
                     />
                     <input
                       type="date"
@@ -3186,75 +3310,81 @@ const App = () => {
                         setCustomEnd(e.target.value);
                         setTimeRange('custom');
                       }}
-                      className="w-1/2 bg-slate-800 border-slate-600 rounded text-xs p-1"
+                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
                     />
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
-                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(-1, 'day')}
                         title="起始日往前推1天"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         −
                       </button>
-                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
                         日
                       </span>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(1, 'day')}
                         title="起始日往後推1天"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         ＋
                       </button>
                     </div>
-                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(-1)}
                         title="整段區間往前推1個月"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         −
                       </button>
-                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
                         月
                       </span>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(1)}
                         title="整段區間往後推1個月"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         ＋
                       </button>
                     </div>
-                    <div className="flex items-center rounded border border-slate-600 overflow-hidden shrink-0">
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(-3)}
                         title="整段區間往前推1季(3個月)"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         −
                       </button>
-                      <span className="px-2 py-1 text-[11px] text-slate-400 bg-slate-900 border-x border-slate-600">
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
                         季
                       </span>
                       <button
                         type="button"
                         onClick={() => shiftCustomRange(3)}
                         title="整段區間往後推1季(3個月)"
-                        className="px-2 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
                       >
                         ＋
                       </button>
                     </div>
                   </div>
-                  <div className="mt-1.5 text-[13px] font-mono text-center text-emerald-400 bg-slate-900/60 border border-slate-700 rounded py-1">
+                  <div
+                    className={`mt-1.5 text-[13px] font-mono text-center rounded py-1 border ${
+                      isLight
+                        ? 'text-emerald-600 bg-slate-100 border-slate-300'
+                        : 'text-emerald-400 bg-slate-900/60 border-slate-700'
+                    }`}
+                  >
                     {formatDateForDisplay(customStart)} ～{' '}
                     {formatDateForDisplay(customEnd)}
                   </div>
@@ -3262,8 +3392,12 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-5 min-w-0 space-y-3">
-                <div className="flex flex-wrap items-center gap-2 mb-4 bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">
-                  <span className="text-xs text-slate-400 font-bold mr-2">
+                <div
+                  className={`flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg border ${
+                    isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-800/50 border-slate-700/50'
+                  }`}
+                >
+                  <span className={`text-xs font-bold mr-2 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     <Database className="w-4 h-4 inline mr-1" />
                     快速套用:
                   </span>
@@ -3274,14 +3408,22 @@ const App = () => {
                         ? `套用我的常用標的: ${myPresetStocks.join('、')}`
                         : '尚未設定,請先輸入標的後按右側「設為常用」儲存'
                     }
-                    className="text-xs bg-amber-900/30 hover:bg-amber-600 hover:text-white text-amber-300 px-3 py-1.5 rounded-md transition-colors border border-amber-700/60 hover:border-amber-500 flex items-center gap-1 font-bold"
+                    className={`text-xs px-3 py-1.5 rounded-md transition-colors border flex items-center gap-1 font-bold ${
+                      isLight
+                        ? 'bg-amber-50 hover:bg-amber-600 hover:text-white text-amber-700 border-amber-300 hover:border-amber-500'
+                        : 'bg-amber-900/30 hover:bg-amber-600 hover:text-white text-amber-300 border-amber-700/60 hover:border-amber-500'
+                    }`}
                   >
                     <Star className="w-3.5 h-3.5" /> 我的常用標的
                   </button>
                   <button
                     onClick={handleSaveMyPreset}
                     title="將目前輸入的標的組合儲存為「我的常用標的」"
-                    className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1.5 rounded-md transition-colors border border-slate-600 flex items-center gap-1"
+                    className={`text-xs px-2 py-1.5 rounded-md transition-colors border flex items-center gap-1 ${
+                      isLight
+                        ? 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600'
+                    }`}
                   >
                     <Save className="w-3.5 h-3.5" /> 設為常用
                   </button>
@@ -3289,21 +3431,29 @@ const App = () => {
                     <button
                       key={idx}
                       onClick={() => handleApplyPreset(preset.stocks)}
-                      className="text-xs bg-slate-700 hover:bg-emerald-600 hover:text-white text-slate-300 px-3 py-1.5 rounded-md transition-colors border border-slate-600 hover:border-emerald-500"
+                      className={`text-xs px-3 py-1.5 rounded-md transition-colors border hover:bg-emerald-600 hover:text-white hover:border-emerald-500 ${
+                        isLight
+                          ? 'bg-slate-200 text-slate-700 border-slate-300'
+                          : 'bg-slate-700 text-slate-300 border-slate-600'
+                      }`}
                     >
                       {preset.name}
                     </button>
                   ))}
                   <button
                     onClick={() => handleApplyPreset(['', '', '', '', '', ''])}
-                    className="text-xs bg-rose-900/40 hover:bg-rose-600 hover:text-white text-rose-300 px-3 py-1.5 rounded-md transition-colors border border-rose-800 hover:border-rose-500 ml-auto"
+                    className={`text-xs px-3 py-1.5 rounded-md transition-colors border hover:bg-rose-600 hover:text-white ml-auto ${
+                      isLight
+                        ? 'bg-rose-50 text-rose-600 border-rose-300 hover:border-rose-500'
+                        : 'bg-rose-900/40 text-rose-300 border-rose-800 hover:border-rose-500'
+                    }`}
                   >
                     全部清空
                   </button>
                 </div>
 
                 <div className="flex justify-between items-end mb-1">
-                  <label className="text-xs text-slate-400 font-bold">
+                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     標的選擇
                   </label>
                   <span className="text-xs font-mono font-bold text-emerald-400">
@@ -3324,7 +3474,7 @@ const App = () => {
                       >
                         <button
                           onClick={() => toggleEnabled(idx)}
-                          className="text-slate-500 hover:text-white shrink-0"
+                          className={`shrink-0 ${isLight ? 'text-slate-400 hover:text-black' : 'text-slate-500 hover:text-white'}`}
                         >
                           {isEnabled ? (
                             <CheckSquare className="w-5 h-5 text-emerald-500" />
@@ -3342,10 +3492,18 @@ const App = () => {
                             }
                             onBlur={() => handleInputBlurInApp(idx, val)}
                             placeholder={`標的 ${idx + 1}`}
-                            className="w-full bg-slate-800 border border-slate-600 rounded-md py-1.5 pl-2 pr-2 text-sm text-white font-mono uppercase"
+                            className={`w-full rounded-md py-1.5 pl-2 pr-2 text-sm font-mono uppercase border ${
+                              isLight
+                                ? 'bg-white border-slate-300 text-slate-900'
+                                : 'bg-slate-800 border-slate-600 text-white'
+                            }`}
                           />
                           {stockNames[val] && (
-                            <div className="absolute left-0 -bottom-4 text-[13px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis w-full">
+                            <div
+                              className={`absolute left-0 -bottom-4 text-[13px] whitespace-nowrap overflow-hidden text-ellipsis w-full ${
+                                isLight ? 'text-slate-500' : 'text-slate-400'
+                              }`}
+                            >
                               {stockNames[val]}
                             </div>
                           )}
@@ -3355,15 +3513,19 @@ const App = () => {
                   })}
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-700/60">
+                <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
                   <div className="flex items-center justify-between mb-1 gap-2">
-                    <label className="text-xs text-slate-400 font-bold">
+                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       標的組合排名表
                     </label>
                     <button
                       onClick={updateRankingTable}
                       disabled={rankingLoading || !hasSelectedStock}
-                      className="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-700 text-white px-3 py-1.5 rounded-md border border-slate-600 transition-colors flex items-center gap-1 shrink-0"
+                      className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isLight
+                          ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
+                          : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
+                      }`}
                     >
                       {rankingLoading ? (
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -3378,7 +3540,7 @@ const App = () => {
                     =表現最好,以紅字標示)。只算已勾選的標的、不含加碼,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
                   </div>
                   {rankingError && (
-                    <div className="text-[13px] text-rose-400 mb-2">
+                    <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
                       {rankingError}
                     </div>
                   )}
@@ -3386,8 +3548,8 @@ const App = () => {
                 </div>
 
                 {anyTopUpEnabled && (
-                  <div className="mt-4 pt-3 border-t border-slate-700/60">
-                    <label className="text-xs text-slate-400 font-bold">
+                  <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
+                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       標的組合排名表(含加碼)
                     </label>
                     <div className="text-[11px] text-slate-500 leading-relaxed mb-2 mt-1">
@@ -3410,7 +3572,7 @@ const App = () => {
 
               <div className="lg:col-span-3 min-w-0 mt-4 lg:mt-0">
                 <div className="flex flex-col gap-2">
-                  <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                  <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded-lg transition-colors ${isLight ? 'bg-white border-slate-300 hover:bg-slate-50' : 'bg-slate-800 border-slate-600 hover:bg-slate-700/50'}`}>
                     <div className="relative flex-shrink-0">
                       <input
                         type="checkbox"
@@ -3433,14 +3595,14 @@ const App = () => {
                         }`}
                       ></div>
                     </div>
-                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
+                    <div className={`text-[14px] sm:text-xs leading-tight ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
                       <div>依除息日對齊週期</div>
-                      <div className="text-[13px] text-slate-500">
+                      <div className={`text-[13px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                         獨立計算每檔績效 (近12次)
                       </div>
                     </div>
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                  <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded-lg transition-colors ${isLight ? 'bg-white border-slate-300 hover:bg-slate-50' : 'bg-slate-800 border-slate-600 hover:bg-slate-700/50'}`}>
                     <div className="relative flex-shrink-0">
                       <input
                         type="checkbox"
@@ -3459,14 +3621,14 @@ const App = () => {
                         }`}
                       ></div>
                     </div>
-                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
+                    <div className={`text-[14px] sm:text-xs leading-tight ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
                       <div>強制固定區間</div>
-                      <div className="text-[13px] text-slate-500">
+                      <div className={`text-[13px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                         忽略除息對齊 (時間優先)
                       </div>
                     </div>
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer bg-slate-800 border border-slate-600 p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                  <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded-lg transition-colors ${isLight ? 'bg-white border-slate-300 hover:bg-slate-50' : 'bg-slate-800 border-slate-600 hover:bg-slate-700/50'}`}>
                     <div className="relative flex-shrink-0">
                       <input
                         type="checkbox"
@@ -3485,20 +3647,26 @@ const App = () => {
                         }`}
                       ></div>
                     </div>
-                    <div className="text-[14px] sm:text-xs text-slate-300 leading-tight">
+                    <div className={`text-[14px] sm:text-xs leading-tight ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
                       <div>計算β值</div>
-                      <div className="text-[13px] text-slate-500">
+                      <div className={`text-[13px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
                         額外抓取大盤指數比對,較耗時 (預設關閉)
                       </div>
                     </div>
                   </label>
                   {independentCycleMode && !strictTimeMode && (
-                    <div className="text-[14px] sm:text-[14.5px] leading-snug text-purple-300 bg-purple-900/20 border border-purple-800/50 rounded-lg p-2 flex items-start gap-1.5">
+                    <div
+                      className={`text-[14px] sm:text-[14.5px] leading-snug rounded-lg p-2 flex items-start gap-1.5 border ${
+                        isLight
+                          ? 'text-purple-700 bg-purple-50 border-purple-300'
+                          : 'text-purple-300 bg-purple-900/20 border-purple-800/50'
+                      }`}
+                    >
                       <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
                       <span>
                         此模式會以「配息次數最少 / 上市最晚」的標的為基準，用它近
                         12 次除息紀錄反推實際計算區間，
-                        <span className="font-bold text-purple-200">
+                        <span className={`font-bold ${isLight ? 'text-purple-800' : 'text-purple-200'}`}>
                           可能大幅覆蓋您手動選擇的起訖日期
                         </span>
                         。若想強制使用您指定的日期區間，請改勾選下方「強制固定區間」，或執行後於報告上方用「調整日期」手動校正。
@@ -3506,7 +3674,13 @@ const App = () => {
                     </div>
                   )}
                   {!independentCycleMode && !strictTimeMode && (
-                    <div className="text-[14px] sm:text-[14.5px] leading-snug text-slate-500 bg-slate-800/60 border border-slate-700 rounded-lg p-2 flex items-start gap-1.5">
+                    <div
+                      className={`text-[14px] sm:text-[14.5px] leading-snug rounded-lg p-2 flex items-start gap-1.5 border ${
+                        isLight
+                          ? 'text-slate-500 bg-slate-100 border-slate-300'
+                          : 'text-slate-500 bg-slate-800/60 border-slate-700'
+                      }`}
+                    >
                       <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
                       <span>
                         一般模式:若執行時遇到標的資料起始日晚於指定日期、或除息日太靠近結束日等需要調整的情況，會直接跳出視窗詢問您要怎麼處理，不會自動靜默調整。
@@ -3538,7 +3712,7 @@ const App = () => {
           {!isConfigExpanded && (
             <div
               className={`border p-3 rounded-lg flex flex-col gap-3 animate-in fade-in slide-in-from-top-2 no-print ${
-                printMode
+                isLight
                   ? 'bg-gray-50 border-gray-200'
                   : 'bg-slate-800/50 border-slate-700'
               }`}
@@ -3628,7 +3802,11 @@ const App = () => {
                 <div className="flex gap-2 w-full sm:w-auto">
                   <button
                     onClick={handlePrint}
-                    className="flex-1 sm:flex-none text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded flex justify-center items-center gap-1.5"
+                    className={`flex-1 sm:flex-none text-xs px-3 py-2 rounded flex justify-center items-center gap-1.5 ${
+                      isLight
+                        ? 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                        : 'bg-slate-700 hover:bg-slate-600 text-white'
+                    }`}
                   >
                     <Printer className="w-3 h-3" />{' '}
                     <span className="sm:hidden">匯出</span>
@@ -3646,7 +3824,7 @@ const App = () => {
               {showDateAdjustPanel && comparisonInfo && (
                 <div
                   className={`flex flex-wrap items-center gap-2 text-xs pt-3 border-t ${
-                    printMode ? 'border-gray-200' : 'border-slate-700'
+                    isLight ? 'border-gray-200' : 'border-slate-700'
                   }`}
                 >
                   <span className={`font-bold ${textClass.sub}`}>
@@ -3656,14 +3834,14 @@ const App = () => {
                     type="date"
                     value={adjustStart}
                     onChange={(e) => setAdjustStart(e.target.value)}
-                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white"
+                    className={`rounded px-2 py-1 border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600 text-white'}`}
                   />
                   <span className={textClass.sub}>~</span>
                   <input
                     type="date"
                     value={adjustEnd}
                     onChange={(e) => setAdjustEnd(e.target.value)}
-                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white"
+                    className={`rounded px-2 py-1 border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600 text-white'}`}
                   />
                   <button
                     onClick={() => {
@@ -3680,7 +3858,7 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => setShowDateAdjustPanel(false)}
-                    className="text-slate-500 hover:text-slate-300 px-2"
+                    className={`px-2 ${isLight ? 'text-slate-500 hover:text-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
                   >
                     取消
                   </button>
@@ -3696,18 +3874,26 @@ const App = () => {
 
       <div className="container mx-auto px-4 mt-4 sm:mt-8 space-y-8 pb-8">
         {errorMsg && (
-          <div className="bg-rose-900/30 text-rose-300 p-4 rounded-xl border border-rose-800 flex items-center gap-2 no-print">
+          <div
+            className={`p-4 rounded-xl border flex items-center gap-2 no-print ${
+              isLight ? 'bg-rose-50 text-rose-700 border-rose-300' : 'bg-rose-900/30 text-rose-300 border-rose-800'
+            }`}
+          >
             <AlertTriangle className="w-5 h-5" /> {errorMsg}
           </div>
         )}
         {dateAdjustmentNote && results && (
-          <div className="bg-blue-900/30 text-blue-300 p-4 rounded-xl border border-blue-800 flex items-start gap-2 no-print text-sm">
+          <div
+            className={`p-4 rounded-xl border flex items-start gap-2 no-print text-sm ${
+              isLight ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-blue-900/30 text-blue-300 border-blue-800'
+            }`}
+          >
             <Info className="w-5 h-5 mt-0.5 shrink-0" />
             <div>
               <span className="font-bold">
                 系統已自動調整日期(避開週末/國定假日):
               </span>
-              <div className="text-blue-300/90 mt-0.5 space-y-0.5">
+              <div className={`mt-0.5 space-y-0.5 ${isLight ? 'text-blue-600' : 'text-blue-300/90'}`}>
                 {dateAdjustmentNote.startShifted && (
                   <div>
                     起始日 {dateAdjustmentNote.originalStart} →{' '}
@@ -3729,14 +3915,18 @@ const App = () => {
           </div>
         )}
         {failedTickers && failedTickers.length > 0 && (
-          <div className="bg-amber-900/30 text-amber-300 p-4 rounded-xl border border-amber-800 flex flex-col gap-2 no-print">
+          <div
+            className={`p-4 rounded-xl border flex flex-col gap-2 no-print ${
+              isLight ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-amber-900/30 text-amber-300 border-amber-800'
+            }`}
+          >
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               <span className="font-bold">
                 部分標的無法取得歷史資料，已自動排除：{failedTickers.join(', ')}
               </span>
             </div>
-            <div className="text-xs text-amber-400/80 ml-7 space-y-1">
+            <div className={`text-xs ml-7 space-y-1 ${isLight ? 'text-amber-600' : 'text-amber-400/80'}`}>
               <p>💡 可能原因：</p>
               <ul className="list-disc pl-4 space-y-0.5">
                 <li>
@@ -3751,10 +3941,14 @@ const App = () => {
         )}
 
         {!results && !loading && !errorMsg && (
-          <div className="min-h-[55vh] sm:h-64 flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-xl no-print m-4 gap-2">
+          <div
+            className={`min-h-[55vh] sm:h-64 flex flex-col items-center justify-center border-2 border-dashed rounded-xl no-print m-4 gap-2 ${
+              isLight ? 'text-slate-500 border-slate-300' : 'text-slate-600 border-slate-800'
+            }`}
+          >
             <CloudLightning className="w-12 h-12 mb-2 opacity-30" />
             <p>設定上方投資組合後，點擊「開始回測」</p>
-            <p className="sm:hidden text-xs text-slate-700">
+            <p className={`sm:hidden text-xs ${isLight ? 'text-slate-500' : 'text-slate-700'}`}>
               也可以點擊右下角 ⚡ 浮動按鈕快速開始回測
             </p>
           </div>
@@ -3797,7 +3991,7 @@ const App = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 print-grid">
               <div
                 className={`lg:col-span-2 p-6 rounded-2xl shadow-xl relative overflow-hidden ${cardClass} ${
-                  printMode
+                  isLight
                     ? 'bg-white'
                     : 'bg-gradient-to-br from-slate-800 to-slate-900'
                 }`}
@@ -3824,7 +4018,7 @@ const App = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div
                     className={`p-3 rounded-lg border ${
-                      printMode
+                      isLight
                         ? 'bg-gray-50 border-gray-200'
                         : 'bg-slate-700/50 border-slate-600'
                     }`}
@@ -3841,7 +4035,7 @@ const App = () => {
                   </div>
                   <div
                     className={`p-3 rounded-lg border ${
-                      printMode
+                      isLight
                         ? 'bg-blue-50 border-blue-200'
                         : 'bg-blue-900/30 border-blue-800/50'
                     }`}
@@ -3859,7 +4053,7 @@ const App = () => {
                   </div>
                   <div
                     className={`p-3 rounded-lg border ${
-                      printMode
+                      isLight
                         ? 'bg-emerald-50 border-emerald-200'
                         : 'bg-emerald-900/30 border-emerald-800/50'
                     }`}
@@ -3895,7 +4089,7 @@ const App = () => {
                         cy="50%"
                         innerRadius={60}
                         outerRadius={70}
-                        fill={printMode ? '#e5e7eb' : '#334155'}
+                        fill={isLight ? '#e5e7eb' : '#334155'}
                         stroke="none"
                       />
                     </PieChart>
@@ -3944,7 +4138,7 @@ const App = () => {
                         <div
                           key={idx}
                           className={`rounded-xl border p-4 flex items-center justify-between opacity-60 ${
-                            printMode
+                            isLight
                               ? 'bg-gray-100 border-gray-300'
                               : 'bg-slate-800/50 border-slate-700'
                           }`}
@@ -3955,7 +4149,7 @@ const App = () => {
                             >
                               {item.symbol}
                               {item.stockName && (
-                                <span className="text-xs font-normal text-slate-400 ml-1">
+                                <span className={`text-xs font-normal ml-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                                   {item.stockName}
                                 </span>
                               )}
@@ -3987,7 +4181,7 @@ const App = () => {
                         <div className="p-3">
                           <div
                             className={`flex items-center justify-between mb-2 pb-2 border-b ${
-                              printMode
+                              isLight
                                 ? 'border-gray-200'
                                 : 'border-slate-700/50'
                             }`}
@@ -3998,7 +4192,7 @@ const App = () => {
                               >
                                 {item.symbol}
                                 {item.stockName && (
-                                  <span className="text-xs font-normal text-slate-400 ml-1">
+                                  <span className={`text-xs font-normal ml-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                                     {item.stockName}
                                   </span>
                                 )}
@@ -4012,7 +4206,7 @@ const App = () => {
                                 {(item.isShortHistory || item.isYoungStock) && (
                                   <span
                                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      printMode
+                                      isLight
                                         ? 'text-amber-700 border-amber-200 bg-amber-50'
                                         : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
                                     }`}
@@ -4024,7 +4218,7 @@ const App = () => {
                                 {item.snapToExDiv && (
                                   <span
                                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      printMode
+                                      isLight
                                         ? 'text-purple-700 border-purple-200 bg-purple-50'
                                         : 'text-purple-400 border-purple-900/50 bg-purple-900/20'
                                     }`}
@@ -4045,19 +4239,19 @@ const App = () => {
                                   if (ev.status === 'corrected') {
                                     text = `${ev.date} ${typeLabel} ${ratioLabel} (已校正)`;
                                     title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n資料源尚未回溯調整，已依此比例自動校正 ${ev.date} 以前的股價與除息金額。`;
-                                    colorClass = printMode
+                                    colorClass = isLight
                                       ? 'text-teal-700 border-teal-200 bg-teal-50'
                                       : 'text-teal-400 border-teal-900/50 bg-teal-900/20';
                                   } else if (ev.status === 'already_adjusted') {
                                     text = `${ev.date} ${typeLabel} ${ratioLabel} (資料已調整)`;
                                     title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n資料源已經回溯調整過歷史股價，未再重複處理。`;
-                                    colorClass = printMode
+                                    colorClass = isLight
                                       ? 'text-slate-600 border-slate-300 bg-slate-100'
                                       : 'text-slate-400 border-slate-600 bg-slate-800';
                                   } else {
                                     text = `${ev.date} 疑似${typeLabel} (未校正)`;
                                     title = `${ev.label}\n${ev.date} 恢復買賣\n分割前收盤 ${ev.priceBefore} 元 → 分割後參考價 ${ev.priceAfter} 元\n實際資料價位與這兩個參考值都對不上，無法自動判斷是否已調整，故未自動校正，建議自行確認。`;
-                                    colorClass = printMode
+                                    colorClass = isLight
                                       ? 'text-amber-700 border-amber-200 bg-amber-50'
                                       : 'text-amber-400 border-amber-900/50 bg-amber-900/20';
                                   }
@@ -4082,7 +4276,7 @@ const App = () => {
                                         : ''
                                     }`}
                                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      printMode
+                                      isLight
                                         ? 'text-amber-700 border-amber-200 bg-amber-50'
                                         : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
                                     }`}
@@ -4098,7 +4292,7 @@ const App = () => {
                                   <span
                                     title="這次改用證交所(TWSE)備援資料源取得股價,但除息資料同時也抓取失敗,配息與殖利率計算可能不完整,建議稍後重新整理再試一次"
                                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      printMode
+                                      isLight
                                         ? 'text-amber-700 border-amber-200 bg-amber-50'
                                         : 'text-amber-400 border-amber-900/50 bg-amber-900/20'
                                     }`}
@@ -4117,7 +4311,7 @@ const App = () => {
                                   <span
                                     title="β值(系統性風險係數):以個股日報酬對大盤加權指數(^TWII)日報酬做迴歸估算,反映相對大盤的波動敏感度;β>1 代表波動比大盤劇烈,β<1 代表較平緩"
                                     className={`text-[14px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
-                                      printMode
+                                      isLight
                                         ? 'text-indigo-700 border-indigo-200 bg-indigo-50'
                                         : 'text-indigo-400 border-indigo-900/50 bg-indigo-900/20'
                                     }`}
@@ -4130,7 +4324,7 @@ const App = () => {
                                 )}
                                 <span
                                   className={`text-[14px] px-1.5 py-0.5 rounded border ${
-                                    printMode
+                                    isLight
                                       ? 'text-emerald-700 border-emerald-200 bg-emerald-50'
                                       : 'text-emerald-400 border-emerald-900/50 bg-emerald-900/20'
                                   }`}
@@ -4175,7 +4369,7 @@ const App = () => {
                               </div>
                               <div
                                 className={`flex justify-between border-t border-dashed pt-1 mt-1 ${
-                                  printMode
+                                  isLight
                                     ? 'border-gray-300'
                                     : 'border-slate-600/50'
                                 }`}
@@ -4196,7 +4390,7 @@ const App = () => {
                                 </span>
                               </div>
                             </div>
-                            <div className="space-y-1 sm:border-l border-slate-700/50 sm:pl-2">
+                            <div className={`space-y-1 sm:border-l sm:pl-2 ${isLight ? 'border-slate-300' : 'border-slate-700/50'}`}>
                               <div className="flex justify-between">
                                 <span className={textClass.sub}>始</span>
                                 <span className={`font-mono ${textClass.sub}`}>
@@ -4211,7 +4405,7 @@ const App = () => {
                               </div>
                               <div
                                 className={`flex justify-between border-t border-dashed pt-1 mt-1 ${
-                                  printMode
+                                  isLight
                                     ? 'border-gray-300'
                                     : 'border-slate-600/50'
                                 }`}
@@ -4229,7 +4423,7 @@ const App = () => {
                                 </span>
                               </div>
                             </div>
-                            <div className="space-y-1 sm:border-l border-slate-700/50 sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0">
+                            <div className={`space-y-1 sm:border-l sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 ${isLight ? 'border-slate-300' : 'border-slate-700/50'}`}>
                               <div className="flex justify-between">
                                 <span className={textClass.sub}>配息</span>
                                 <span
@@ -4252,7 +4446,7 @@ const App = () => {
                                 </span>
                               </div>
                             </div>
-                            <div className="space-y-0.5 sm:border-l border-slate-700/50 sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 flex flex-col justify-center">
+                            <div className={`space-y-0.5 sm:border-l sm:pl-2 border-t sm:border-t-0 pt-2 sm:pt-0 flex flex-col justify-center ${isLight ? 'border-slate-300' : 'border-slate-700/50'}`}>
                               <div
                                 className={`text-[17px] font-bold ${textClass.sub} mb-0.5`}
                               >
@@ -4284,7 +4478,7 @@ const App = () => {
                             className={`text-[15px] ${
                               textClass.sub
                             } mt-2 border-t ${
-                              printMode
+                              isLight
                                 ? 'border-gray-200'
                                 : 'border-slate-700/30'
                             } pt-1 flex justify-between items-center`}
@@ -4308,7 +4502,7 @@ const App = () => {
                             ) : (
                               <span
                                 className={`px-1.5 py-0.5 rounded ${
-                                  printMode
+                                  isLight
                                     ? 'bg-gray-100'
                                     : 'bg-slate-700 text-slate-300'
                                 }`}
@@ -4320,18 +4514,18 @@ const App = () => {
 
                           {item.dividendDetails &&
                             item.dividendDetails.length > 0 && (
-                              <div className="mt-2 pt-1 border-t border-slate-700/30">
+                              <div className={`mt-2 pt-1 border-t ${isLight ? 'border-slate-200' : 'border-slate-700/30'}`}>
                                 <details
                                   className="group"
                                   open={independentCycleMode}
                                 >
-                                  <summary className="text-[15px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
+                                  <summary className={`text-[15px] cursor-pointer flex items-center gap-1 mb-1 ${isLight ? 'text-slate-500 hover:text-slate-700' : 'text-slate-500 hover:text-slate-300'}`}>
                                     <Table2 className="w-3 h-3" /> 近{' '}
                                     {item.dividendDetails.length} 次配息明細
                                   </summary>
                                   <div
                                     className={`mt-1 overflow-x-auto rounded border ${
-                                      printMode
+                                      isLight
                                         ? 'border-gray-200'
                                         : 'border-slate-700/50'
                                     }`}
@@ -4339,7 +4533,7 @@ const App = () => {
                                     <table className="w-full text-[16px] leading-normal text-left">
                                       <thead
                                         className={`${
-                                          printMode
+                                          isLight
                                             ? 'bg-gray-100'
                                             : 'bg-slate-700/30'
                                         } text-slate-500`}
@@ -4361,7 +4555,7 @@ const App = () => {
                                       </thead>
                                       <tbody
                                         className={`divide-y ${
-                                          printMode
+                                          isLight
                                             ? 'divide-gray-100'
                                             : 'divide-slate-700/30'
                                         }`}
@@ -4372,7 +4566,7 @@ const App = () => {
                                             className={`${
                                               d.isExcludedDiv
                                                 ? 'bg-slate-800/80 italic text-slate-500'
-                                                : printMode
+                                                : isLight
                                                 ? 'hover:bg-gray-50'
                                                 : 'hover:bg-slate-700/20'
                                             }`}
@@ -4433,7 +4627,7 @@ const App = () => {
                                           <tr>
                                             <td
                                               colSpan="6"
-                                              className="py-2 px-1 text-[14px] text-center text-slate-500 italic bg-slate-800/50"
+                                              className={`py-2 px-1 text-[14px] text-center italic ${isLight ? 'text-slate-500 bg-slate-100' : 'text-slate-500 bg-slate-800/50'}`}
                                             >
                                               <Info className="w-2 h-2 inline mr-0.5" />{' '}
                                               ⚠️ 本次除息不計入
@@ -4443,7 +4637,7 @@ const App = () => {
                                         )}
                                         <tr
                                           className={`font-bold ${
-                                            printMode
+                                            isLight
                                               ? 'bg-gray-50'
                                               : 'bg-slate-700/30'
                                           }`}
@@ -4495,9 +4689,9 @@ const App = () => {
                             )}
 
                           {item.topUpEvents && item.topUpEvents.length > 0 && (
-                            <div className="mt-2 pt-1 border-t border-slate-700/30">
+                            <div className={`mt-2 pt-1 border-t ${isLight ? 'border-slate-200' : 'border-slate-700/30'}`}>
                               <details className="group">
-                                <summary className="text-[15px] text-slate-500 cursor-pointer hover:text-slate-300 flex items-center gap-1 mb-1">
+                                <summary className={`text-[15px] cursor-pointer flex items-center gap-1 mb-1 ${isLight ? 'text-slate-500 hover:text-slate-700' : 'text-slate-500 hover:text-slate-300'}`}>
                                   <Table2 className="w-3 h-3" /> 共{' '}
                                   {
                                     item.topUpEvents.filter((e) => !e.skipped)
@@ -4507,7 +4701,7 @@ const App = () => {
                                 </summary>
                                 <div
                                   className={`mt-1 overflow-x-auto rounded border ${
-                                    printMode
+                                    isLight
                                       ? 'border-gray-200'
                                       : 'border-slate-700/50'
                                   }`}
@@ -4515,7 +4709,7 @@ const App = () => {
                                   <table className="w-full text-[16px] leading-normal text-left">
                                     <thead
                                       className={`${
-                                        printMode
+                                        isLight
                                           ? 'bg-gray-100'
                                           : 'bg-slate-700/30'
                                       } text-slate-500`}
@@ -4537,7 +4731,7 @@ const App = () => {
                                     </thead>
                                     <tbody
                                       className={`divide-y ${
-                                        printMode
+                                        isLight
                                           ? 'divide-gray-100'
                                           : 'divide-slate-700/30'
                                       }`}
@@ -4548,7 +4742,7 @@ const App = () => {
                                           className={
                                             e.skipped
                                               ? 'italic text-slate-500 bg-slate-800/40'
-                                              : printMode
+                                              : isLight
                                               ? 'hover:bg-gray-50'
                                               : 'hover:bg-slate-700/20'
                                           }
@@ -4561,7 +4755,7 @@ const App = () => {
                                           <td className={`py-2 ${textClass.sub}`}>
                                             {e.symbol}
                                             {e.stockName && (
-                                              <span className="text-xs font-normal text-slate-400 ml-1">
+                                              <span className={`text-xs font-normal ml-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                                                 {e.stockName}
                                               </span>
                                             )}
@@ -4635,32 +4829,32 @@ const App = () => {
                     <CartesianGrid
                       strokeDasharray="3 3"
                       vertical={false}
-                      stroke={printMode ? '#e5e7eb' : '#334155'}
+                      stroke={isLight ? '#e5e7eb' : '#334155'}
                     />
                     <XAxis
                       dataKey="date"
                       tickFormatter={(s) => s.slice(5)}
                       minTickGap={30}
                       tick={{
-                        fill: printMode ? '#333' : '#94a3b8',
+                        fill: isLight ? '#333' : '#94a3b8',
                         fontSize: 10,
                       }}
                     />
                     <YAxis
                       tickFormatter={(v) => `${v}%`}
                       tick={{
-                        fill: printMode ? '#333' : '#94a3b8',
+                        fill: isLight ? '#333' : '#94a3b8',
                         fontSize: 10,
                       }}
                       width={35}
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: printMode ? '#fff' : '#1e293b',
-                        border: printMode
+                        backgroundColor: isLight ? '#fff' : '#1e293b',
+                        border: isLight
                           ? '1px solid #ccc'
                           : '1px solid #475569',
-                        color: printMode ? '#000' : '#f8fafc',
+                        color: isLight ? '#000' : '#f8fafc',
                         borderRadius: '8px',
                       }}
                       formatter={(val) => [`${Number(val).toFixed(2)}%`]}
@@ -4712,21 +4906,21 @@ const App = () => {
                       <CartesianGrid
                         strokeDasharray="3 3"
                         vertical={false}
-                        stroke={printMode ? '#e5e7eb' : '#334155'}
+                        stroke={isLight ? '#e5e7eb' : '#334155'}
                       />
                       <XAxis
                         dataKey="date"
                         tickFormatter={(s) => s.slice(5)}
                         minTickGap={30}
                         tick={{
-                          fill: printMode ? '#333' : '#94a3b8',
+                          fill: isLight ? '#333' : '#94a3b8',
                           fontSize: 10,
                         }}
                       />
                       <YAxis
                         tickFormatter={(v) => `${v}%`}
                         tick={{
-                          fill: printMode ? '#333' : '#94a3b8',
+                          fill: isLight ? '#333' : '#94a3b8',
                           fontSize: 10,
                         }}
                         width={35}
@@ -4743,11 +4937,11 @@ const App = () => {
                           return (
                             <div
                               style={{
-                                backgroundColor: printMode ? '#fff' : '#1e293b',
-                                border: printMode
+                                backgroundColor: isLight ? '#fff' : '#1e293b',
+                                border: isLight
                                   ? '1px solid #ccc'
                                   : '1px solid #475569',
-                                color: printMode ? '#000' : '#f8fafc',
+                                color: isLight ? '#000' : '#f8fafc',
                                 borderRadius: '8px',
                                 padding: '8px 12px',
                                 fontSize: '12px',

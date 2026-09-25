@@ -22,45 +22,59 @@ const buildDefaultLineConfig = () => ({
   topUpRange: { min: 10000, max: 10000, step: 5000 },
 });
 
-const RangeInputGroup = ({ unit, value, onChange }) => {
+const RangeInputGroup = ({ unit, value, onChange, isLight }) => {
   const set = (patch) => onChange({ ...value, ...patch });
+  const subText = isLight ? 'text-slate-500' : 'text-slate-500';
+  const inputClass = isLight
+    ? 'w-full bg-white border border-slate-300 rounded text-xs p-1 text-slate-900'
+    : 'w-full bg-slate-800 border border-slate-600 rounded text-xs p-1';
   return (
     <div className="grid grid-cols-3 gap-1">
       <div>
-        <div className="text-[11px] text-slate-500">最小{unit ? `(${unit})` : ''}</div>
+        <div className={`text-[11px] ${subText}`}>最小{unit ? `(${unit})` : ''}</div>
         <input
           type="number"
           value={value.min}
           onChange={(e) => set({ min: parseFloat(e.target.value) })}
-          className="w-full bg-slate-800 border border-slate-600 rounded text-xs p-1"
+          className={inputClass}
         />
       </div>
       <div>
-        <div className="text-[11px] text-slate-500">最大</div>
+        <div className={`text-[11px] ${subText}`}>最大</div>
         <input
           type="number"
           value={value.max}
           onChange={(e) => set({ max: parseFloat(e.target.value) })}
-          className="w-full bg-slate-800 border border-slate-600 rounded text-xs p-1"
+          className={inputClass}
         />
       </div>
       <div>
-        <div className="text-[11px] text-slate-500">間距</div>
+        <div className={`text-[11px] ${subText}`}>間距</div>
         <input
           type="number"
           value={value.step}
           onChange={(e) => set({ step: parseFloat(e.target.value) })}
-          className="w-full bg-slate-800 border border-slate-600 rounded text-xs p-1"
+          className={inputClass}
         />
       </div>
     </div>
   );
 };
 
-const Metric = ({ label, value, highlight }) => (
+const Metric = ({ label, value, highlight, isLight }) => (
   <div className="flex flex-col">
-    <span className="text-[12px] text-slate-500">{label}</span>
-    <span className={`font-mono font-bold ${highlight ? 'text-emerald-400' : 'text-slate-200'}`}>
+    <span className={`text-[12px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>{label}</span>
+    <span
+      className={`font-mono font-bold ${
+        highlight
+          ? isLight
+            ? 'text-emerald-600'
+            : 'text-emerald-400'
+          : isLight
+          ? 'text-slate-700'
+          : 'text-slate-200'
+      }`}
+    >
       {value}
     </span>
   </div>
@@ -106,156 +120,179 @@ export const parseSymbolsInput = (raw) => {
 
 // 單一策略結果的完整明細卡片(成效指標 + 各年度拆解 + 加碼明細),
 // 單檔模式(前5名)與多檔比較模式(每檔最佳一組)共用同一份渲染邏輯。
-const ResultDetailCard = ({ item, badge }) => (
-  <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
-    <div className="flex items-start justify-between gap-2 flex-wrap">
-      <div className="flex items-center gap-2">{badge}</div>
-      <div className="text-[12px] text-slate-400 text-right">{describeConfig(item.config)}</div>
-    </div>
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <Metric
-        label="總投入金額"
-        value={`$${Math.round(item.result.totalInvested).toLocaleString()}`}
-      />
-      <Metric
-        label="目前市值"
-        value={`$${Math.round(item.result.finalMarketValue).toLocaleString()}`}
-        highlight
-      />
-      <Metric
-        label="總報酬率(不含息)"
-        value={`${item.result.totalReturnPct >= 0 ? '+' : ''}${item.result.totalReturnPct.toFixed(2)}%`}
-      />
-      <Metric
-        label="含息報酬率"
-        value={`${item.result.dividendReturnPct >= 0 ? '+' : ''}${item.result.dividendReturnPct.toFixed(2)}%`}
-        highlight
-      />
-      <Metric label="CAGR(年化報酬率)" value={`${item.result.cagr.toFixed(2)}%`} />
-      <Metric
-        label="累計配息金額"
-        value={`$${Math.round(item.result.totalDividends).toLocaleString()}`}
-      />
-      <Metric label="最大回撤" value={`${item.result.maxDrawdownPct.toFixed(2)}%`} />
-      <Metric
-        label="回測區間"
-        value={`${item.result.startDate} ~ ${item.result.endDate}`}
-      />
-      <Metric
-        label="加碼實際成交次數"
-        value={`${item.result.topUpEvents.filter((e) => !e.skipped).length} 次`}
-      />
-    </div>
-    <details className="text-[12px] text-slate-400">
-      <summary className="cursor-pointer select-none text-slate-300 font-bold">
-        各年度報酬拆解
-      </summary>
-      <div className="overflow-x-auto mt-2">
-        <table className="w-full text-[12px]">
-          <thead>
-            <tr className="text-slate-500 border-b border-slate-700">
-              <th className="text-left py-1">年度</th>
-              <th className="text-right py-1">年底市值</th>
-              <th className="text-right py-1">累計投入</th>
-              <th className="text-right py-1">年度變動%</th>
-            </tr>
-          </thead>
-          <tbody>
-            {item.result.yearlyBreakdown.map((y) => (
-              <tr key={y.year} className="border-b border-slate-800">
-                <td className="py-1">{y.year}</td>
-                <td className="text-right py-1 font-mono">
-                  ${Math.round(y.endValue).toLocaleString()}
-                </td>
-                <td className="text-right py-1 font-mono">
-                  ${Math.round(y.totalInvested).toLocaleString()}
-                </td>
-                <td
-                  className={`text-right py-1 font-mono ${
-                    y.yearReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {y.yearReturnPct >= 0 ? '+' : ''}
-                  {y.yearReturnPct.toFixed(2)}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+const ResultDetailCard = ({ item, badge, isLight }) => {
+  const cardClass = isLight
+    ? 'bg-white border border-slate-300 rounded-xl p-4 space-y-3'
+    : 'bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3';
+  const subText = isLight ? 'text-slate-500' : 'text-slate-400';
+  const tableBorder = isLight ? 'border-slate-300' : 'border-slate-700';
+  const rowBorder = isLight ? 'border-slate-200' : 'border-slate-800';
+  const summaryText = isLight ? 'text-slate-700' : 'text-slate-300';
+  const footnoteText = isLight ? 'text-slate-500' : 'text-slate-600';
+  return (
+    <div className={cardClass}>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">{badge}</div>
+        <div className={`text-[12px] ${subText} text-right`}>{describeConfig(item.config)}</div>
       </div>
-      <div className="text-[11px] text-slate-600 mt-1">
-        年度變動% 為簡化呈現(今年底市值 vs
-        去年底市值,第一年則為今年底市值vs今年度累計投入),會同時反映市場漲跌與當年度資金投入的影響,並非嚴格的年化報酬。
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Metric
+          isLight={isLight}
+          label="總投入金額"
+          value={`$${Math.round(item.result.totalInvested).toLocaleString()}`}
+        />
+        <Metric
+          isLight={isLight}
+          label="目前市值"
+          value={`$${Math.round(item.result.finalMarketValue).toLocaleString()}`}
+          highlight
+        />
+        <Metric
+          isLight={isLight}
+          label="總報酬率(不含息)"
+          value={`${item.result.totalReturnPct >= 0 ? '+' : ''}${item.result.totalReturnPct.toFixed(2)}%`}
+        />
+        <Metric
+          isLight={isLight}
+          label="含息報酬率"
+          value={`${item.result.dividendReturnPct >= 0 ? '+' : ''}${item.result.dividendReturnPct.toFixed(2)}%`}
+          highlight
+        />
+        <Metric isLight={isLight} label="CAGR(年化報酬率)" value={`${item.result.cagr.toFixed(2)}%`} />
+        <Metric
+          isLight={isLight}
+          label="累計配息金額"
+          value={`$${Math.round(item.result.totalDividends).toLocaleString()}`}
+        />
+        <Metric isLight={isLight} label="最大回撤" value={`${item.result.maxDrawdownPct.toFixed(2)}%`} />
+        <Metric
+          isLight={isLight}
+          label="回測區間"
+          value={`${item.result.startDate} ~ ${item.result.endDate}`}
+        />
+        <Metric
+          isLight={isLight}
+          label="加碼實際成交次數"
+          value={`${item.result.topUpEvents.filter((e) => !e.skipped).length} 次`}
+        />
       </div>
-    </details>
-
-    {item.result.topUpEvents.length > 0 && (
-      <details className="text-[12px] text-slate-400">
-        <summary className="cursor-pointer select-none text-slate-300 font-bold">
-          加碼明細(共 {item.result.topUpEvents.length} 次觸發,
-          {item.result.topUpEvents.filter((e) => !e.skipped).length} 次成交)
+      <details className={`text-[12px] ${subText}`}>
+        <summary className={`cursor-pointer select-none ${summaryText} font-bold`}>
+          各年度報酬拆解
         </summary>
         <div className="overflow-x-auto mt-2">
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-700">
-                <th className="text-left py-1">日期</th>
-                <th className="text-left py-1">觸發均線</th>
-                <th className="text-left py-1">加碼原因</th>
-                <th className="text-right py-1">加碼金額</th>
+              <tr className={`${isLight ? 'text-slate-500' : 'text-slate-500'} border-b ${tableBorder}`}>
+                <th className="text-left py-1">年度</th>
+                <th className="text-right py-1">年底市值</th>
+                <th className="text-right py-1">累計投入</th>
+                <th className="text-right py-1">年度變動%</th>
               </tr>
             </thead>
             <tbody>
-              {item.result.topUpEvents.map((e, i) => (
-                <tr
-                  key={i}
-                  className={`border-b border-slate-800 ${
-                    e.skipped ? 'text-slate-600 italic' : ''
-                  }`}
-                >
-                  <td className="py-1 font-mono">{e.date}</td>
-                  <td className="py-1">{e.lineLabel}</td>
-                  <td className="py-1">
-                    {e.triggerMode === 'kline' ? (
-                      <>
-                        前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
-                        {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
-                        {e.ma.toFixed(2)}
-                      </>
-                    ) : (
-                      <>
-                        收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
-                        乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
-                      </>
-                    )}
-                    {e.skipped
-                      ? ',但當月加碼配額已用完,未實際加碼'
-                      : `,依設定${
-                          e.topUpMode === 'multiple' ? `以${e.topUpValue}倍定額` : '固定金額'
-                        }加碼`}
+              {item.result.yearlyBreakdown.map((y) => (
+                <tr key={y.year} className={`border-b ${rowBorder}`}>
+                  <td className="py-1">{y.year}</td>
+                  <td className="text-right py-1 font-mono">
+                    ${Math.round(y.endValue).toLocaleString()}
                   </td>
                   <td className="text-right py-1 font-mono">
-                    {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
+                    ${Math.round(y.totalInvested).toLocaleString()}
+                  </td>
+                  <td
+                    className={`text-right py-1 font-mono ${
+                      y.yearReturnPct >= 0
+                        ? isLight
+                          ? 'text-emerald-600'
+                          : 'text-emerald-400'
+                        : isLight
+                        ? 'text-rose-600'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {y.yearReturnPct >= 0 ? '+' : ''}
+                    {y.yearReturnPct.toFixed(2)}%
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="text-[11px] text-slate-600 mt-1">
-          {item.config.useKLineCrossTrigger
-            ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
-            : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
-          若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+        <div className={`text-[11px] ${footnoteText} mt-1`}>
+          年度變動% 為簡化呈現(今年底市值 vs
+          去年底市值,第一年則為今年底市值vs今年度累計投入),會同時反映市場漲跌與當年度資金投入的影響,並非嚴格的年化報酬。
         </div>
       </details>
-    )}
-  </div>
-);
+
+      {item.result.topUpEvents.length > 0 && (
+        <details className={`text-[12px] ${subText}`}>
+          <summary className={`cursor-pointer select-none ${summaryText} font-bold`}>
+            加碼明細(共 {item.result.topUpEvents.length} 次觸發,
+            {item.result.topUpEvents.filter((e) => !e.skipped).length} 次成交)
+          </summary>
+          <div className="overflow-x-auto mt-2">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className={`${isLight ? 'text-slate-500' : 'text-slate-500'} border-b ${tableBorder}`}>
+                  <th className="text-left py-1">日期</th>
+                  <th className="text-left py-1">觸發均線</th>
+                  <th className="text-left py-1">加碼原因</th>
+                  <th className="text-right py-1">加碼金額</th>
+                </tr>
+              </thead>
+              <tbody>
+                {item.result.topUpEvents.map((e, i) => (
+                  <tr
+                    key={i}
+                    className={`border-b ${rowBorder} ${
+                      e.skipped ? (isLight ? 'text-slate-400 italic' : 'text-slate-600 italic') : ''
+                    }`}
+                  >
+                    <td className="py-1 font-mono">{e.date}</td>
+                    <td className="py-1">{e.lineLabel}</td>
+                    <td className="py-1">
+                      {e.triggerMode === 'kline' ? (
+                        <>
+                          前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
+                          {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
+                          {e.ma.toFixed(2)}
+                        </>
+                      ) : (
+                        <>
+                          收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
+                          乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                        </>
+                      )}
+                      {e.skipped
+                        ? ',但當月加碼配額已用完,未實際加碼'
+                        : `,依設定${
+                            e.topUpMode === 'multiple' ? `以${e.topUpValue}倍定額` : '固定金額'
+                          }加碼`}
+                    </td>
+                    <td className="text-right py-1 font-mono">
+                      {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className={`text-[11px] ${footnoteText} mt-1`}>
+            {item.config.useKLineCrossTrigger
+              ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
+              : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
+            若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+          </div>
+        </details>
+      )}
+    </div>
+  );
+};
 
 const todayStr = () => new Date().toISOString().split('T')[0];
 
-export default function DcaOptimizer() {
+export default function DcaOptimizer({ isLight = false }) {
   const [symbolInput, setSymbolInput] = useState('');
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -291,6 +328,39 @@ export default function DcaOptimizer() {
   // { symbol, stockName, dataSourceInfo, results: [{config,result,score}, ...], error }
   // 長度 1 時視為「單檔模式」(顯示前N名);長度 > 1 時視為「多檔比較模式」(每檔只取最佳一組)。
   const [runResults, setRunResults] = useState(null);
+
+  // 亮色/暗色主題共用的樣式片段(theme 切換鈕在 App.js,這裡只吃 isLight 這個布林值)
+  const cardClass = isLight
+    ? 'bg-white border border-slate-300 rounded-xl p-4'
+    : 'bg-slate-800 border border-slate-700 rounded-xl p-4';
+  const nestedCardClass = isLight
+    ? 'bg-slate-50 border border-slate-300 rounded-lg p-3'
+    : 'bg-slate-800/60 border border-slate-700 rounded-lg p-3';
+  const nestedCardShellClass = isLight
+    ? 'bg-slate-50 border border-slate-300 rounded-lg'
+    : 'bg-slate-800/60 border border-slate-700 rounded-lg';
+  const wellClass = isLight
+    ? 'bg-slate-100 border border-slate-300 rounded-lg p-3'
+    : 'bg-slate-900/50 border border-slate-700 rounded-lg p-3';
+  const inputClass = isLight
+    ? 'bg-white border border-slate-300 rounded p-2 text-sm text-slate-900'
+    : 'bg-slate-800 border border-slate-600 rounded p-2 text-sm';
+  const labelClass = `text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`;
+  const headingClass = isLight ? 'text-slate-900' : 'text-slate-100';
+  const bodyText = isLight ? 'text-slate-600' : 'text-slate-400';
+  const subText = isLight ? 'text-slate-500' : 'text-slate-400';
+  const dividerClass = isLight ? 'border-slate-200' : 'border-slate-700/50';
+  const tableBorder = isLight ? 'border-slate-300' : 'border-slate-700';
+  const rowBorder = isLight ? 'border-slate-200' : 'border-slate-800';
+  const errorBoxClass = isLight
+    ? 'text-[13px] text-rose-600 bg-rose-50 border border-rose-300 rounded-lg p-2 flex items-start gap-1.5'
+    : 'text-[13px] text-rose-400 bg-rose-900/20 border border-rose-800/50 rounded-lg p-2 flex items-start gap-1.5';
+  const errorBoxClassLg = isLight
+    ? 'text-[13px] text-rose-600 bg-rose-50 border border-rose-300 rounded-lg p-3 flex items-start gap-1.5'
+    : 'text-[13px] text-rose-400 bg-rose-900/20 border border-rose-800/50 rounded-lg p-3 flex items-start gap-1.5';
+  const rankBadgeClass = isLight
+    ? 'bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded'
+    : 'bg-slate-700 text-slate-200 text-xs px-2 py-0.5 rounded';
 
   const updateLineConfig = (key, patch) => {
     setMaLineConfigs((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
@@ -463,12 +533,12 @@ export default function DcaOptimizer() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-4">
-        <h2 className="font-bold text-lg flex items-center gap-2 text-slate-100">
-          <TrendingUp className="w-5 h-5 text-emerald-400" />
+      <div className={`${cardClass} space-y-4`}>
+        <h2 className={`font-bold text-lg flex items-center gap-2 ${headingClass}`}>
+          <TrendingUp className={`w-5 h-5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
           定期定額策略最佳化
         </h2>
-        <p className="text-[13px] text-slate-400 leading-relaxed">
+        <p className={`text-[13px] ${bodyText} leading-relaxed`}>
           設定股票代碼、起始日期與每月定期定額金額後,可另外開啟月線
           (MA20)、季線(MA60)、半年線(MA120)三組獨立的加碼條件,每個參數都用
           「最小 / 最大 / 間距」設定搜尋範圍(最小=最大時等同固定單一數值)。
@@ -480,7 +550,7 @@ export default function DcaOptimizer() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label className="text-xs text-slate-400 font-bold">
+            <label className={labelClass}>
               股票代碼(可輸入多檔,逗號分隔,最多 {MAX_COMPARE_SYMBOLS} 檔)
             </label>
             <input
@@ -488,57 +558,57 @@ export default function DcaOptimizer() {
               value={symbolInput}
               onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
               placeholder="例如 0050,0056,2330"
-              className="w-full mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
+              className={`w-full mt-1 ${inputClass}`}
             />
             {symbolsToRun.length > 0 && (
-              <div className="text-[12px] text-slate-500 mt-0.5">
+              <div className={`text-[12px] ${subText} mt-0.5`}>
                 將回測:{symbolsToRun.join('、')}
                 {symbolOverflow && `(最多比較 ${MAX_COMPARE_SYMBOLS} 檔,超出的部分已忽略)`}
               </div>
             )}
           </div>
           <div>
-            <label className="text-xs text-slate-400 font-bold">回測起始日期</label>
+            <label className={labelClass}>回測起始日期</label>
             <input
               type="date"
               value={startDate}
               max={todayStr()}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
+              className={`w-full mt-1 ${inputClass}`}
             />
           </div>
           <div>
-            <label className="text-xs text-slate-400 font-bold">每月定期定額金額</label>
+            <label className={labelClass}>每月定期定額金額</label>
             <input
               type="number"
               value={monthlyAmount}
               onChange={(e) => setMonthlyAmount(e.target.value)}
-              className="w-full mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
+              className={`w-full mt-1 ${inputClass}`}
             />
           </div>
           <div>
-            <label className="text-xs text-slate-400 font-bold">每月投入日(1~31)</label>
+            <label className={labelClass}>每月投入日(1~31)</label>
             <input
               type="number"
               min={1}
               max={31}
               value={investDay}
               onChange={(e) => setInvestDay(e.target.value)}
-              className="w-full mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
+              className={`w-full mt-1 ${inputClass}`}
             />
-            <div className="text-[11px] text-slate-500 mt-0.5">
+            <div className={`text-[11px] ${subText} mt-0.5`}>
               遇非交易日順延至當月第一個交易日
             </div>
           </div>
         </div>
       </div>
 
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
-        <h3 className="font-bold text-slate-100 flex items-center gap-2">
+      <div className={`${cardClass} space-y-3`}>
+        <h3 className={`font-bold flex items-center gap-2 ${headingClass}`}>
           加碼條件(三組,各自獨立開關)
         </h3>
 
-        <label className="flex items-start gap-2 cursor-pointer bg-slate-900/50 border border-slate-700 rounded-lg p-3">
+        <label className={`flex items-start gap-2 cursor-pointer ${wellClass}`}>
           <input
             type="checkbox"
             checked={useKLineCrossTrigger}
@@ -546,10 +616,10 @@ export default function DcaOptimizer() {
             className="mt-0.5"
           />
           <span>
-            <span className="font-bold text-sm text-slate-200">
+            <span className={`font-bold text-sm ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
               用「K線穿越均線」判斷加碼(取代偏離%規則)
             </span>
-            <div className="text-[12px] text-slate-400 mt-0.5 leading-relaxed">
+            <div className={`text-[12px] ${bodyText} mt-0.5 leading-relaxed`}>
               全域套用於所有已啟用的均線:模擬在均線價位掛買進限價單——前一天最低價高於前一天均線(代表前一天整天都沒碰到均線),且今天最低價跌到均線價位以下(含等於)才成交,可避免股價與均線糾結、來回穿越時天天重複加碼。開啟後,下方各均線的「觸發偏離%」範圍會停用,不會納入最佳化搜尋。
             </div>
           </span>
@@ -559,35 +629,33 @@ export default function DcaOptimizer() {
           {MA_LINE_KEYS.map((key) => {
             const line = maLineConfigs[key];
             return (
-              <div
-                key={key}
-                className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 space-y-2"
-              >
+              <div key={key} className={`${nestedCardClass} space-y-2`}>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={line.enabled}
                     onChange={() => updateLineConfig(key, { enabled: !line.enabled })}
                   />
-                  <span className="font-bold text-sm text-slate-200">
+                  <span className={`font-bold text-sm ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
                     {MA_LINE_LABELS[key]}
                   </span>
                 </label>
                 {line.enabled && (
                   <>
                     <div className={useKLineCrossTrigger ? 'opacity-40 pointer-events-none' : ''}>
-                      <div className="text-[12px] text-slate-400 mb-1">
+                      <div className={`text-[12px] ${bodyText} mb-1`}>
                         觸發偏離%(收盤價低於均線多少% 觸發)
                         {useKLineCrossTrigger && '(已改用K線穿越,此設定停用)'}
                       </div>
                       <RangeInputGroup
+                        isLight={isLight}
                         unit="%"
                         value={line.deviationRange}
                         onChange={(range) => updateLineConfig(key, { deviationRange: range })}
                       />
                     </div>
-                    <div className="flex items-center gap-3 text-[12px] text-slate-300">
-                      <span className="text-slate-400">加碼方式:</span>
+                    <div className={`flex items-center gap-3 text-[12px] ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
+                      <span className={bodyText}>加碼方式:</span>
                       <label className="flex items-center gap-1 cursor-pointer">
                         <input
                           type="radio"
@@ -608,12 +676,13 @@ export default function DcaOptimizer() {
                       </label>
                     </div>
                     <div>
-                      <div className="text-[12px] text-slate-400 mb-1">
+                      <div className={`text-[12px] ${bodyText} mb-1`}>
                         {line.topUpMode === 'multiple'
                           ? '加碼倍數(× 每月定額)'
                           : '加碼金額(元)'}
                       </div>
                       <RangeInputGroup
+                        isLight={isLight}
                         unit={line.topUpMode === 'multiple' ? '倍' : '元'}
                         value={line.topUpRange}
                         onChange={(range) => updateLineConfig(key, { topUpRange: range })}
@@ -626,20 +695,22 @@ export default function DcaOptimizer() {
           })}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-700/50">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t ${dividerClass}`}>
           <div>
-            <div className="text-[12px] text-slate-400 mb-1">
+            <div className={`text-[12px] ${bodyText} mb-1`}>
               每月共用觸發次數上限(三條線共用額度,誰先觸發誰先買)
             </div>
             <RangeInputGroup
+              isLight={isLight}
               unit="次"
               value={monthlyTriggerCapRange}
               onChange={setMonthlyTriggerCapRange}
             />
           </div>
           <div>
-            <div className="text-[12px] text-slate-400 mb-1">配息再投入比例</div>
+            <div className={`text-[12px] ${bodyText} mb-1`}>配息再投入比例</div>
             <RangeInputGroup
+              isLight={isLight}
               unit="%"
               value={reinvestRatioRange}
               onChange={setReinvestRatioRange}
@@ -648,14 +719,14 @@ export default function DcaOptimizer() {
         </div>
       </div>
 
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+      <div className={`${cardClass} space-y-3`}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div>
-            <label className="text-xs text-slate-400 font-bold">最佳化目標</label>
+            <label className={labelClass}>最佳化目標</label>
             <select
               value={objective}
               onChange={(e) => setObjective(e.target.value)}
-              className="w-full sm:w-auto mt-1 bg-slate-800 border border-slate-600 rounded p-2 text-sm"
+              className={`w-full sm:w-auto mt-1 ${inputClass}`}
             >
               {Object.entries(OPTIMIZE_OBJECTIVE_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -668,14 +739,22 @@ export default function DcaOptimizer() {
             <div
               className={`font-bold ${
                 previewCombinationCount > COMBINATION_COUNT_WARNING_THRESHOLD
-                  ? 'text-amber-400'
+                  ? isLight
+                    ? 'text-amber-600'
+                    : 'text-amber-400'
+                  : isLight
+                  ? 'text-slate-600'
                   : 'text-slate-300'
               }`}
             >
               目前參數組合數:{previewCombinationCount.toLocaleString()} 組
             </div>
             {previewCombinationCount > COMBINATION_COUNT_WARNING_THRESHOLD && (
-              <div className="text-amber-400/80 text-[12px] flex items-center gap-1 justify-end">
+              <div
+                className={`${
+                  isLight ? 'text-amber-600' : 'text-amber-400/80'
+                } text-[12px] flex items-center gap-1 justify-end`}
+              >
                 <AlertTriangle className="w-3 h-3" />
                 組合數較多,執行可能需要較長時間
               </div>
@@ -688,7 +767,9 @@ export default function DcaOptimizer() {
           disabled={loading}
           className={`w-full py-3 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all ${
             loading
-              ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+              ? isLight
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white'
           }`}
         >
@@ -704,18 +785,18 @@ export default function DcaOptimizer() {
 
         {loading && (
           <div>
-            <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+            <div className={`w-full ${isLight ? 'bg-slate-200' : 'bg-slate-700'} rounded-full h-2 overflow-hidden`}>
               <div
                 className="bg-emerald-500 h-2 transition-all"
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <div className="text-[12px] text-slate-400 mt-1">{loadingStage}</div>
+            <div className={`text-[12px] ${bodyText} mt-1`}>{loadingStage}</div>
           </div>
         )}
 
         {errorMsg && (
-          <div className="text-[13px] text-rose-400 bg-rose-900/20 border border-rose-800/50 rounded-lg p-2 flex items-start gap-1.5">
+          <div className={errorBoxClass}>
             <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
             <span>{errorMsg}</span>
           </div>
@@ -725,13 +806,13 @@ export default function DcaOptimizer() {
 
       {runResults && runResults.length === 1 && !runResults[0].error && (
         <div className="space-y-3">
-          <h3 className="font-bold text-lg text-slate-100">
+          <h3 className={`font-bold text-lg ${headingClass}`}>
             {runResults[0].symbol}
             {runResults[0].stockName ? ` ${runResults[0].stockName}` : ''} · 成效前{' '}
             {runResults[0].results.length} 名策略({OPTIMIZE_OBJECTIVE_LABELS[objective]})
           </h3>
           {runResults[0].dataSourceInfo && (
-            <div className="text-[12px] text-slate-500 flex items-center gap-1.5">
+            <div className={`text-[12px] ${subText} flex items-center gap-1.5`}>
               <Info className="w-3 h-3 flex-shrink-0" />
               資料來源:
               {runResults[0].dataSourceInfo.fromCache
@@ -745,6 +826,7 @@ export default function DcaOptimizer() {
             <ResultDetailCard
               key={idx}
               item={item}
+              isLight={isLight}
               badge={
                 <span className="bg-yellow-500 text-slate-900 text-xs px-2 py-0.5 rounded font-bold">
                   第 {idx + 1} 名
@@ -756,7 +838,7 @@ export default function DcaOptimizer() {
       )}
 
       {runResults && runResults.length === 1 && runResults[0].error && (
-        <div className="text-[13px] text-rose-400 bg-rose-900/20 border border-rose-800/50 rounded-lg p-3 flex items-start gap-1.5">
+        <div className={errorBoxClassLg}>
           <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
           <span>
             {runResults[0].symbol}:{runResults[0].error}
@@ -766,15 +848,15 @@ export default function DcaOptimizer() {
 
       {runResults && runResults.length > 1 && (
         <div className="space-y-3">
-          <h3 className="font-bold text-lg text-slate-100">
+          <h3 className={`font-bold text-lg ${headingClass}`}>
             {runResults.length} 檔股票比較(各取最佳一組,{OPTIMIZE_OBJECTIVE_LABELS[objective]})
           </h3>
 
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <div className={cardClass}>
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="text-slate-500 border-b border-slate-700">
+                  <tr className={`${isLight ? 'text-slate-500' : 'text-slate-500'} border-b ${tableBorder}`}>
                     <th className="text-left py-1">排名</th>
                     <th className="text-left py-1">股票</th>
                     <th className="text-right py-1">含息報酬率</th>
@@ -794,18 +876,22 @@ export default function DcaOptimizer() {
                     .map((r, idx) => {
                       const item = r.results[0];
                       return (
-                        <tr key={r.symbol} className="border-b border-slate-800">
+                        <tr key={r.symbol} className={`border-b ${rowBorder}`}>
                           <td className="py-1">{idx + 1}</td>
-                          <td className="py-1 font-bold text-slate-200">
+                          <td className={`py-1 font-bold ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
                             {r.symbol}
                             {r.stockName && (
-                              <span className="font-normal text-slate-400"> {r.stockName}</span>
+                              <span className={`font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}> {r.stockName}</span>
                             )}
                           </td>
                           <td
                             className={`text-right py-1 font-mono ${
                               item.result.dividendReturnPct >= 0
-                                ? 'text-emerald-400'
+                                ? isLight
+                                  ? 'text-emerald-600'
+                                  : 'text-emerald-400'
+                                : isLight
+                                ? 'text-rose-600'
                                 : 'text-rose-400'
                             }`}
                           >
@@ -837,7 +923,7 @@ export default function DcaOptimizer() {
               </table>
             </div>
             {runResults.some((r) => r.error) && (
-              <div className="mt-2 text-[12px] text-rose-400 space-y-0.5">
+              <div className={`mt-2 text-[12px] ${isLight ? 'text-rose-600' : 'text-rose-400'} space-y-0.5`}>
                 {runResults
                   .filter((r) => r.error)
                   .map((r) => (
@@ -855,12 +941,13 @@ export default function DcaOptimizer() {
               .slice()
               .sort((a, b) => b.results[0].score - a.results[0].score)
               .map((r, idx) => (
-                <details
-                  key={r.symbol}
-                  className="bg-slate-800/60 border border-slate-700 rounded-lg"
-                >
-                  <summary className="cursor-pointer select-none p-3 text-sm font-bold text-slate-200 flex flex-wrap items-center gap-2">
-                    <span className="bg-slate-700 text-slate-200 text-xs px-2 py-0.5 rounded">
+                <details key={r.symbol} className={nestedCardShellClass}>
+                  <summary
+                    className={`cursor-pointer select-none p-3 text-sm font-bold ${
+                      isLight ? 'text-slate-700' : 'text-slate-200'
+                    } flex flex-wrap items-center gap-2`}
+                  >
+                    <span className={rankBadgeClass}>
                       第 {idx + 1} 名
                     </span>
                     <span>
@@ -868,7 +955,7 @@ export default function DcaOptimizer() {
                       {r.stockName ? ` ${r.stockName}` : ''}
                     </span>
                     {r.dataSourceInfo && (
-                      <span className="text-[11px] text-slate-500 font-normal ml-auto">
+                      <span className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-500'} font-normal ml-auto`}>
                         資料來源:
                         {r.dataSourceInfo.fromCache
                           ? '本機快取'
@@ -880,6 +967,7 @@ export default function DcaOptimizer() {
                   <div className="p-3 pt-0">
                     <ResultDetailCard
                       item={r.results[0]}
+                      isLight={isLight}
                       badge={
                         <span className="bg-yellow-500 text-slate-900 text-xs px-2 py-0.5 rounded font-bold">
                           最佳組合
