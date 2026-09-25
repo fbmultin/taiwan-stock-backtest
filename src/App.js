@@ -64,6 +64,7 @@ import {
   Scissors,
   Sun,
   Moon,
+  ArrowLeft,
 } from 'lucide-react';
 
 const COLORS = [
@@ -3145,7 +3146,7 @@ const App = () => {
           className="fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-xl shadow-violet-900/40 flex items-center justify-center no-print"
           title="回去改設定"
         >
-          <ChevronDown className="w-6 h-6" />
+          <ArrowLeft className="w-6 h-6" />
         </button>
       ))}
 
