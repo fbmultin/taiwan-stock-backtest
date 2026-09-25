@@ -4833,15 +4833,6 @@ const App = () => {
                                       : '資料不足'}
                                   </span>
                                 )}
-                                <span
-                                  className={`text-[14px] px-1.5 py-0.5 rounded border ${
-                                    isLight
-                                      ? 'text-emerald-700 border-emerald-200 bg-emerald-50'
-                                      : 'text-emerald-400 border-emerald-900/50 bg-emerald-900/20'
-                                  }`}
-                                >
-                                  {item.weight.toFixed(1)}%
-                                </span>
                               </div>
                             </div>
                             <div className="text-right">
