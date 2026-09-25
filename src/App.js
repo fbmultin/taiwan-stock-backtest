@@ -3110,7 +3110,7 @@ const App = () => {
         <button
           onClick={() => runBacktest()}
           disabled={!hasSelectedStock}
-          className={`sm:hidden fixed bottom-20 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
+          className={`sm:hidden fixed bottom-36 right-4 z-30 w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center no-print ${
             !hasSelectedStock
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
               : 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-emerald-900/40'
@@ -3118,6 +3118,29 @@ const App = () => {
           title="重新執行回測"
         >
           <Zap className="w-6 h-6 fill-current" />
+        </button>
+      )}
+
+      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示(不像上下兩個只在
+          手機版才出現),方便不用捲到排名表區塊就能隨時重新抓資料計算;放在跟
+          「重新執行回測」「跳到最底」同一側(右下角),夾在兩者中間 */}
+      {!loading && !printMode && (
+        <button
+          onClick={updateRankingTable}
+          disabled={rankingLoading || !hasSelectedStock}
+          className={`fixed bottom-20 right-4 z-30 rounded-full shadow-xl flex items-center gap-1.5 px-4 py-3 no-print transition-colors ${
+            rankingLoading || !hasSelectedStock
+              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
+              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/40'
+          }`}
+          title="更新排名表"
+        >
+          {rankingLoading ? (
+            <RefreshCw className="w-5 h-5 animate-spin" />
+          ) : (
+            <Table2 className="w-5 h-5" />
+          )}
+          <span className="text-sm font-bold">更新排名表</span>
         </button>
       )}
 
@@ -3134,28 +3157,6 @@ const App = () => {
           title="快速跳到最底"
         >
           <ChevronDown className="w-6 h-6" />
-        </button>
-      )}
-
-      {/* 浮動按鈕:「更新排名表」,不論電腦版或手機版都常駐顯示(不像上面兩個只在
-          手機版才出現),方便不用捲到排名表區塊就能隨時重新抓資料計算 */}
-      {!loading && !printMode && (
-        <button
-          onClick={updateRankingTable}
-          disabled={rankingLoading || !hasSelectedStock}
-          className={`fixed bottom-5 left-4 z-30 rounded-full shadow-xl flex items-center gap-1.5 px-4 py-3 no-print transition-colors ${
-            rankingLoading || !hasSelectedStock
-              ? 'bg-slate-700 text-slate-500 cursor-not-allowed shadow-slate-900/40'
-              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/40'
-          }`}
-          title="更新排名表"
-        >
-          {rankingLoading ? (
-            <RefreshCw className="w-5 h-5 animate-spin" />
-          ) : (
-            <Table2 className="w-5 h-5" />
-          )}
-          <span className="text-sm font-bold">更新排名表</span>
         </button>
       )}
 
