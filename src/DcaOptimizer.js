@@ -11,6 +11,10 @@ import {
   OPTIMIZE_OBJECTIVE_LABELS,
   COMBINATION_COUNT_WARNING_THRESHOLD,
   COMBINATION_COUNT_HARD_LIMIT,
+  KLINE_SUBMODE_KEYS,
+  KLINE_SUBMODE_LABELS,
+  DEFAULT_KLINE_SUBMODE_ENABLED,
+  KLINE_PYRAMID_PRESETS,
 } from './dcaEngine';
 
 // 每條均線(月線/季線/半年線)加碼條件的預設值:預設不啟用,
@@ -80,7 +84,33 @@ const Metric = ({ label, value, highlight, isLight }) => (
   </div>
 );
 
+// 描述一組結果的參數組合,結果卡片右上角的一行摘要。K線穿越模式(新引擎,與 Tab1
+// 共用)與偏離%模式(舊版,獨立不受影響)參數形狀完全不同,分開描述。
 const describeConfig = (config) => {
+  if (config.useKLineCrossTrigger) {
+    const kc = config.klineConfig || {};
+    const enabledLines = MA_LINE_KEYS.filter((key) => {
+      const m = kc.subModeConfig && kc.subModeConfig[key];
+      return m && (m.breakdown || m.pullback || m.recovery);
+    });
+    const lineSummaries = enabledLines.map((key) => {
+      const m = kc.subModeConfig[key];
+      const subs = KLINE_SUBMODE_KEYS.filter((s) => m[s]).map((s) => KLINE_SUBMODE_LABELS[s]);
+      return `${MA_LINE_LABELS[key]}(${subs.join('/')})`;
+    });
+    const parts = [];
+    parts.push(lineSummaries.length > 0 ? lineSummaries.join('、') : '未啟用任何均線');
+    parts.push(kc.pyramidPresetName || '自訂倍數');
+    parts.push(`冷卻${kc.cooldownDays?.ma20 ?? '—'}日`);
+    parts.push(
+      kc.decayWindowDays > 0 ? `遞減${kc.decayWindowDays}日/下限${kc.decayFloorPct}%` : '不遞減'
+    );
+    if (kc.chopEnabled) parts.push(`盤整偵測${kc.chopWindowDays}日/${kc.chopThresholdPct}%`);
+    if (kc.totalCapEnabled) parts.push(`總量上限${kc.totalCapCount}次`);
+    parts.push(`再投${Math.round(config.reinvestRatio * 100)}%`);
+    return parts.join(' · ');
+  }
+
   const parts = [];
   MA_LINE_KEYS.forEach((key) => {
     const line = config.maLines[key];
@@ -89,8 +119,7 @@ const describeConfig = (config) => {
         line.topUpMode === 'multiple'
           ? `${line.topUpValue}倍`
           : `$${Math.round(line.topUpValue).toLocaleString()}`;
-      const triggerLabel = config.useKLineCrossTrigger ? 'K線穿越均線' : `偏離${line.deviationPct}%`;
-      parts.push(`${MA_LINE_LABELS[key]} ${triggerLabel}/${modeLabel}`);
+      parts.push(`${MA_LINE_LABELS[key]} 偏離${line.deviationPct}%/${modeLabel}`);
     }
   });
   if (parts.length === 0) parts.push('未啟用加碼(純定期定額)');
@@ -250,25 +279,30 @@ const ResultDetailCard = ({ item, badge, isLight }) => {
                     }`}
                   >
                     <td className="py-1 font-mono">{e.date}</td>
-                    <td className="py-1">{e.lineLabel}</td>
+                    <td className="py-1">
+                      {e.lineLabel}
+                      {e.triggerMode === 'kline' && e.subModeLabel ? `·${e.subModeLabel}` : ''}
+                    </td>
                     <td className="py-1">
                       {e.triggerMode === 'kline' ? (
                         <>
-                          前一天最低價 {e.prevLow.toFixed(2)} {'>'} 前一天均線{' '}
-                          {e.prevMa.toFixed(2)},今天最低價 {e.low.toFixed(2)} ≤ 今天均線{' '}
-                          {e.ma.toFixed(2)}
+                          {e.skipped
+                            ? e.skipReason || '未達加碼門檻'
+                            : `倍數${e.multiplier?.toFixed(1)}x × 遞減${Math.round(
+                                (e.decayRatio ?? 1) * 100
+                              )}%`}
                         </>
                       ) : (
                         <>
                           收盤價 {e.price.toFixed(2)} 跌破均線 {e.ma.toFixed(2)},
                           乖離 {e.deviationPct.toFixed(2)}%(門檻 -{e.thresholdPct}%)
+                          {e.skipped
+                            ? ',但當月加碼配額已用完,未實際加碼'
+                            : `,依設定${
+                                e.topUpMode === 'multiple' ? `以${e.topUpValue}倍定額` : '固定金額'
+                              }加碼`}
                         </>
                       )}
-                      {e.skipped
-                        ? ',但當月加碼配額已用完,未實際加碼'
-                        : `,依設定${
-                            e.topUpMode === 'multiple' ? `以${e.topUpValue}倍定額` : '固定金額'
-                          }加碼`}
                     </td>
                     <td className="text-right py-1 font-mono">
                       {e.skipped ? '—' : `$${Math.round(e.topUpAmount).toLocaleString()}`}
@@ -280,9 +314,8 @@ const ResultDetailCard = ({ item, badge, isLight }) => {
           </div>
           <div className={`text-[11px] ${footnoteText} mt-1`}>
             {item.config.useKLineCrossTrigger
-              ? '「觸發」代表模擬在均線價位掛買進限價單成交(前一天最低價高於前一天均線,且當天最低價跌到均線價位以下);'
-              : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;'}
-            若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。
+              ? '「加碼原因」欄顯示觸發的子模式(跌破/回檔/站回)套用的金字塔倍數與距上次加碼的遞減折扣;若被冷卻期未滿、判定為盤整、或已達合計加碼次數上限擋下,會顯示原因(灰階斜體,未實際成交)。'
+              : '「觸發」代表收盤價當天首次跌破該均線的乖離門檻;若當月共用配額已被其他均線用完,會顯示「未實際加碼」(灰階斜體),要等下個月配額重置才會恢復。'}
           </div>
         </details>
       )}
@@ -318,6 +351,57 @@ export default function DcaOptimizer({ isLight = false }) {
     step: 0,
   });
   const [useKLineCrossTrigger, setUseKLineCrossTrigger] = useState(false);
+
+  // K線穿越模式(新引擎,與 Tab1「ETF回測比較」共用同一套邏輯)專用的參數。
+  // 子模式開關與總量上限是使用者直接設定的固定選擇,不參與範圍搜尋;其餘皆可
+  // 設定「最小/最大/間距」範圍讓最佳化去找最好的數字。
+  const [klineBaseAmount, setKlineBaseAmount] = useState(10000);
+  const [klineSubModeEnabled, setKlineSubModeEnabled] = useState(() => ({
+    ma20: DEFAULT_KLINE_SUBMODE_ENABLED(),
+    ma60: DEFAULT_KLINE_SUBMODE_ENABLED(),
+    ma120: DEFAULT_KLINE_SUBMODE_ENABLED(),
+  }));
+  // 金字塔倍數:不用三條均線各自展開範圍(會讓組合數三次方成長),改成「勾選要
+  // 嘗試哪幾組預設組合」;內建組合預設全選,另外可加一組自訂組合。
+  const [klinePyramidPresetChecked, setKlinePyramidPresetChecked] = useState(() =>
+    KLINE_PYRAMID_PRESETS.map(() => true)
+  );
+  const [klineCustomPyramid, setKlineCustomPyramid] = useState({
+    enabled: false,
+    values: { ma20: 1, ma60: 1, ma120: 1 },
+  });
+  const [klineCooldownRange, setKlineCooldownRange] = useState({ min: 21, max: 21, step: 5 });
+  const [klinePullbackLookbackRange, setKlinePullbackLookbackRange] = useState({
+    min: 20,
+    max: 20,
+    step: 5,
+  });
+  const [klinePullbackToleranceRange, setKlinePullbackToleranceRange] = useState({
+    min: 1,
+    max: 1,
+    step: 0.5,
+  });
+  const [klineRecoveryConfirmRange, setKlineRecoveryConfirmRange] = useState({
+    min: 2,
+    max: 2,
+    step: 1,
+  });
+  const [klineDecayWindowRange, setKlineDecayWindowRange] = useState({ min: 0, max: 0, step: 5 });
+  const [klineDecayFloorRange, setKlineDecayFloorRange] = useState({
+    min: 100,
+    max: 100,
+    step: 10,
+  });
+  const [klineChopEnabled, setKlineChopEnabled] = useState(false);
+  const [klineChopWindowRange, setKlineChopWindowRange] = useState({ min: 10, max: 10, step: 5 });
+  const [klineChopThresholdRange, setKlineChopThresholdRange] = useState({
+    min: 2,
+    max: 2,
+    step: 1,
+  });
+  const [klineTotalCapEnabled, setKlineTotalCapEnabled] = useState(false);
+  const [klineTotalCapCount, setKlineTotalCapCount] = useState(12);
+
   const [objective, setObjective] = useState(OPTIMIZE_OBJECTIVES.BALANCED);
 
   const [loading, setLoading] = useState(false);
@@ -365,18 +449,65 @@ export default function DcaOptimizer({ isLight = false }) {
   const updateLineConfig = (key, patch) => {
     setMaLineConfigs((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   };
+  const updateKlineSubMode = (lineKey, subKey) => {
+    setKlineSubModeEnabled((prev) => ({
+      ...prev,
+      [lineKey]: { ...prev[lineKey], [subKey]: !prev[lineKey][subKey] },
+    }));
+  };
+  const togglePyramidPreset = (idx) => {
+    setKlinePyramidPresetChecked((prev) => prev.map((v, i) => (i === idx ? !v : v)));
+  };
 
   const parsedSymbols = useMemo(() => parseSymbolsInput(symbolInput), [symbolInput]);
   const symbolsToRun = useMemo(() => parsedSymbols.slice(0, MAX_COMPARE_SYMBOLS), [parsedSymbols]);
   const symbolOverflow = parsedSymbols.length > MAX_COMPARE_SYMBOLS;
 
-  const optimizerConfig = useMemo(
-    () => ({
-      base: {
-        startDate,
-        monthlyAmount: Number(monthlyAmount) || 0,
-        investDay: Number(investDay) || 1,
-      },
+  // 金字塔倍數的搜尋清單:使用者勾選的內建預設組合 + (若啟用)一組自訂組合。
+  // 全部沒勾時退回「均等」,確保至少有一組可以跑,不會產生 0 組合的空結果。
+  const klinePyramidPresets = useMemo(() => {
+    const chosen = KLINE_PYRAMID_PRESETS.filter((_, idx) => klinePyramidPresetChecked[idx]);
+    const list = chosen.length > 0 ? [...chosen] : [KLINE_PYRAMID_PRESETS[0]];
+    if (klineCustomPyramid.enabled) {
+      const v = klineCustomPyramid.values;
+      list.push({
+        name: `自訂(${v.ma20}x/${v.ma60}x/${v.ma120}x)`,
+        values: { ma20: Number(v.ma20) || 0, ma60: Number(v.ma60) || 0, ma120: Number(v.ma120) || 0 },
+      });
+    }
+    return list;
+  }, [klinePyramidPresetChecked, klineCustomPyramid]);
+
+  const optimizerConfig = useMemo(() => {
+    const base = {
+      startDate,
+      monthlyAmount: Number(monthlyAmount) || 0,
+      investDay: Number(investDay) || 1,
+    };
+    if (useKLineCrossTrigger) {
+      return {
+        base,
+        useKLineCrossTrigger: true,
+        klineBaseAmount: Number(klineBaseAmount) || 0,
+        klineSubModeEnabled,
+        klinePyramidPresets,
+        klineCooldownRange,
+        klinePullbackLookbackRange,
+        klinePullbackToleranceRange,
+        klineRecoveryConfirmRange,
+        klineDecayWindowRange,
+        klineDecayFloorRange,
+        klineChopEnabled,
+        klineChopWindowRange,
+        klineChopThresholdRange,
+        klineTotalCapEnabled,
+        klineTotalCapCount: Number(klineTotalCapCount) || 1,
+        reinvestRatioRange,
+      };
+    }
+    return {
+      base,
+      useKLineCrossTrigger: false,
       maLines: {
         ma20: maLineConfigs.ma20,
         ma60: maLineConfigs.ma60,
@@ -384,18 +515,30 @@ export default function DcaOptimizer({ isLight = false }) {
       },
       monthlyTriggerCapRange,
       reinvestRatioRange,
-      useKLineCrossTrigger,
-    }),
-    [
-      startDate,
-      monthlyAmount,
-      investDay,
-      maLineConfigs,
-      monthlyTriggerCapRange,
-      reinvestRatioRange,
-      useKLineCrossTrigger,
-    ]
-  );
+    };
+  }, [
+    startDate,
+    monthlyAmount,
+    investDay,
+    useKLineCrossTrigger,
+    maLineConfigs,
+    monthlyTriggerCapRange,
+    reinvestRatioRange,
+    klineBaseAmount,
+    klineSubModeEnabled,
+    klinePyramidPresets,
+    klineCooldownRange,
+    klinePullbackLookbackRange,
+    klinePullbackToleranceRange,
+    klineRecoveryConfirmRange,
+    klineDecayWindowRange,
+    klineDecayFloorRange,
+    klineChopEnabled,
+    klineChopWindowRange,
+    klineChopThresholdRange,
+    klineTotalCapEnabled,
+    klineTotalCapCount,
+  ]);
 
   const previewCombinationCount = useMemo(() => {
     try {
@@ -604,9 +747,7 @@ export default function DcaOptimizer({ isLight = false }) {
       </div>
 
       <div className={`${cardClass} space-y-3`}>
-        <h3 className={`font-bold flex items-center gap-2 ${headingClass}`}>
-          加碼條件(三組,各自獨立開關)
-        </h3>
+        <h3 className={`font-bold flex items-center gap-2 ${headingClass}`}>加碼條件</h3>
 
         <label className={`flex items-start gap-2 cursor-pointer ${wellClass}`}>
           <input
@@ -620,103 +761,338 @@ export default function DcaOptimizer({ isLight = false }) {
               用「K線穿越均線」判斷加碼(取代偏離%規則)
             </span>
             <div className={`text-[12px] ${bodyText} mt-0.5 leading-relaxed`}>
-              全域套用於所有已啟用的均線:模擬在均線價位掛買進限價單——前一天最低價高於前一天均線(代表前一天整天都沒碰到均線),且今天最低價跌到均線價位以下(含等於)才成交,可避免股價與均線糾結、來回穿越時天天重複加碼。開啟後,下方各均線的「觸發偏離%」範圍會停用,不會納入最佳化搜尋。
+              與「ETF回測比較」分頁共用同一套引擎:跌破/回檔/站回三種子模式、每條均線各自獨立的交易日冷卻期、金字塔倍數
+              ×
+              距上次加碼遞減折扣、盤整偵測、總量保護機制,行為完全一致。開啟後,下方改成這套引擎的參數範圍設定,原本的「偏離%」設定停用、不納入搜尋。
             </div>
           </span>
         </label>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-          {MA_LINE_KEYS.map((key) => {
-            const line = maLineConfigs[key];
-            return (
-              <div key={key} className={`${nestedCardClass} space-y-2`}>
-                <label className="flex items-center gap-2 cursor-pointer">
+        {!useKLineCrossTrigger && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {MA_LINE_KEYS.map((key) => {
+                const line = maLineConfigs[key];
+                return (
+                  <div key={key} className={`${nestedCardClass} space-y-2`}>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={line.enabled}
+                        onChange={() => updateLineConfig(key, { enabled: !line.enabled })}
+                      />
+                      <span className={`font-bold text-sm ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
+                        {MA_LINE_LABELS[key]}
+                      </span>
+                    </label>
+                    {line.enabled && (
+                      <>
+                        <div>
+                          <div className={`text-[12px] ${bodyText} mb-1`}>
+                            觸發偏離%(收盤價低於均線多少% 觸發)
+                          </div>
+                          <RangeInputGroup
+                            isLight={isLight}
+                            unit="%"
+                            value={line.deviationRange}
+                            onChange={(range) => updateLineConfig(key, { deviationRange: range })}
+                          />
+                        </div>
+                        <div className={`flex items-center gap-3 text-[12px] ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
+                          <span className={bodyText}>加碼方式:</span>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`${key}-topupmode`}
+                              checked={line.topUpMode === 'fixed'}
+                              onChange={() => updateLineConfig(key, { topUpMode: 'fixed' })}
+                            />
+                            固定金額
+                          </label>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`${key}-topupmode`}
+                              checked={line.topUpMode === 'multiple'}
+                              onChange={() => updateLineConfig(key, { topUpMode: 'multiple' })}
+                            />
+                            基礎倍數
+                          </label>
+                        </div>
+                        <div>
+                          <div className={`text-[12px] ${bodyText} mb-1`}>
+                            {line.topUpMode === 'multiple'
+                              ? '加碼倍數(× 每月定額)'
+                              : '加碼金額(元)'}
+                          </div>
+                          <RangeInputGroup
+                            isLight={isLight}
+                            unit={line.topUpMode === 'multiple' ? '倍' : '元'}
+                            value={line.topUpRange}
+                            onChange={(range) => updateLineConfig(key, { topUpRange: range })}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t ${dividerClass}`}>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>
+                  每月共用觸發次數上限(三條線共用額度,誰先觸發誰先買)
+                </div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="次"
+                  value={monthlyTriggerCapRange}
+                  onChange={setMonthlyTriggerCapRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>配息再投入比例</div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="%"
+                  value={reinvestRatioRange}
+                  onChange={setReinvestRatioRange}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {useKLineCrossTrigger && (
+          <div className="space-y-3">
+            <div>
+              <div className={`text-[12px] ${bodyText} mb-1`}>
+                加碼基準金額(元,對應 Tab1 的「每次加碼金額」)
+              </div>
+              <input
+                type="number"
+                min={0}
+                value={klineBaseAmount}
+                onChange={(e) => setKlineBaseAmount(e.target.value)}
+                className={`w-full sm:w-64 ${inputClass}`}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {MA_LINE_KEYS.map((lineKey) => (
+                <div key={lineKey} className={`${nestedCardClass} space-y-1.5`}>
+                  <div className={`font-bold text-sm ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
+                    {MA_LINE_LABELS[lineKey]}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {KLINE_SUBMODE_KEYS.map((subKey) => (
+                      <label
+                        key={subKey}
+                        className={`flex items-center gap-1 text-[12px] cursor-pointer ${isLight ? 'text-slate-600' : 'text-slate-400'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={klineSubModeEnabled[lineKey][subKey]}
+                          onChange={() => updateKlineSubMode(lineKey, subKey)}
+                        />
+                        {KLINE_SUBMODE_LABELS[subKey]}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className={`pt-2 border-t ${dividerClass}`}>
+              <div className={`text-[12px] ${bodyText} mb-1`}>
+                金字塔倍數:勾選要一起嘗試的預設組合(不逐條均線展開範圍,避免組合數三次方成長)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {KLINE_PYRAMID_PRESETS.map((preset, idx) => (
+                  <label
+                    key={preset.name}
+                    className={`flex items-center gap-1.5 text-[12px] cursor-pointer px-2 py-1 rounded border ${
+                      isLight ? 'border-slate-300 text-slate-600' : 'border-slate-600 text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={klinePyramidPresetChecked[idx]}
+                      onChange={() => togglePyramidPreset(idx)}
+                    />
+                    {preset.name}
+                  </label>
+                ))}
+                <label
+                  className={`flex items-center gap-1.5 text-[12px] cursor-pointer px-2 py-1 rounded border ${
+                    isLight ? 'border-slate-300 text-slate-600' : 'border-slate-600 text-slate-300'
+                  }`}
+                >
                   <input
                     type="checkbox"
-                    checked={line.enabled}
-                    onChange={() => updateLineConfig(key, { enabled: !line.enabled })}
+                    checked={klineCustomPyramid.enabled}
+                    onChange={() =>
+                      setKlineCustomPyramid((prev) => ({ ...prev, enabled: !prev.enabled }))
+                    }
                   />
-                  <span className={`font-bold text-sm ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
-                    {MA_LINE_LABELS[key]}
-                  </span>
+                  自訂組合
                 </label>
-                {line.enabled && (
-                  <>
-                    <div className={useKLineCrossTrigger ? 'opacity-40 pointer-events-none' : ''}>
-                      <div className={`text-[12px] ${bodyText} mb-1`}>
-                        觸發偏離%(收盤價低於均線多少% 觸發)
-                        {useKLineCrossTrigger && '(已改用K線穿越,此設定停用)'}
-                      </div>
-                      <RangeInputGroup
-                        isLight={isLight}
-                        unit="%"
-                        value={line.deviationRange}
-                        onChange={(range) => updateLineConfig(key, { deviationRange: range })}
-                      />
-                    </div>
-                    <div className={`flex items-center gap-3 text-[12px] ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
-                      <span className={bodyText}>加碼方式:</span>
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`${key}-topupmode`}
-                          checked={line.topUpMode === 'fixed'}
-                          onChange={() => updateLineConfig(key, { topUpMode: 'fixed' })}
-                        />
-                        固定金額
-                      </label>
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`${key}-topupmode`}
-                          checked={line.topUpMode === 'multiple'}
-                          onChange={() => updateLineConfig(key, { topUpMode: 'multiple' })}
-                        />
-                        基礎倍數
-                      </label>
-                    </div>
-                    <div>
-                      <div className={`text-[12px] ${bodyText} mb-1`}>
-                        {line.topUpMode === 'multiple'
-                          ? '加碼倍數(× 每月定額)'
-                          : '加碼金額(元)'}
-                      </div>
-                      <RangeInputGroup
-                        isLight={isLight}
-                        unit={line.topUpMode === 'multiple' ? '倍' : '元'}
-                        value={line.topUpRange}
-                        onChange={(range) => updateLineConfig(key, { topUpRange: range })}
-                      />
-                    </div>
-                  </>
-                )}
               </div>
-            );
-          })}
-        </div>
-
-        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t ${dividerClass}`}>
-          <div>
-            <div className={`text-[12px] ${bodyText} mb-1`}>
-              每月共用觸發次數上限(三條線共用額度,誰先觸發誰先買)
+              {klineCustomPyramid.enabled && (
+                <div className="grid grid-cols-3 gap-2 mt-2 max-w-md">
+                  {MA_LINE_KEYS.map((lineKey) => (
+                    <div key={lineKey}>
+                      <div className={`text-[11px] ${subText}`}>{MA_LINE_LABELS[lineKey]}</div>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={klineCustomPyramid.values[lineKey]}
+                        onChange={(e) =>
+                          setKlineCustomPyramid((prev) => ({
+                            ...prev,
+                            values: { ...prev.values, [lineKey]: e.target.value },
+                          }))
+                        }
+                        className={inputClass + ' w-full'}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <RangeInputGroup
-              isLight={isLight}
-              unit="次"
-              value={monthlyTriggerCapRange}
-              onChange={setMonthlyTriggerCapRange}
-            />
+
+            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t ${dividerClass}`}>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>
+                  冷卻天數(交易日,所有已啟用均線/子模式統一套用)
+                </div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="日"
+                  value={klineCooldownRange}
+                  onChange={setKlineCooldownRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>回檔:上升趨勢回看天數</div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="日"
+                  value={klinePullbackLookbackRange}
+                  onChange={setKlinePullbackLookbackRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>回檔:均線接近容忍度(±%)</div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="%"
+                  value={klinePullbackToleranceRange}
+                  onChange={setKlinePullbackToleranceRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>
+                  站回:確認天數(0=站上當天立刻買進)
+                </div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="日"
+                  value={klineRecoveryConfirmRange}
+                  onChange={setKlineRecoveryConfirmRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>距上次遞減:折扣視窗(交易日)</div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="日"
+                  value={klineDecayWindowRange}
+                  onChange={setKlineDecayWindowRange}
+                />
+              </div>
+              <div>
+                <div className={`text-[12px] ${bodyText} mb-1`}>距上次遞減:折扣下限(%)</div>
+                <RangeInputGroup
+                  isLight={isLight}
+                  unit="%"
+                  value={klineDecayFloorRange}
+                  onChange={setKlineDecayFloorRange}
+                />
+              </div>
+            </div>
+
+            <div className={`pt-2 border-t ${dividerClass} space-y-2`}>
+              <label className={`flex items-center gap-2 cursor-pointer text-[13px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                <input
+                  type="checkbox"
+                  checked={klineChopEnabled}
+                  onChange={() => setKlineChopEnabled((v) => !v)}
+                />
+                啟用盤整偵測(範圍搜尋視窗天數與閾值)
+              </label>
+              {klineChopEnabled && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className={`text-[12px] ${bodyText} mb-1`}>盤整判斷視窗(交易日)</div>
+                    <RangeInputGroup
+                      isLight={isLight}
+                      unit="日"
+                      value={klineChopWindowRange}
+                      onChange={setKlineChopWindowRange}
+                    />
+                  </div>
+                  <div>
+                    <div className={`text-[12px] ${bodyText} mb-1`}>盤整閾值(%)</div>
+                    <RangeInputGroup
+                      isLight={isLight}
+                      unit="%"
+                      value={klineChopThresholdRange}
+                      onChange={setKlineChopThresholdRange}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className={`pt-2 border-t ${dividerClass} space-y-2`}>
+              <label className={`flex items-center gap-2 cursor-pointer text-[13px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                <input
+                  type="checkbox"
+                  checked={klineTotalCapEnabled}
+                  onChange={() => setKlineTotalCapEnabled((v) => !v)}
+                />
+                啟用總量保護機制(固定值,不參與範圍搜尋)
+              </label>
+              {klineTotalCapEnabled && (
+                <div className="max-w-xs">
+                  <div className={`text-[12px] ${bodyText} mb-1`}>
+                    所有均線/子模式合計加碼次數上限
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    value={klineTotalCapCount}
+                    onChange={(e) => setKlineTotalCapCount(e.target.value)}
+                    className={`w-full ${inputClass}`}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className={`pt-2 border-t ${dividerClass} max-w-xs`}>
+              <div className={`text-[12px] ${bodyText} mb-1`}>配息再投入比例</div>
+              <RangeInputGroup
+                isLight={isLight}
+                unit="%"
+                value={reinvestRatioRange}
+                onChange={setReinvestRatioRange}
+              />
+            </div>
           </div>
-          <div>
-            <div className={`text-[12px] ${bodyText} mb-1`}>配息再投入比例</div>
-            <RangeInputGroup
-              isLight={isLight}
-              unit="%"
-              value={reinvestRatioRange}
-              onChange={setReinvestRatioRange}
-            />
-          </div>
-        </div>
+        )}
       </div>
 
       <div className={`${cardClass} space-y-3`}>
