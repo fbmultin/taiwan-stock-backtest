@@ -68,7 +68,14 @@ export const TW_MARKET_HOLIDAYS = {
   '2027-12-24': '行憲紀念日補假',
 };
 
-export const isWeekend = (date) => date.getDay() === 0 || date.getDay() === 6;
+// 這裡刻意一律用 getUTCDay/toISOString(而不是本地時區的 getDay)判斷,是因為
+// 本檔案與 dataCache.js 抓回來的股價/配息資料,日期都是「YYYY-MM-DD」字串,
+// 用 new Date(dateString) 解析時 JS 一律當成 UTC 午夜處理。若這裡改用本地時區
+// 判斷星期幾,只要程式實際執行的瀏覽器/伺服器時區不是 UTC(例如台灣 UTC+8),
+// 就會跟股價資料的日期基準對不齊,导致「最後一個交易日」抓成前一天甚至更早
+// (這正是先前回測結束日、排名表報酬率對不上的根本原因)。只要這個模組全程
+// 都用 UTC 為基準,不管實際執行環境時區為何都能得到一致、正確的結果。
+export const isWeekend = (date) => date.getUTCDay() === 0 || date.getUTCDay() === 6;
 
 export const isTaiwanMarketHoliday = (date) => {
   const dateStr = date.toISOString().split('T')[0];
@@ -79,19 +86,57 @@ export const isTaiwanMarketHoliday = (date) => {
 export const isNonTradingDay = (date) =>
   isWeekend(date) || isTaiwanMarketHoliday(date);
 
-// 兩個分頁的所有計算「終點」統一固定為前一個交易日，不計算當天資料
-// (即使現在已經收盤，也一律不採當天的價格，避免尾盤價/即時報價跟隔天
-// 資料源正式收錄的收盤價對不上，造成回測結果不穩定)。從「昨天」開始
-// 往回找，遇到週末/國定假日就繼續往前推，直到找到一個交易日為止。
+// 兩個分頁的所有計算「終點」統一採用同一套「資料抓取基準日」規則:
+// - 台灣時間下午 3:30 之後:資料源(FinMind/TWSE/Yahoo)當天的收盤價通常已經到位,
+//   以「今天」為基準日(若今天本身不是交易日,再往前找最近一個交易日)。
+// - 台灣時間下午 3:30 之前:當天資料還沒到位,以「前一天」為基準日,往前找最近
+//   一個交易日,避免抓到尾盤價/即時報價跟隔天資料源正式收錄的收盤價對不上,
+//   造成回測結果不穩定。
+// 判斷「現在幾點」一律換算成台灣時間(UTC+8),不論實際執行環境(使用者瀏覽器)
+// 本身的系統時區為何,避免時區設定不同造成誤判。
+const TAIPEI_TIMEZONE = 'Asia/Taipei';
+const MARKET_DATA_READY_HOUR = 15;
+const MARKET_DATA_READY_MINUTE = 30;
+
+const getTaipeiDateTimeParts = (date) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TAIPEI_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const map = {};
+  parts.forEach(({ type, value }) => {
+    map[type] = value;
+  });
+  return {
+    year: parseInt(map.year, 10),
+    month: parseInt(map.month, 10) - 1,
+    day: parseInt(map.day, 10),
+    hour: parseInt(map.hour, 10),
+    minute: parseInt(map.minute, 10),
+  };
+};
+
 export const getLastCompletedTradingDay = (referenceDate = new Date()) => {
-  const d = new Date(
-    referenceDate.getFullYear(),
-    referenceDate.getMonth(),
-    referenceDate.getDate()
-  );
-  d.setDate(d.getDate() - 1);
+  const tw = getTaipeiDateTimeParts(referenceDate);
+  const isAfterDataReadyTime =
+    tw.hour > MARKET_DATA_READY_HOUR ||
+    (tw.hour === MARKET_DATA_READY_HOUR && tw.minute >= MARKET_DATA_READY_MINUTE);
+
+  // 用 Date.UTC 建立「台灣當地那一天」對應的 UTC 午夜時間點,而不是用
+  // new Date(year, month, day)(本地時區午夜)。原因同上:股價資料的日期
+  // 一律是 UTC 午夜基準,這裡也要用同一基準,往後所有比較/位移
+  // (setUTCDate)才會跟股價資料的日期精準對齊,不受執行環境時區影響。
+  const d = new Date(Date.UTC(tw.year, tw.month, tw.day));
+  if (!isAfterDataReadyTime) {
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
   while (isNonTradingDay(d)) {
-    d.setDate(d.getDate() - 1);
+    d.setUTCDate(d.getUTCDate() - 1);
   }
   return d;
 };

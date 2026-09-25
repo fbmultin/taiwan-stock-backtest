@@ -375,13 +375,16 @@ const computeRankingPeriodRange = (period) => {
   if (period.fixedStart) {
     rangeStart = new Date(period.fixedStart);
   } else if (period.key === 'ytd') {
-    rangeStart = new Date(rangeEnd.getFullYear(), 0, 1);
+    // 全程用 UTC 基準建構/位移日期,原因同 tradingCalendar.js:股價資料的日期
+    // 一律是 UTC 午夜基準,這裡若改用本地時區(getFullYear/setMonth/setDate)
+    // 在台灣(UTC+8)執行時會跟股價資料的日期基準對不齊,少算/多算一天。
+    rangeStart = new Date(Date.UTC(rangeEnd.getUTCFullYear(), 0, 1));
   } else {
     rangeStart = new Date(rangeEnd);
-    rangeStart.setMonth(rangeStart.getMonth() - period.months);
+    rangeStart.setUTCMonth(rangeStart.getUTCMonth() - period.months);
   }
-  while (isNonTradingDay(rangeEnd)) rangeEnd.setDate(rangeEnd.getDate() - 1);
-  while (isNonTradingDay(rangeStart)) rangeStart.setDate(rangeStart.getDate() + 1);
+  while (isNonTradingDay(rangeEnd)) rangeEnd.setUTCDate(rangeEnd.getUTCDate() - 1);
+  while (isNonTradingDay(rangeStart)) rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
   return { rangeStart, rangeEnd };
 };
 
@@ -1196,7 +1199,10 @@ const App = () => {
       rangeEnd = getLastCompletedTradingDay();
       rangeStart = new Date(rangeEnd);
       if (timeRange === 'ytd') {
-        rangeStart = new Date(rangeStart.getFullYear(), 0, 1);
+        // 全程用 UTC 基準建構/位移日期:股價資料的日期一律是 UTC 午夜基準,
+        // 這裡若改用本地時區(getFullYear/setMonth)在台灣(UTC+8)執行時,
+        // 會跟股價資料的日期基準對不齊,導致抓到的結束日比預期少一天。
+        rangeStart = new Date(Date.UTC(rangeStart.getUTCFullYear(), 0, 1));
       } else {
         const months =
           timeRange === '3m'
@@ -1210,7 +1216,7 @@ const App = () => {
             : timeRange === '5y'
             ? 60
             : 12;
-        rangeStart.setMonth(rangeStart.getMonth() - months);
+        rangeStart.setUTCMonth(rangeStart.getUTCMonth() - months);
       }
     }
 
@@ -1225,12 +1231,13 @@ const App = () => {
       rangeEnd = new Date(lastCompletedTradingDay);
     }
     // 結束日若仍落在非交易日(例如自訂區間或日期覆寫指定到假日),往前推到最近一個交易日
+    // (用 setUTCDate 而非 setDate,理由同上,確保跟股價資料的 UTC 日期基準一致)
     while (isNonTradingDay(rangeEnd)) {
-      rangeEnd.setDate(rangeEnd.getDate() - 1);
+      rangeEnd.setUTCDate(rangeEnd.getUTCDate() - 1);
     }
     // 起始日避開非交易日:如果起始日落在週末或國定假日,往後推到最近一個交易日
     while (isNonTradingDay(rangeStart)) {
-      rangeStart.setDate(rangeStart.getDate() + 1);
+      rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
     }
     setRequestedStartDate(rangeStart);
 
@@ -1479,7 +1486,16 @@ const App = () => {
 
         if (maxDivTs > 0) {
           const pulledBackDate = new Date(maxDivTs);
-          pulledBackDate.setDate(pulledBackDate.getDate() - 1);
+          // 用 setUTCDate 而非 setDate,理由同上:股價/配息資料的日期一律是 UTC
+          // 午夜基準,這裡也要用同一基準位移,才能跟股價資料的日期精準對齊。
+          pulledBackDate.setUTCDate(pulledBackDate.getUTCDate() - 1);
+          // 除息日前一天也可能剛好落在週末/國定假日(非交易日),要再往前跳過
+          // 非交易日,確保最後採用的結束日一定是實際有股價資料的交易日,
+          // 避免抓到週末/假日這種根本不存在收盤價的日期(這正是先前
+          // 00935 近1年報酬對不上、實際抓到非交易日期的原因)。
+          while (isNonTradingDay(pulledBackDate)) {
+            pulledBackDate.setUTCDate(pulledBackDate.getUTCDate() - 1);
+          }
           const applyPullback = () => {
             globalLatestDivDate = new Date(maxDivTs);
             globalCalcEndDate = pulledBackDate;
