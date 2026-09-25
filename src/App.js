@@ -915,12 +915,12 @@ const App = () => {
     : 'bg-slate-800 border border-slate-700 rounded-xl shadow-lg';
 
   const [inputs, setInputs] = useState([
-    '009816',
-    '0052',
-    '0050',
-    '00935',
+    '00981A',
     '00904',
     '00891',
+    '00913',
+    '00947',
+    '00935',
   ]);
   const [enabledInputs, setEnabledInputs] = useState({
     0: true,
