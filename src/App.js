@@ -1659,7 +1659,9 @@ const App = () => {
   const formatLineLabel = (symbol) =>
     stockNames[symbol] ? `${symbol} ${stockNames[symbol]}` : symbol;
 
-  const renderRankingTable = (data) => (
+  // highlightMaxNetProfit:每個時間區間(列)裡,把淨損益金額最高的那個標的用紅色
+  // 標示,只給「標的組合排名表(含加碼)」使用;純本金的排名表不受影響。
+  const renderRankingTable = (data, { highlightMaxNetProfit = false } = {}) => (
     <div className="overflow-x-auto">
       <table className="text-xs text-center border-collapse min-w-full">
         <thead>
@@ -1683,71 +1685,95 @@ const App = () => {
           </tr>
         </thead>
         <tbody>
-          {RANKING_PERIODS.map((p, i) => (
-            <tr
-              key={p.key}
-              className={
-                isLight
-                  ? i % 2 === 0
-                    ? 'bg-white'
-                    : 'bg-slate-50'
-                  : i % 2 === 0
-                  ? 'bg-slate-800/70'
-                  : 'bg-slate-800/30'
-              }
-            >
-              <td
-                className={`px-2 py-1.5 border font-mono font-bold sticky left-0 bg-inherit whitespace-nowrap ${
-                  isLight ? 'border-slate-300 text-slate-700' : 'border-slate-700 text-slate-200'
-                }`}
+          {RANKING_PERIODS.map((p, i) => {
+            const periodMaxNetProfit = highlightMaxNetProfit
+              ? data.rows.reduce((max, row) => {
+                  const v = row.netProfits ? row.netProfits[p.key] : null;
+                  return typeof v === 'number' && Number.isFinite(v) && (max === null || v > max)
+                    ? v
+                    : max;
+                }, null)
+              : null;
+            return (
+              <tr
+                key={p.key}
+                className={
+                  isLight
+                    ? i % 2 === 0
+                      ? 'bg-white'
+                      : 'bg-slate-50'
+                    : i % 2 === 0
+                    ? 'bg-slate-800/70'
+                    : 'bg-slate-800/30'
+                }
               >
-                {p.label}
-              </td>
-              {data.rows.map((row) => {
-                const rank = row.ranks[p.key];
-                const retPct = row.returns[p.key];
-                const netProfit = row.netProfits ? row.netProfits[p.key] : null;
-                return (
-                  <td
-                    key={row.symbol}
-                    className={`px-2 py-1.5 border font-mono whitespace-nowrap ${
-                      isLight ? 'border-slate-300' : 'border-slate-700'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center leading-tight">
-                      <span
-                        className={`font-bold ${
-                          rank === 1
-                            ? isLight
-                              ? 'text-rose-600'
-                              : 'text-rose-400'
-                            : isLight
-                            ? 'text-slate-600'
-                            : 'text-slate-300'
-                        }`}
-                      >
-                        {rank ?? '—'}
-                      </span>
-                      {typeof retPct === 'number' &&
-                        Number.isFinite(retPct) && (
-                          <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                            {retPct > 0 ? '+' : ''}
-                            {retPct.toFixed(1)}%
-                          </span>
-                        )}
-                      {typeof netProfit === 'number' &&
-                        Number.isFinite(netProfit) && (
-                          <span className={`text-[10px] ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
-                            {netProfit >= 0 ? '+' : '-'}$
-                            {Math.round(Math.abs(netProfit)).toLocaleString()}
-                          </span>
-                        )}
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
+                <td
+                  className={`px-2 py-1.5 border font-mono font-bold sticky left-0 bg-inherit whitespace-nowrap ${
+                    isLight ? 'border-slate-300 text-slate-700' : 'border-slate-700 text-slate-200'
+                  }`}
+                >
+                  {p.label}
+                </td>
+                {data.rows.map((row) => {
+                  const rank = row.ranks[p.key];
+                  const retPct = row.returns[p.key];
+                  const netProfit = row.netProfits ? row.netProfits[p.key] : null;
+                  const isMaxNetProfit =
+                    highlightMaxNetProfit &&
+                    typeof netProfit === 'number' &&
+                    Number.isFinite(netProfit) &&
+                    periodMaxNetProfit !== null &&
+                    netProfit === periodMaxNetProfit;
+                  return (
+                    <td
+                      key={row.symbol}
+                      className={`px-2 py-1.5 border font-mono whitespace-nowrap ${
+                        isLight ? 'border-slate-300' : 'border-slate-700'
+                      }`}
+                    >
+                      <div className="flex flex-col items-center leading-tight">
+                        <span
+                          className={`font-bold ${
+                            rank === 1
+                              ? isLight
+                                ? 'text-rose-600'
+                                : 'text-rose-400'
+                              : isLight
+                              ? 'text-slate-600'
+                              : 'text-slate-300'
+                          }`}
+                        >
+                          {rank ?? '—'}
+                        </span>
+                        {typeof retPct === 'number' &&
+                          Number.isFinite(retPct) && (
+                            <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                              {retPct > 0 ? '+' : ''}
+                              {retPct.toFixed(1)}%
+                            </span>
+                          )}
+                        {typeof netProfit === 'number' &&
+                          Number.isFinite(netProfit) && (
+                            <span
+                              className={`text-[10px] ${
+                                isMaxNetProfit
+                                  ? `font-bold ${isLight ? 'text-rose-600' : 'text-rose-400'}`
+                                  : isLight
+                                  ? 'text-slate-400'
+                                  : 'text-slate-600'
+                              }`}
+                            >
+                              {netProfit >= 0 ? '+' : '-'}$
+                              {Math.round(Math.abs(netProfit)).toLocaleString()}
+                            </span>
+                          )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <div className={`text-[13px] mt-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
@@ -4015,7 +4041,7 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="lg:col-span-5 min-w-0 space-y-3">
+              <div className="lg:col-span-6 min-w-0 space-y-3">
                 <div
                   className={`flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg border ${
                     isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-800/50 border-slate-700/50'
@@ -4137,46 +4163,30 @@ const App = () => {
                   })}
                 </div>
 
-                <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
-                  <div className="flex items-center justify-between mb-1 gap-2">
-                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                      標的組合排名表
-                    </label>
-                    <button
-                      onClick={updateRankingTable}
-                      disabled={rankingLoading || !hasSelectedStock}
-                      className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
-                        isLight
-                          ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
-                          : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
-                      }`}
-                    >
-                      {rankingLoading ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Table2 className="w-3.5 h-3.5" />
-                      )}
-                      更新排名表
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                    列出目前已勾選標的,在「回測投資年限」的 7 個區間及 2 個固定起始日下的含息報酬率排名(1
-                    =表現最好,以紅字標示)。只算已勾選的標的、不含加碼,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
-                  </div>
-                  {rankingError && (
-                    <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
-                      {rankingError}
-                    </div>
-                  )}
-                  {rankingData && renderRankingTable(rankingData)}
-                </div>
-
                 {anyTopUpEnabled && (
                   <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
-                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                      標的組合排名表(含加碼)
-                    </label>
-                    <div className="text-[11px] text-slate-500 leading-relaxed mb-2 mt-1">
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                        標的組合排名表(含加碼)
+                      </label>
+                      <button
+                        onClick={updateRankingTable}
+                        disabled={rankingLoading || !hasSelectedStock}
+                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isLight
+                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
+                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
+                        }`}
+                      >
+                        {rankingLoading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Table2 className="w-3.5 h-3.5" />
+                        )}
+                        更新排名表
+                      </button>
+                    </div>
+                    <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
                       套用目前的加碼策略設定(
                       {[
                         monthlyTopUpEnabled && '每月固定日期加碼',
@@ -4186,15 +4196,58 @@ const App = () => {
                         .join('+')}
                       ,{monthlyTopUpIncludeLumpSum ? '含' : '不含'}
                       最上面的一次性本金),假設把目前設定的總投入本金整筆投入該檔標的計算,
-                      跟上面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
-                      這段區間內完全沒有實際加碼買進時顯示「—」。
+                      跟下面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
+                      這段區間內完全沒有實際加碼買進時顯示「—」。該區間損益金額最高的標的以紅色標示。
                     </div>
-                    {rankingDataTopUp && renderRankingTable(rankingDataTopUp)}
+                    {rankingError && (
+                      <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
+                        {rankingError}
+                      </div>
+                    )}
+                    {rankingDataTopUp &&
+                      renderRankingTable(rankingDataTopUp, { highlightMaxNetProfit: true })}
                   </div>
                 )}
+
+                <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                      標的組合排名表
+                    </label>
+                    {!anyTopUpEnabled && (
+                      <button
+                        onClick={updateRankingTable}
+                        disabled={rankingLoading || !hasSelectedStock}
+                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isLight
+                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
+                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
+                        }`}
+                      >
+                        {rankingLoading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Table2 className="w-3.5 h-3.5" />
+                        )}
+                        更新排名表
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    列出目前已勾選標的,在「回測投資年限」的 7 個區間及 2 個固定起始日下的含息報酬率排名(1
+                    =表現最好,以紅字標示)。只算已勾選的標的、不含加碼{anyTopUpEnabled ? ',跟上面含加碼的排名表用同一組「更新排名表」按鈕一起更新,不用另外按' : ''}
+                    ,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
+                  </div>
+                  {!anyTopUpEnabled && rankingError && (
+                    <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
+                      {rankingError}
+                    </div>
+                  )}
+                  {rankingData && renderRankingTable(rankingData)}
+                </div>
               </div>
 
-              <div className="lg:col-span-3 min-w-0 mt-4 lg:mt-0">
+              <div className="lg:col-span-2 min-w-0 mt-4 lg:mt-0">
                 <div className="flex flex-col gap-2">
                   <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded-lg transition-colors ${isLight ? 'bg-white border-slate-300 hover:bg-slate-50' : 'bg-slate-800 border-slate-600 hover:bg-slate-700/50'}`}>
                     <div className="relative flex-shrink-0">
