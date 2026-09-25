@@ -1175,6 +1175,11 @@ const App = () => {
   // 「K線穿越均線加碼」重新設計後的參數,詳見「K線穿越均線加碼規則重新設計」文件。
   // 三種子模式(跌破/回檔/站回)每條均線各自獨立開關;跌破加碼延用最初就有的邏輯,
   // 預設開啟,回檔/站回是新增子模式,預設關閉。
+  // 預設值直接採用「簡易模式(維持原規則)」的組合(見 KLINE_LEGACY_PRESET):只開
+  // 跌破加碼、三線權重相同、不遞減、不做盤整偵測、無總量上限,只是把冷卻期從舊版
+  // 「三線共用每月最多1次」改成「每條均線各自獨立21個交易日」以修正跨月重複觸發
+  // 的漏洞。使用者切到「進階模式」後可另外套用更細緻的建議組合。
+  const [klineSimpleMode, setKlineSimpleMode] = useState(true);
   const [klineSubModeEnabled, setKlineSubModeEnabled] = useState(() => ({
     ma20: DEFAULT_KLINE_SUBMODE_ENABLED(),
     ma60: DEFAULT_KLINE_SUBMODE_ENABLED(),
@@ -1182,16 +1187,17 @@ const App = () => {
   }));
   // 每條均線各自獨立的交易日冷卻期(取代原本三線共用的「每月最多1次」)。
   const [klineCooldownDays, setKlineCooldownDays] = useState({
-    ma20: 20,
-    ma60: 20,
-    ma120: 20,
+    ma20: 21,
+    ma60: 21,
+    ma120: 21,
   });
-  // 均線層級倍數(金字塔配置):預設採「溫和遞增」組合,使用者可透過下面的預設
-  // 按鈕快速套用整組,或個別覆寫任一均線的數字(自訂欄位)。
+  // 均線層級倍數(金字塔配置):簡易模式預設三線權重相同(等同原規則),使用者可在
+  // 進階模式透過預設按鈕快速套用「溫和遞增/陡升」等組合,或個別覆寫任一均線的數字
+  // (自訂欄位)。
   const [klinePyramidMultiplier, setKlinePyramidMultiplier] = useState({
     ma20: 1,
-    ma60: 1.5,
-    ma120: 2,
+    ma60: 1,
+    ma120: 1,
   });
   // 回檔加碼:上升趨勢判斷回看天數、均線接近容忍度(±X%)。
   const [klinePullbackLookbackDays, setKlinePullbackLookbackDays] = useState(20);
@@ -1199,18 +1205,57 @@ const App = () => {
   // 站回加碼:站上均線後需維持幾個交易日才算確認(0 = 站上當天立刻買進)。
   const [klineRecoveryConfirmDays, setKlineRecoveryConfirmDays] = useState(2);
   // 距上次加碼折扣係數(遞減):距上次成功加碼未滿此天數,金額依比例打折,
-  // 下限為 decayFloorPct;滿此天數(或首次加碼)則不打折。
-  const [klineDecayWindowDays, setKlineDecayWindowDays] = useState(20);
-  const [klineDecayFloorPct, setKlineDecayFloorPct] = useState(50);
+  // 下限為 decayFloorPct;滿此天數(或首次加碼)則不打折。簡易模式預設關閉遞減
+  // (decayWindowDays=0 等同永遠不打折)。
+  const [klineDecayWindowDays, setKlineDecayWindowDays] = useState(0);
+  const [klineDecayFloorPct, setKlineDecayFloorPct] = useState(100);
   // 盤整偵測(避開情境二):trailing window 內均線最高最低差幅低於門檻即判定盤整,
-  // 該均線本次所有子模式全部跳過。
-  const [klineChopEnabled, setKlineChopEnabled] = useState(true);
+  // 該均線本次所有子模式全部跳過。簡易模式預設關閉。
+  const [klineChopEnabled, setKlineChopEnabled] = useState(false);
   const [klineChopWindowDays, setKlineChopWindowDays] = useState(10);
   const [klineChopThresholdPct, setKlineChopThresholdPct] = useState(2);
   // 總量保護機制(第三層):所有均線/子模式合計加碼次數上限,達到後即使符合
-  // 子模式與冷卻期條件也不再加碼。
-  const [klineTotalCapEnabled, setKlineTotalCapEnabled] = useState(true);
+  // 子模式與冷卻期條件也不再加碼。簡易模式預設關閉(沿用原規則,無總量上限)。
+  const [klineTotalCapEnabled, setKlineTotalCapEnabled] = useState(false);
   const [klineTotalCapCount, setKlineTotalCapCount] = useState(12);
+
+  // 簡易模式(維持原規則)的固定參數組合:只偵測跌破加碼、三線權重相同、不遞減、
+  // 不做盤整偵測、無總量上限,冷卻期為每條均線各自 21 個交易日(約一個月),藉此
+  // 修正舊版「三線共用每月最多1次額度」在跨月時可能被同一次假突破重複計入的漏洞。
+  const KLINE_LEGACY_PRESET = {
+    subModeConfig: {
+      ma20: { breakdown: true, pullback: false, recovery: false },
+      ma60: { breakdown: true, pullback: false, recovery: false },
+      ma120: { breakdown: true, pullback: false, recovery: false },
+    },
+    cooldownDays: { ma20: 21, ma60: 21, ma120: 21 },
+    pyramidMultiplier: { ma20: 1, ma60: 1, ma120: 1 },
+    decayWindowDays: 0,
+    decayFloorPct: 100,
+    chopEnabled: false,
+    totalCapEnabled: false,
+  };
+  const applyKlineLegacyPreset = () => {
+    setKlineSubModeEnabled(KLINE_LEGACY_PRESET.subModeConfig);
+    setKlineCooldownDays(KLINE_LEGACY_PRESET.cooldownDays);
+    setKlinePyramidMultiplier(KLINE_LEGACY_PRESET.pyramidMultiplier);
+    setKlineDecayWindowDays(KLINE_LEGACY_PRESET.decayWindowDays);
+    setKlineDecayFloorPct(KLINE_LEGACY_PRESET.decayFloorPct);
+    setKlineChopEnabled(KLINE_LEGACY_PRESET.chopEnabled);
+    setKlineTotalCapEnabled(KLINE_LEGACY_PRESET.totalCapEnabled);
+  };
+  // 進階模式的建議起始組合(即先前版本曾經預設過的那組較積極的參數),方便使用者
+  // 切到進階模式後一鍵套用,而不用從零開始逐項調整。
+  const applyKlineAdvancedSuggestedPreset = () => {
+    setKlinePyramidMultiplier({ ma20: 1, ma60: 1.5, ma120: 2 });
+    setKlineDecayWindowDays(20);
+    setKlineDecayFloorPct(50);
+    setKlineChopEnabled(true);
+    setKlineChopWindowDays(10);
+    setKlineChopThresholdPct(2);
+    setKlineTotalCapEnabled(true);
+    setKlineTotalCapCount(12);
+  };
 
   // 把目前畫面上的 K 線加碼參數彙整成 createKlineTopUpEngine 要吃的設定物件,
   // updateRankingTable 與 runBacktest 共用,避免兩處各自組一次容易漏改。
@@ -3435,7 +3480,7 @@ const App = () => {
                   </label>
                   {showKlineTopUpInfo && (
                     <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                      開啟後可分別針對月線(MA20)/季線(MA60)/半年線(MA120)勾選三種加碼子模式:跌破加碼(股價跌破均線)、回檔加碼(上升趨勢中拉回接近均線)、站回加碼(跌破後收復均線)。每條均線各自有獨立的交易日冷卻期(取代舊版「每月最多1次」),加碼金額 = 下面設定的「每次加碼金額」× 該均線的金字塔倍數 × 距上次加碼的遞減折扣係數,並可另外開啟盤整偵測(避免盤整期間頻繁小幅加碼)與總量保護機制(合計加碼次數上限)。這兩個加碼開關(定期定額/K線)可以各自獨立開關,也可以同時開啟。
+                      預設為「簡易模式」,直接沿用先前版本的規則(只偵測跌破加碼,三線權重相同,不打折、不做盤整偵測、無總量上限),只修正了舊版「每月最多1次」額度可能跨月被同一次假跌破重複計入的漏洞。若想細部調整,可切換到「進階模式」:分別針對月線(MA20)/季線(MA60)/半年線(MA120)勾選三種加碼子模式:跌破加碼(股價跌破均線)、回檔加碼(上升趨勢中拉回接近均線)、站回加碼(跌破後收復均線),加碼金額 = 下面設定的「每次加碼金額」× 該均線的金字塔倍數 × 距上次加碼的遞減折扣係數,並可另外開啟盤整偵測(避免盤整期間頻繁小幅加碼)與總量保護機制(合計加碼次數上限)。這兩個加碼開關(定期定額/K線)可以各自獨立開關,也可以同時開啟。
                     </div>
                   )}
                   {anyTopUpEnabled && (
@@ -3524,6 +3569,50 @@ const App = () => {
                       <div className={`text-[11px] font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                         K線穿越均線加碼細部設定
                       </div>
+                      <div className="grid grid-cols-2 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setKlineSimpleMode(true);
+                            applyKlineLegacyPreset();
+                          }}
+                          className={`text-xs rounded p-1.5 border ${
+                            klineSimpleMode
+                              ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                              : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
+                          }`}
+                        >
+                          簡易模式(維持原規則)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setKlineSimpleMode(false)}
+                          className={`text-xs rounded p-1.5 border ${
+                            !klineSimpleMode
+                              ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                              : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
+                          }`}
+                        >
+                          進階模式(自訂子模式/遞減/盤整)
+                        </button>
+                      </div>
+                      {klineSimpleMode ? (
+                        <div className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
+                          簡易模式=延續先前版本的規則:只偵測「跌破加碼」,MA20/60/120 權重相同、金額不打折、不做盤整偵測、也沒有總量上限;冷卻期改為每條均線各自 21 個交易日(約一個月),修正了先前「同一次假跌破可能跨月被重複計入兩次」的漏洞。想調整細部規則(回檔/站回子模式、金字塔倍數、遞減折扣、盤整偵測、總量上限)請切換到「進階模式」。
+                        </div>
+                      ) : (
+                      <>
+                      <button
+                        type="button"
+                        onClick={applyKlineAdvancedSuggestedPreset}
+                        className={`text-[11px] rounded p-1.5 border ${
+                          isLight
+                            ? 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'
+                            : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        套用進階建議組合(金字塔1/1.5/2x + 遞減折扣 + 盤整偵測 + 總量上限12次)
+                      </button>
                       {MA_LINE_KEYS.map((lineKey) => (
                         <div key={lineKey} className="flex flex-col gap-1.5">
                           <div className={`text-[11px] font-bold ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
@@ -3752,6 +3841,8 @@ const App = () => {
                             className={`w-full rounded p-1 text-xs border ${isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
                           />
                         </div>
+                      )}
+                      </>
                       )}
                     </div>
                   )}
