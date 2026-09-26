@@ -500,13 +500,26 @@ const getFetchAnchorStartDate = () => {
 };
 
 // 舊版程式抓的快取只有收盤價,沒有當天最高/最低價(K線穿越均線判斷需要這兩個
-// 欄位)。用這個判斷「這份快取是不是舊格式」,只要有任何一天缺 high 或 low
-// 就視為不完整,整檔重新即時抓取以補齊(不是逐天補,因為三層資料源都是整段
-// 歷史一起回傳,重抓一次最省事也最不會欄位對不齊)。
-const priceCacheMissingHighLow = (data) =>
-  !Array.isArray(data) ||
-  data.length === 0 ||
-  data.some((d) => typeof d.high !== 'number' || typeof d.low !== 'number');
+// 欄位)。用這個判斷「這份快取是不是舊格式」,原本是只要有任何一天缺 high 或
+// low 就視為不完整、整檔重新即時抓取以補齊。
+//
+// 但實際發現有些標的(例如00913)在證交所/FinMind的官方歷史資料裡,個別
+// 交易日本身就是缺值(例如那天只有零股成交、官方資料的當日最高/最低價欄位
+// 直接就是「--」),不是我們的資料源接不到,是官方資料本身那天就沒有正常
+// 的高低價可以查。這種情況下「只要有一天缺就整檔判定過期」會導致每次都重新
+// 抓取、抓回來的還是同一筆缺值資料、永遠存不進「跟得上最新交易日」的快取,
+// 使用者會一直看到「抓取中」而不是「已使用暫存資料」。
+// 改成看「缺值的比例」:真正的舊格式快取是完全沒有 high/low 這兩個欄位
+// (100%都缺),個別交易日的官方資料缺值只會是少數幾天,用 5% 當門檻,
+// 足以區分這兩種情況,不會讓少數幾天的個別缺值造成快取永遠失效。
+const MISSING_HIGH_LOW_RATIO_THRESHOLD = 0.05;
+const priceCacheMissingHighLow = (data) => {
+  if (!Array.isArray(data) || data.length === 0) return true;
+  const missingCount = data.filter(
+    (d) => typeof d.high !== 'number' || typeof d.low !== 'number'
+  ).length;
+  return missingCount / data.length > MISSING_HIGH_LOW_RATIO_THRESHOLD;
+};
 
 // 股價/配息資料的對外主要入口:cache-first、但加上「快取是否跟得上最新交易日」
 // 的檢查,不是原本那種「快取一旦存在就永久沿用、完全不管多舊」的做法(那樣會
