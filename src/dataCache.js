@@ -748,3 +748,133 @@ export const fetchIndexPriceData = async (symbol = '^TWII') => {
   }
   return null;
 };
+
+// --- 個股股本 / ETF基金規模(供卡片顯示用,不影響回測本身的計算) ---
+//
+// 跟股價不同,這兩份資料證交所/櫃買中心是用「一次性快照」的方式公開整批資料
+// (一次拿到全部上市公司或全部基金,不用像股價那樣逐檔、逐月分別查詢),所以
+// 不管使用者這次比較幾檔標的,都只需要各打一次 API,速度是毫秒等級,不會
+// 像β值那樣因為要抓大量歷史資料而變慢。這兩份資料本身變動也很不頻繁(只有
+// 公司辦理增減資、基金合併/新增受益權單位才會變),所以用「一天內共用同一份
+// 快照,隔天才重新抓」的方式快取,同一天內查詢幾次都不會重複打 API。
+const SNAPSHOT_CACHE_TTL_DAYS = 1;
+
+const loadSnapshotCache = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.fetchedAt || !parsed.map) return null;
+    const ageDays = (Date.now() - new Date(parsed.fetchedAt).getTime()) / 86400000;
+    if (ageDays > SNAPSHOT_CACHE_TTL_DAYS) return null;
+    return parsed.map;
+  } catch (e) {
+    return null;
+  }
+};
+
+const saveSnapshotCache = (key, map) => {
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ fetchedAt: new Date().toISOString(), map })
+    );
+  } catch (e) {
+    // localStorage 不可用或空間不足時安靜忽略,不影響本次計算本身
+  }
+};
+
+const CAPITAL_SNAPSHOT_CACHE_KEY = 'capital_snapshot_v1';
+
+// 個股股本(實收資本額):上市公司查證交所開放資料,上櫃公司查櫃買中心開放
+// 資料,兩邊欄位命名完全不同(上市是中文欄位、上櫃是英文欄位,且部分欄位
+// 名稱裡有實際的英文句點),分別解析後合併成同一份、用代碼查詢的對照表。
+export const fetchCapitalSnapshot = async () => {
+  const cached = loadSnapshotCache(CAPITAL_SNAPSHOT_CACHE_KEY);
+  if (cached) return cached;
+
+  const map = {};
+  try {
+    const res = await fetchWithTimeout(
+      'https://openapi.twse.com.tw/v1/opendata/t187ap03_L',
+      {},
+      10000
+    );
+    const json = await res.json();
+    if (Array.isArray(json)) {
+      json.forEach((row) => {
+        const symbol = row['公司代號'];
+        const capital = parseFloat(row['實收資本額']);
+        if (symbol && Number.isFinite(capital)) {
+          map[symbol] = { paidInCapital: capital };
+        }
+      });
+    }
+  } catch (e) {
+    // 上市資料抓失敗不影響上櫃那一半繼續嘗試
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O',
+      {},
+      10000
+    );
+    const json = await res.json();
+    if (Array.isArray(json)) {
+      json.forEach((row) => {
+        const symbol = row['SecuritiesCompanyCode'];
+        const capital = parseFloat(row['Paidin.Capital.NTDollars']);
+        if (symbol && Number.isFinite(capital)) {
+          map[symbol] = { paidInCapital: capital };
+        }
+      });
+    }
+  } catch (e) {
+    // 上櫃資料抓失敗不影響上市那一半已經抓到的結果
+  }
+
+  if (Object.keys(map).length > 0) {
+    saveSnapshotCache(CAPITAL_SNAPSHOT_CACHE_KEY, map);
+  }
+  return map;
+};
+
+const ETF_UNITS_SNAPSHOT_CACHE_KEY = 'etf_units_snapshot_v1';
+
+// ETF發行單位數(受益權單位數):證交所「基金基本資料彙總表」,這份資料本身
+// 就只收錄交易所交易的ETF(基金類型欄位都是「交易所交易基金/指數股票型基金/
+// 期貨信託基金」),不含一般不掛牌交易的開放式基金,不需要額外篩選。
+// 只有「單位數」,官方沒有公開每日淨值或基金總規模的資料,所以規模只能用
+// 「單位數 × 最新收盤價」估算(ETF市價會透過造市/申贖套利機制緊貼淨值,
+// 估算誤差通常很小),不是官方公布的精確數字,卡片顯示時要標示「(估)」。
+export const fetchEtfUnitsSnapshot = async () => {
+  const cached = loadSnapshotCache(ETF_UNITS_SNAPSHOT_CACHE_KEY);
+  if (cached) return cached;
+
+  const map = {};
+  try {
+    const res = await fetchWithTimeout(
+      'https://openapi.twse.com.tw/v1/opendata/t187ap47_L',
+      {},
+      10000
+    );
+    const json = await res.json();
+    if (Array.isArray(json)) {
+      json.forEach((row) => {
+        const symbol = row['基金代號'];
+        const units = parseFloat(row['發行單位數/轉換數']);
+        if (symbol && Number.isFinite(units)) {
+          map[symbol] = { unitsOutstanding: units };
+        }
+      });
+    }
+  } catch (e) {
+    // 抓失敗就回傳空表,呼叫端「查不到就不顯示」,不影響回測本身
+  }
+
+  if (Object.keys(map).length > 0) {
+    saveSnapshotCache(ETF_UNITS_SNAPSHOT_CACHE_KEY, map);
+  }
+  return map;
+};

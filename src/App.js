@@ -19,6 +19,8 @@ import {
   fetchStockPriceData,
   fetchIndexPriceData,
   fetchStockDisplayName,
+  fetchCapitalSnapshot,
+  fetchEtfUnitsSnapshot,
 } from './dataCache';
 import { isNonTradingDay, getLastCompletedTradingDay } from './tradingCalendar';
 import {
@@ -1825,10 +1827,17 @@ const App = () => {
       const benchmarkPromise = calcBeta
         ? fetchIndexPriceData('^TWII')
         : Promise.resolve(null);
-      const [rawResults, benchmarkResult] = await Promise.all([
-        Promise.all(promises),
-        benchmarkPromise,
-      ]);
+      // 個股股本/ETF發行單位數:官方一次性快照,不論這次比較幾檔標的都只打
+      // 這兩次 API(有快取時甚至完全不打),不會像股價那樣逐檔查詢拖慢速度;
+      // 一樣跟股價、大盤指數平行抓取,不會多佔用時間。抓失敗就當作查不到、
+      // 卡片不顯示這兩個資訊,不影響回測本身。
+      const [rawResults, benchmarkResult, capitalSnapshot, etfUnitsSnapshot] =
+        await Promise.all([
+          Promise.all(promises),
+          benchmarkPromise,
+          fetchCapitalSnapshot().catch(() => ({})),
+          fetchEtfUnitsSnapshot().catch(() => ({})),
+        ]);
       const benchmarkReturnsByDate = buildDailyReturnsByDate(
         benchmarkResult?.data
       );
@@ -2366,6 +2375,27 @@ const App = () => {
           // 「管理費(年化)」這個資訊性徽章,不會再從報酬率額外扣一次,避免重複扣減。
           const feeRatePct = TW_ETF_FEES[stock.symbol];
 
+          // 個股股本 vs. ETF資金規模:兩者互斥,一檔標的只會查到其中一種
+          // (ETF是信託基金、不是公司,沒有股本;個股不是基金,沒有發行單位數)。
+          // 股本是官方揭露的精確數字(實收資本額);ETF規模官方沒有公開淨值/
+          // 總規模資料,只能用「發行單位數 × 最新收盤價」估算(用 stock.data
+          // 完整歷史的最後一筆,代表「目前」市價,不受使用者這次選的回測
+          // 起訖區間影響),市價會透過造市/申贖套利機制緊貼淨值,估算誤差
+          // 通常很小,卡片顯示時會標示「(估)」提醒不是官方數字。
+          const capitalInfo = capitalSnapshot[stock.symbol];
+          const etfUnitsInfo = etfUnitsSnapshot[stock.symbol];
+          const paidInCapital = capitalInfo
+            ? capitalInfo.paidInCapital
+            : undefined;
+          const latestKnownPrice =
+            stock.data && stock.data.length > 0
+              ? stock.data[stock.data.length - 1].price
+              : undefined;
+          const estimatedFundSize =
+            etfUnitsInfo && latestKnownPrice
+              ? etfUnitsInfo.unitsOutstanding * latestKnownPrice
+              : undefined;
+
           const startData = filteredData[0];
           const endData = filteredData[filteredData.length - 1];
 
@@ -2756,6 +2786,9 @@ const App = () => {
             // 只有查得到公開費率的 ETF 才會有這個欄位,查不到就不放(而不是塞 0/null),
             // 卡片那邊用「有沒有這個欄位」決定要不要顯示管理費徽章。
             ...(feeRatePct !== undefined ? { feeRate: feeRatePct } : {}),
+            // 股本/ETF規模,一樣「查得到才放欄位」,查不到卡片就不顯示。
+            ...(paidInCapital !== undefined ? { paidInCapital } : {}),
+            ...(estimatedFundSize !== undefined ? { estimatedFundSize } : {}),
             frequencyLabel: getFrequencyLabel(stock.divDates),
             weight,
             divDates: stock.divDates,
@@ -5034,6 +5067,37 @@ const App = () => {
                                     : '-'}
                                 </span>
                               </div>
+                              {(item.paidInCapital !== undefined ||
+                                item.estimatedFundSize !== undefined) && (
+                                <div
+                                  className={`flex justify-between border-t border-dashed pt-1 mt-1 ${
+                                    isLight
+                                      ? 'border-gray-300'
+                                      : 'border-slate-600/50'
+                                  }`}
+                                >
+                                  <span
+                                    className={textClass.sub}
+                                    title={
+                                      item.estimatedFundSize !== undefined
+                                        ? '用證交所公開的ETF發行單位數 × 最新收盤價估算的基金規模,官方沒有公開每日淨值/總規模數字,不是精確值,僅供參考。'
+                                        : '證交所/櫃買中心公開揭露的實收資本額(股本),官方數字。'
+                                    }
+                                  >
+                                    {item.estimatedFundSize !== undefined
+                                      ? '資金規模(估)'
+                                      : '股本'}
+                                  </span>
+                                  <span className="font-mono text-cyan-500/70">
+                                    {(
+                                      (item.estimatedFundSize !== undefined
+                                        ? item.estimatedFundSize
+                                        : item.paidInCapital) / 1e8
+                                    ).toFixed(1)}
+                                    億
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
