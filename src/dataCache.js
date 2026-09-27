@@ -466,23 +466,81 @@ export const loadPriceCache = (symbol) => {
   }
 };
 
+// 判斷 setItem 失敗是不是「空間不足」(不同瀏覽器的 name/code 不完全一致,
+// 保守多比對幾種寫法,避免漏判)。
+const isQuotaExceededError = (e) =>
+  e &&
+  (e.name === 'QuotaExceededError' ||
+    e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    e.code === 22 ||
+    e.code === 1014);
+
+// 找出目前所有「個股/大盤股價」快取(stock_price_ 開頭)裡最舊的一筆並刪除,
+// 用來在空間不足時騰出空間。用 cachedAt(存檔時間)判斷新舊,不是用資料
+// 本身涵蓋的交易日期——目的是優先淘汰「最久沒有被重新整理過」的快取,不是
+// 淘汰「歷史資料涵蓋範圍比較早」的快取。
+// 找過程中若剛好遇到已經損毀、解析不出來的快取,直接視為最該優先清除的
+// 對象(反正也讀不了、留著沒用),不需要再比較 cachedAt。
+const evictOldestPriceCacheEntry = () => {
+  let oldestKey = null;
+  let oldestTime = Infinity;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(PRICE_CACHE_PREFIX)) continue;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key));
+      const t = parsed && parsed.cachedAt ? new Date(parsed.cachedAt).getTime() : 0;
+      if (!Number.isFinite(t) || t < oldestTime) {
+        oldestTime = Number.isFinite(t) ? t : 0;
+        oldestKey = key;
+      }
+    } catch (e) {
+      oldestKey = key;
+      break;
+    }
+  }
+  if (!oldestKey) return false;
+  localStorage.removeItem(oldestKey);
+  return true;
+};
+
+// 空間不足時「先騰空間、再重試」最多這麼多次才放棄——理論上遇到單一筆
+// 過大的新資料(例如超長史的個股)才需要連續淘汰好幾筆舊快取才夠位置,
+// 正常情況通常淘汰1、2筆就夠了。
+const SAVE_RETRY_ON_QUOTA_LIMIT = 30;
+
+// 每次都用同一把 key(stock_price_<代碼>)存檔,理論上「覆蓋自己這一筆」
+// 不會讓總用量變大很多,但實測發現使用者瀏覽器裡長期累積下來的舊快取
+// (許多不同代碼、每筆都動輒上千個交易日)還是可能把 localStorage 的
+// 空間(多數瀏覽器每個網域 5-10MB 上下)填滿,一旦填滿,新代碼(或需要
+// 整檔重新即時抓取的既有代碼)的 setItem 就會拋出 QuotaExceededError,
+// 而這裡原本是整個安靜吞掉、不重試——這會導致某個代碼「每次都抓得到最新
+// 資料、但永遠存不進快取」,每次重新整理都要重新即時抓一次,使用者會覺得
+// 這檔特別慢、也永遠不會顯示「使用暫存資料」,而且因為抓取本身其實有成功、
+// 不會被當成錯誤回報,很難察覺是空間問題。改成:空間不足時,先淘汰現有
+// 快取裡最舊的一筆,騰出空間後再重試存檔,最多重試到 SAVE_RETRY_ON_QUOTA_LIMIT
+// 次;真的整個 localStorage 都被清空還存不下(資料本身超大或瀏覽器完全
+// 不給用),才維持原本「安靜放棄」的行為,不影響本次計算結果本身。
 export const savePriceCache = (symbol, result) => {
-  try {
-    localStorage.setItem(
-      cacheKeyFor(symbol),
-      JSON.stringify({
-        schemaVersion: CACHE_SCHEMA_VERSION,
-        data: result.data,
-        divDates: result.divDates,
-        dividendsMap: result.dividendsMap,
-        usedSymbol: result.usedSymbol,
-        source: result.source || '',
-        dividendDataIncomplete: result.dividendDataIncomplete || false,
-        cachedAt: new Date().toISOString(),
-      })
-    );
-  } catch (e) {
-    // localStorage 不可用或空間不足時安靜忽略,不影響本次計算本身
+  const payload = JSON.stringify({
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    data: result.data,
+    divDates: result.divDates,
+    dividendsMap: result.dividendsMap,
+    usedSymbol: result.usedSymbol,
+    source: result.source || '',
+    dividendDataIncomplete: result.dividendDataIncomplete || false,
+    cachedAt: new Date().toISOString(),
+  });
+  const key = cacheKeyFor(symbol);
+  for (let attempt = 0; attempt <= SAVE_RETRY_ON_QUOTA_LIMIT; attempt++) {
+    try {
+      localStorage.setItem(key, payload);
+      return;
+    } catch (e) {
+      if (!isQuotaExceededError(e)) return; // 非空間問題,沿用原本安靜放棄的行為
+      if (!evictOldestPriceCacheEntry()) return; // 已經沒有更舊的快取可以淘汰了
+    }
   }
 };
 
