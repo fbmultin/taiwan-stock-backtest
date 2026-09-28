@@ -180,7 +180,14 @@ const fetchWithSuffix = async (
       const ts = timestamps[i];
       const dateStr = new Date(ts * 1000).toISOString().split('T')[0];
       const closePrice = quotes.close[i];
-      if (closePrice !== null && closePrice !== undefined) {
+      // 只有 !== null/undefined 還不夠:Yahoo 偶爾會對非交易日/資料異常的
+      // 那天回傳 0,若照單全收會讓後續「金額 / 股價」的計算除以0變成Infinity,
+      // 所以這裡額外擋掉非有限數與 <= 0 的異常價格。
+      if (
+        typeof closePrice === 'number' &&
+        Number.isFinite(closePrice) &&
+        closePrice > 0
+      ) {
         const highPrice = quotes.high?.[i];
         const lowPrice = quotes.low?.[i];
         data.push({
@@ -246,18 +253,28 @@ const fetchFromFinMind = async (symbol, startDate, endDate) => {
     }
 
     // FinMind TaiwanStockPrice 欄位用 max/min 代表當天最高/最低價(不是 high/low)。
-    const data = priceJson.data.map((p) => {
-      const high = p.max;
-      const low = p.min;
-      return {
-        date: p.date,
-        timestamp: new Date(p.date).getTime(),
-        price: p.close,
-        high: typeof high === 'number' && Number.isFinite(high) ? high : undefined,
-        low: typeof low === 'number' && Number.isFinite(low) ? low : undefined,
-        accumulatedDividend: 0,
-      };
-    });
+    // p.close 原本完全沒做合理性檢查:FinMind 偶爾會對交易量稀薄的標的
+    // (例如債券ETF)回傳 0 或非數字的收盤價,若照單全收,後面「金額 / 股價」
+    // 的加碼計算會除以0變成Infinity,一路污染到最終顯示的配息金額。
+    // 這裡直接濾掉價格無效的那一天,而不是留著壞資料讓下游各自防呆。
+    const data = priceJson.data
+      .map((p) => {
+        const price = p.close;
+        if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+          return null;
+        }
+        const high = p.max;
+        const low = p.min;
+        return {
+          date: p.date,
+          timestamp: new Date(p.date).getTime(),
+          price,
+          high: typeof high === 'number' && Number.isFinite(high) ? high : undefined,
+          low: typeof low === 'number' && Number.isFinite(low) ? low : undefined,
+          accumulatedDividend: 0,
+        };
+      })
+      .filter((r) => r !== null);
 
     return {
       symbol,
@@ -301,7 +318,9 @@ const fetchTWSEMonth = async (symbol, year, month) => {
         const close = parseFloat(String(row[6]).replace(/,/g, ''));
         const high = parseFloat(String(row[4]).replace(/,/g, ''));
         const low = parseFloat(String(row[5]).replace(/,/g, ''));
-        if (!dateStr || !Number.isFinite(close)) return null;
+        // close <= 0 也一併擋掉(不只擋 NaN):避免萬一交易所對某天回傳
+        // 「0」這種異常值時,被當成有效股價流入後續的加碼/除以股價計算。
+        if (!dateStr || !Number.isFinite(close) || close <= 0) return null;
         return {
           date: dateStr,
           timestamp: new Date(dateStr).getTime(),

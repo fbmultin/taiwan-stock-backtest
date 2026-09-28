@@ -2600,32 +2600,49 @@ const App = () => {
             });
 
             if (topUpDateSet && topUpDateSet.has(day.date)) {
-              const boughtShares = monthlyTopUpAmount / day.price;
-              shares += boughtShares;
-              totalInvested += monthlyTopUpAmount;
-              topUpOnlyShares += boughtShares;
-              topUpOnlyInvested += monthlyTopUpAmount;
+              if (Number.isFinite(day.price) && day.price > 0) {
+                const boughtShares = monthlyTopUpAmount / day.price;
+                shares += boughtShares;
+                totalInvested += monthlyTopUpAmount;
+                topUpOnlyShares += boughtShares;
+                topUpOnlyInvested += monthlyTopUpAmount;
 
-              // 這一筆加碼「從買進那天到回測結束」自己的報酬率,跟是否列入本金無關——
-              // 不含息只看股價漲跌,含息則再加上買進後(不含當天)實際能領到的配息。
-              topUpEvents.push({
-                date: day.date,
-                symbol: stock.symbol,
-                stockName: stock.stockName,
-                source: 'monthly',
-                price: day.price,
-                shares: boughtShares,
-                amount: monthlyTopUpAmount,
-                skipped: false,
-                ...makeReturnPct(day.price),
-              });
+                // 這一筆加碼「從買進那天到回測結束」自己的報酬率,跟是否列入本金無關——
+                // 不含息只看股價漲跌,含息則再加上買進後(不含當天)實際能領到的配息。
+                topUpEvents.push({
+                  date: day.date,
+                  symbol: stock.symbol,
+                  stockName: stock.stockName,
+                  source: 'monthly',
+                  price: day.price,
+                  shares: boughtShares,
+                  amount: monthlyTopUpAmount,
+                  skipped: false,
+                  ...makeReturnPct(day.price),
+                });
+              } else {
+                // 當天價格資料異常(0/缺漏/非數字),跳過這次加碼,
+                // 避免除以0或無效值讓股數變成Infinity/NaN、汙染整條模擬結果。
+                topUpEvents.push({
+                  date: day.date,
+                  symbol: stock.symbol,
+                  stockName: stock.stockName,
+                  source: 'monthly',
+                  price: day.price,
+                  shares: 0,
+                  amount: 0,
+                  skipped: true,
+                  skipReason: 'invalid_price',
+                });
+              }
             }
 
             if (klineEngine && monthlyTopUpAmount > 0) {
               const events = klineEngine.evaluateDay(day, dayIndex);
               events.forEach((ev) => {
                 const amount = monthlyTopUpAmount * ev.ratio;
-                if (!ev.skipReason && amount > 0) {
+                const priceValid = Number.isFinite(day.price) && day.price > 0;
+                if (!ev.skipReason && amount > 0 && priceValid) {
                   const boughtShares = amount / day.price;
                   shares += boughtShares;
                   totalInvested += amount;
@@ -2664,7 +2681,7 @@ const App = () => {
                     shares: 0,
                     amount: 0,
                     skipped: true,
-                    skipReason: ev.skipReason,
+                    skipReason: ev.skipReason || 'invalid_price',
                   });
                 }
               });
@@ -5094,10 +5111,13 @@ const App = () => {
                                       : textClass.highlight
                                   }`}
                                 >
-                                  +$
-                                  {Math.round(
-                                    item.finalStockDividends
-                                  ).toLocaleString()}
+                                  {typeof item.finalStockDividends ===
+                                    'number' &&
+                                  Number.isFinite(item.finalStockDividends)
+                                    ? `+$${Math.round(
+                                        item.finalStockDividends
+                                      ).toLocaleString()}`
+                                    : '—'}
                                 </span>
                               </div>
                               <div className="flex justify-between">
