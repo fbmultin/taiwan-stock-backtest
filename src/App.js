@@ -4082,7 +4082,7 @@ const App = () => {
                         : 'bg-amber-900/30 hover:bg-amber-600 hover:text-white text-amber-300 border-amber-700/60 hover:border-amber-500'
                     }`}
                   >
-                    <Star className="w-3.5 h-3.5" /> 我的常用標的
+                    <Star className="w-3.5 h-3.5" /> 常用
                   </button>
                   <button
                     onClick={handleSaveMyPreset}
