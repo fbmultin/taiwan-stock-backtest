@@ -955,3 +955,78 @@ export const fetchEtfFeesSnapshot = async () => {
   }
   return map;
 };
+
+// --- 單一ETF總費用率個別查詢(給上面那份批次快照沒收錄到的標的當備援) ---
+//
+// fetchEtfFeesSnapshot 那份批次快照一次只涵蓋境內約七成多的ETF(排行榜
+// 只列費用率最低/最高各100檔,中間費用率不上不下的那些會漏掉,實測發現
+// 剛好包含0056、00878這類存股族很常用的熱門ETF)。這裡改呼叫
+// /api/marketSnapshot?type=etfFeeLookup 個別查一檔,不受排行榜前100名的
+// 限制,查詢端(App.js)只在批次快照+twEtfFees.js人工小表都查不到某檔
+// 標的時,才會呼叫這個個別查詢當最後備援。
+//
+// 快取用單一個localStorage鍵存所有查過的代碼(而不是像批次快照那樣整份
+// 共用一個fetchedAt),因為每次呼叫只查一檔、不是整批一起抓新的,各自
+// 記錄自己的查詢時間才能各自判斷是否過期;查不到(null,例如查的其實是
+// 一般個股不是ETF)也一併快取,避免同一檔每次回測都重新打一次API。
+const ETF_FEE_LOOKUP_CACHE_KEY = 'etf_fee_lookup_v1';
+const ETF_FEE_LOOKUP_TTL_DAYS = 30;
+
+const loadEtfFeeLookupCache = () => {
+  try {
+    const raw = localStorage.getItem(ETF_FEE_LOOKUP_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+const saveEtfFeeLookupCache = (cache) => {
+  try {
+    localStorage.setItem(ETF_FEE_LOOKUP_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    // 存不進去就算了,只是快取,下次回測同一檔會再查一次而已,不影響本次結果
+  }
+};
+
+// 境內ETF代碼一律是「00」開頭(0050、0056、00878、00913...皆然),一般
+// 個股代碼不會是這個開頭,先用這個規則過濾掉明顯不是ETF的代碼,不用浪費
+// 一次網路請求去問第三方網站、也減少無謂打對方伺服器的次數。
+const looksLikeEtfSymbol = (symbol) => /^00/.test(symbol || '');
+
+export const fetchEtfFeeForSymbol = async (symbol) => {
+  if (!looksLikeEtfSymbol(symbol)) return null;
+
+  const cache = loadEtfFeeLookupCache();
+  const entry = cache[symbol];
+  if (entry && entry.cachedAt) {
+    const ageDays = (Date.now() - new Date(entry.cachedAt).getTime()) / 86400000;
+    if (ageDays <= ETF_FEE_LOOKUP_TTL_DAYS) {
+      return typeof entry.value === 'number' ? entry.value : null;
+    }
+  }
+
+  let value = null;
+  try {
+    const res = await fetchWithTimeout(
+      `/api/marketSnapshot?type=etfFeeLookup&symbol=${encodeURIComponent(symbol)}`,
+      {},
+      10000
+    );
+    if (res.ok) {
+      const json = await res.json();
+      if (json && Number.isFinite(json.totalExpenseRatio)) {
+        value = json.totalExpenseRatio;
+      }
+    }
+  } catch (e) {
+    // 查失敗就當作這次查不到(不快取失敗結果),回傳null,呼叫端會退回
+    // 用人工小表或直接不顯示,不影響回測本身;下次回測會再試一次
+    return null;
+  }
+
+  cache[symbol] = { value, cachedAt: new Date().toISOString() };
+  saveEtfFeeLookupCache(cache);
+  return value;
+};

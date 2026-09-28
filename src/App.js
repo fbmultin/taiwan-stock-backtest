@@ -22,6 +22,7 @@ import {
   fetchCapitalSnapshot,
   fetchEtfUnitsSnapshot,
   fetchEtfFeesSnapshot,
+  fetchEtfFeeForSymbol,
 } from './dataCache';
 import { isNonTradingDay, getLastCompletedTradingDay } from './tradingCalendar';
 import {
@@ -1830,15 +1831,30 @@ const App = () => {
         : Promise.resolve(null);
       // 個股股本/ETF發行單位數/ETF總費用率:都是一次性快照(不論這次比較
       // 幾檔標的都只打固定次數的API,有快取時甚至完全不打),不會像股價那樣
-      // 逐檔查詢拖慢速度;一樣跟股價、大盤指數平行抓取,不會多佔用時間。
-      // 抓失敗就當作查不到、卡片不顯示這些資訊,不影響回測本身。
-      const [rawResults, benchmarkResult, capitalSnapshot, etfUnitsSnapshot, etfFeesSnapshot] =
+      // 逐檔查詢拖慢速度,所以在這裡就先跟股價、大盤指數平行發出去,不等
+      // 股價抓完才開始查。抓失敗就當作查不到、卡片不顯示這些資訊,不影響
+      // 回測本身。
+      const capitalPromise = fetchCapitalSnapshot().catch(() => ({}));
+      const etfUnitsPromise = fetchEtfUnitsSnapshot().catch(() => ({}));
+      const etfFeesPromise = fetchEtfFeesSnapshot().catch(() => ({}));
+
+      const rawResults = await Promise.all(promises);
+
+      // 股價這邊已經全部抓完了,但股本/ETF規模/管理費/大盤指數這幾個平行
+      // 任務不一定也跟著抓完——例如ETF總費用率的瀏覽器快取剛好過期,就要
+      // 多花幾秒重新向第三方網站(MoneyDJ)抓排行榜網頁。原本這幾個任務完全
+      // 沒有對應的畫面提示,股價進度顯示「已完成」後畫面卻還在卡,使用者
+      // 會不知道到底在等什麼;這裡補一個階段訊息,把「等待有跡可循」這件事
+      // 說清楚。若這幾個任務其實早就先完成了,底下的await會立刻回傳,這個
+      // 訊息只會很短暫地閃過,不影響原本的流暢度。
+      setLoadingStage('正在查詢股本/ETF規模/管理費/大盤指數等輔助資料...');
+      setLoadingStagePhase('snapshot');
+      const [benchmarkResult, capitalSnapshot, etfUnitsSnapshot, etfFeesSnapshot] =
         await Promise.all([
-          Promise.all(promises),
           benchmarkPromise,
-          fetchCapitalSnapshot().catch(() => ({})),
-          fetchEtfUnitsSnapshot().catch(() => ({})),
-          fetchEtfFeesSnapshot().catch(() => ({})),
+          capitalPromise,
+          etfUnitsPromise,
+          etfFeesPromise,
         ]);
       const benchmarkReturnsByDate = buildDailyReturnsByDate(
         benchmarkResult?.data
@@ -1863,6 +1879,42 @@ const App = () => {
         setLoading(false);
         finishLoading();
         return;
+      }
+
+      // 少數ETF不在 etfFeesSnapshot 這份批次快照裡(MoneyDJ排行榜一次只列
+      // 費用率最低/最高各100檔,中間費用率不上不下的熱門ETF反而容易被漏掉,
+      // 例如0056、00878這類存股族常用標的)、也不在 twEtfFees.js 人工小表裡
+      // 的話,在這裡個別即時查一次(dataCache.js fetchEtfFeeForSymbol,一樣
+      // 是打MoneyDJ,但改成查單一ETF的基本資料頁面,不受排行榜只列前100名
+      // 的限制)。這次查完的結果會快取在瀏覽器端30天,下次同一檔就不用再查。
+      const symbolsNeedingIndividualFeeLookup = Array.from(
+        new Set(
+          successfulData
+            .map((s) => s.symbol)
+            .filter(
+              (symbol) =>
+                etfFeesSnapshot[symbol] === undefined &&
+                TW_ETF_FEES[symbol] === undefined
+            )
+        )
+      );
+      const individualFeeLookupMap = {};
+      if (symbolsNeedingIndividualFeeLookup.length > 0) {
+        setLoadingStage(
+          `正在個別查詢 ${symbolsNeedingIndividualFeeLookup.length} 檔ETF的管理費資料...`
+        );
+        const lookupEntries = await Promise.all(
+          symbolsNeedingIndividualFeeLookup.map((symbol) =>
+            fetchEtfFeeForSymbol(symbol)
+              .catch(() => null)
+              .then((value) => [symbol, value])
+          )
+        );
+        lookupEntries.forEach(([symbol, value]) => {
+          if (value !== null && value !== undefined) {
+            individualFeeLookupMap[symbol] = value;
+          }
+        });
       }
 
       // 分割/反分割校正:若此標的在查詢區間內曾經分割過,依對照表判斷資料源是否已經
@@ -2376,17 +2428,26 @@ const App = () => {
           // 彙整而成,見 dataCache.js fetchEtfFeesSnapshot / api/marketSnapshot.js
           // 的完整說明)——這是依主管機關規定、基金公司依實際財報揭露的總費用率,
           // 比土法煉鋼加總「經理費+保管費」名目費率更準確(例如00913,原本人工
-          // 查表估出0.43%,實際總費用率是0.94%)。但這份快照一次只涵蓋境內ETF的
-          // 七成多,查不到才退回用 twEtfFees.js 那份人工維護的小表當備援;兩邊都
-          // 查不到就是 undefined、卡片不顯示。市場成交價本身已經是基金淨值扣除
-          // 這個費用後的結果,所以這裡只拿來顯示資訊性徽章,不會再從報酬率額外
-          // 扣一次,避免重複扣減。
+          // 查表估出0.43%,實際總費用率是0.94%)。這份批次快照查不到的話,退回
+          // 用上面 symbolsNeedingIndividualFeeLookup 那段個別即時查到的結果
+          // (individualFeeLookupMap,同樣是官方揭露的實際總費用率、只是改成
+          // 逐檔查詢不受排行榜前100名限制);兩邊都查不到,才真的退回
+          // twEtfFees.js 那份人工維護的小表當最後備援,三邊都查不到才是
+          // undefined、卡片不顯示。市場成交價本身已經是基金淨值扣除這個費用
+          // 後的結果,所以這裡只拿來顯示資訊性徽章,不會再從報酬率額外扣一次,
+          // 避免重複扣減。
           const scrapedFeeRatePct = etfFeesSnapshot[stock.symbol];
-          const feeRatePct =
+          const individuallyLookedUpFeeRatePct =
+            individualFeeLookupMap[stock.symbol];
+          const officialFeeRatePct =
             scrapedFeeRatePct !== undefined
               ? scrapedFeeRatePct
+              : individuallyLookedUpFeeRatePct;
+          const feeRatePct =
+            officialFeeRatePct !== undefined
+              ? officialFeeRatePct
               : TW_ETF_FEES[stock.symbol];
-          const feeRateIsOfficialDisclosure = scrapedFeeRatePct !== undefined;
+          const feeRateIsOfficialDisclosure = officialFeeRatePct !== undefined;
 
           // 個股股本 vs. ETF資金規模:兩者互斥,一檔標的只會查到其中一種
           // (ETF是信託基金、不是公司,沒有股本;個股不是基金,沒有發行單位數)。

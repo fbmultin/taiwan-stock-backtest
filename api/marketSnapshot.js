@@ -16,7 +16,11 @@
 //
 // 用法:/api/marketSnapshot?type=capital 查個股股本、
 //      /api/marketSnapshot?type=etfUnits 查ETF發行單位數、
-//      /api/marketSnapshot?type=etfFees 查ETF總費用率(見下方 buildEtfFeesMap 說明)。
+//      /api/marketSnapshot?type=etfFees 查ETF總費用率批次快照(見下方
+//      buildEtfFeesMap 說明,一次只涵蓋約七成多的ETF)、
+//      /api/marketSnapshot?type=etfFeeLookup&symbol=代碼 查單一ETF的總費用率
+//      (給前端在上面那份批次快照沒收錄到某檔標的時,個別即時查這一檔就好,
+//      不用整份重新抓一次,見下方 fetchEtfFeeForSymbol 說明)。
 
 const fetchJson = async (url) => {
   const res = await fetch(url, {
@@ -161,13 +165,63 @@ const buildEtfFeesMap = async () => {
   return map;
 };
 
+// --- 單一ETF總費用率查詢(給批次快照沒收錄到的標的當場個別查) ---
+//
+// 上面 buildEtfFeesMap 抓的排行頁面一次只列「總費用率」最低/最高各100檔,
+// 兩個方向合併起來大約只能涵蓋境內約270檔ETF裡的七成多,費用率不上不下、
+// 落在中間的那些反而會漏掉——實測發現這批「漏網之魚」剛好包含好幾檔
+// 存股族很常用的熱門ETF(例如0056、00878、00919、00713、00915),因為
+// 這些主流ETF的費用率大多落在中段,不會被極端排序抓到。
+//
+// MoneyDJ另外有一個「單一ETF基本資料」頁面(basic0004.xdjhtm,用?etfid=
+// 代碼.tw查詢),可以直接查任何一檔ETF的資料,不受排行榜只列前100名的限制;
+// 裡面的「總管理費用(%)」欄位實測跟排行頁面的「總費用率」欄位是同一個數字
+// (例如00913兩邊都是0.94、00929兩邊都是0.9,交叉比對一致),所以可以拿來
+// 當作批次快照查不到時的個別查詢管道。查不存在的代碼(例如一般個股,不是
+// ETF)這個頁面會回傳「查無此ETF」的極小頁面,底下的正則表達式自然比對
+// 不到、回傳null,不會誤判成0或其他錯誤數字。
+const parseSingleEtfFeePage = (html) => {
+  if (typeof html !== 'string') return null;
+  const match = html.match(/總管理費用\(%\)<\/th>\s*<td[^>]*>([^<]*)<\/td>/);
+  if (!match) return null;
+  const value = parseFloat(match[1]);
+  return Number.isFinite(value) ? value : null;
+};
+
+const fetchEtfFeeForSymbol = async (symbol) => {
+  const html = await fetchText(
+    `https://www.moneydj.com/etf/x/basic/basic0004.xdjhtm?etfid=${encodeURIComponent(
+      symbol
+    )}.tw`
+  ).catch(() => null);
+  return parseSingleEtfFeePage(html);
+};
+
 // 用 module.exports(CommonJS)而不是 export default:專案的 package.json
 // 沒有設定 "type": "module",用 CommonJS 是 Vercel Node.js Function 保證
 // 相容的寫法,不必依賴建置工具是否自動判斷/轉譯 ESM 語法。
 module.exports = async function handler(req, res) {
-  const { type } = req.query;
+  const { type, symbol } = req.query;
 
   try {
+    // 單一ETF總費用率查詢,回傳格式跟其他type不一樣(不是整批查表,是
+    // { totalExpenseRatio: 數字或null }),所以獨立成自己的分支處理。
+    if (type === 'etfFeeLookup') {
+      if (!symbol || typeof symbol !== 'string') {
+        res.status(400).json({ error: 'missing symbol' });
+        return;
+      }
+      const totalExpenseRatio = await fetchEtfFeeForSymbol(symbol);
+      // 跟批次的etfFees用同樣長度的邊緣快取(30天+30天):同一檔標的短期內
+      // 不會一直被不同使用者重複查詢,就算被查也不想太頻繁去打第三方網站。
+      res.setHeader(
+        'Cache-Control',
+        's-maxage=2592000, stale-while-revalidate=2592000'
+      );
+      res.status(200).json({ totalExpenseRatio });
+      return;
+    }
+
     let map = {};
     let cacheControl = 's-maxage=43200, stale-while-revalidate=86400';
     if (type === 'capital') {
@@ -182,9 +236,9 @@ module.exports = async function handler(req, res) {
       // 不需要因為這樣就縮短快取時間、逼近更頻繁地重抓。
       cacheControl = 's-maxage=2592000, stale-while-revalidate=2592000';
     } else {
-      res
-        .status(400)
-        .json({ error: 'invalid type, expected capital, etfUnits or etfFees' });
+      res.status(400).json({
+        error: 'invalid type, expected capital, etfUnits, etfFees or etfFeeLookup',
+      });
       return;
     }
 
