@@ -4116,7 +4116,7 @@ const App = () => {
                         : 'bg-rose-900/40 text-rose-300 border-rose-800 hover:border-rose-500'
                     }`}
                   >
-                    全部清空
+                    清空
                   </button>
                 </div>
 
