@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { TrendingUp, RefreshCw, AlertTriangle, Zap, Info } from 'lucide-react';
 import { fetchStockPriceData, fetchStockDisplayName } from './dataCache';
+import QuickApplyBar from './QuickApplyBar';
 import {
   MA_LINE_KEYS,
   MA_LINE_LABELS,
@@ -694,6 +695,19 @@ export default function DcaOptimizer({ isLight = false }) {
           最多 5 檔),套用同一組參數設定分別回測後並列比較,此時每檔只會列出
           成效最佳的一組結果。
         </p>
+
+        {/* 快速套用列跟「ETF回測比較」分頁共用同一個元件(見 QuickApplyBar.js)與
+            同一份 presets.js 資料,套用時直接把選到的標的組成逗號字串塞進股票代碼
+            輸入框;超過 {MAX_COMPARE_SYMBOLS} 檔的預設組合套用後,下方仍會照現有
+            邏輯提示「已忽略」,不需要另外處理。 */}
+        <QuickApplyBar
+          isLight={isLight}
+          onApply={(stocks) =>
+            setSymbolInput(stocks.filter((s) => s !== '').join(','))
+          }
+          getCurrentStocks={() => parsedSymbols}
+          onClear={() => setSymbolInput('')}
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>

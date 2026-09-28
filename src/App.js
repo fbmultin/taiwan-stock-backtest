@@ -3,6 +3,8 @@ import TW_STOCK_NAMES from './data/twStockNames';
 import TW_STOCK_SPLITS from './data/twStockSplits';
 import TW_ETF_FEES from './data/twEtfFees';
 import DcaOptimizer from './DcaOptimizer';
+import QuickApplyBar from './QuickApplyBar';
+import { PRESETS } from './presets';
 import {
   buildMonthlyInvestDates,
   preprocessPriceSeries,
@@ -64,8 +66,6 @@ import {
   SkipForward,
   CheckCircle2,
   XCircle,
-  Star,
-  Save,
   Scissors,
   Sun,
   Moon,
@@ -82,36 +82,8 @@ const COLORS = [
   '#ec4899',
 ];
 
-const PRESETS = [
-  {
-    name: '1. 台灣科技前緣',
-    stocks: ['00981A', '00904', '00891', '00913', '00947', '00935'],
-  },
-  {
-    name: '2. 美國科技指數',
-    stocks: ['00924', '00662', '009815', '00830', '00757', '00895'],
-  },
-  {
-    name: '3. 國民高股息',
-    stocks: ['00713', '00915', '00919', '00878', '00929', '0056'],
-  },
-  {
-    name: '4. 美國非投等債',
-    stocks: ['00953B', '00981D', '00741B', '00710B', '00945B', '00727B'],
-  },
-  {
-    name: '5. 美國投等債',
-    stocks: ['00841B', '00746B', '00950B', '00860B', '00985B', '00980B'],
-  },
-  {
-    name: '6. 美國極短債',
-    stocks: ['00719B', '00849B', '00791B', '00865B', '00859B', '00864B'],
-  },
-];
-
-// 「我的常用標的」用瀏覽器 localStorage 記住使用者自己常用的標的組合，
-// 一鍵套用即可取代目前輸入,不用每次都重打;使用者也可隨時按「設為常用」更新這組合。
-const MY_PRESET_STORAGE_KEY = 'twBacktestMyPresetStocks';
+// 快速套用預設組合(PRESETS)與「我的常用標的」localStorage key 已抽到
+// presets.js,供本分頁與 DcaOptimizer.js 分頁共用同一份資料,見該檔註解。
 
 // --- 全域工具函式 ---
 
@@ -1180,9 +1152,6 @@ const App = () => {
   const [adjustStart, setAdjustStart] = useState('');
   const [adjustEnd, setAdjustEnd] = useState('');
 
-  // 我的常用標的(存在瀏覽器 localStorage,僅此裝置/瀏覽器有效)
-  const [myPresetStocks, setMyPresetStocks] = useState(null);
-
   // 標的組合排名表:只在按下「更新排名表」時才重新計算,詳見下方 updateRankingTable。
   const [rankingLoading, setRankingLoading] = useState(false);
   const [rankingError, setRankingError] = useState('');
@@ -1193,20 +1162,6 @@ const App = () => {
   // 排名表(含加碼):只在目前有勾選任一加碼開關時才會一併計算,套用當下的
   // 加碼策略設定(每月固定日期加碼/K線穿越均線加碼)。
   const [rankingDataTopUp, setRankingDataTopUp] = useState(null);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(MY_PRESET_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMyPresetStocks(parsed);
-        }
-      }
-    } catch (e) {
-      // localStorage 不可用(例如無痕模式)時安靜忽略,不影響其餘功能
-    }
-  }, []);
 
   const handleApplyPreset = (presetStocks) => {
     const newInputs = [...presetStocks];
@@ -1232,37 +1187,6 @@ const App = () => {
 
     setEnabledInputs(newEnabled);
     setAllocations(newAllocations);
-  };
-
-  // 一鍵套用「我的常用標的」,取代目前輸入,不用每次重打
-  const handleApplyMyPreset = () => {
-    if (!myPresetStocks || myPresetStocks.length === 0) {
-      alert(
-        '尚未設定「我的常用標的」。請先輸入想要的標的組合,再按旁邊的「設為常用」儲存,之後就能一鍵套用。'
-      );
-      return;
-    }
-    handleApplyPreset(myPresetStocks);
-  };
-
-  // 將目前已啟用的標的組合儲存為「我的常用標的」(存在瀏覽器 localStorage)
-  const handleSaveMyPreset = () => {
-    const current = inputs.filter((s, i) => s !== '' && enabledInputs[i]);
-    if (current.length === 0) {
-      alert('目前沒有已啟用的標的可以儲存,請先輸入至少一檔標的。');
-      return;
-    }
-    try {
-      localStorage.setItem(MY_PRESET_STORAGE_KEY, JSON.stringify(current));
-      setMyPresetStocks(current);
-      alert(
-        `已將目前 ${current.length} 檔標的(${current.join(
-          '、'
-        )})設為常用組合,之後按「我的常用標的」即可一鍵套用。`
-      );
-    } catch (e) {
-      alert('儲存失敗,可能是瀏覽器不支援或已停用本機儲存功能。');
-    }
   };
 
   const toggleIndependentCycleMode = () => {
@@ -4060,65 +3984,13 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-6 min-w-0 space-y-3">
-                <div
-                  className={`flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg border ${
-                    isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-800/50 border-slate-700/50'
-                  }`}
-                >
-                  <span className={`text-xs font-bold mr-2 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                    <Database className="w-4 h-4 inline mr-1" />
-                    快速套用:
-                  </span>
-                  <button
-                    onClick={handleApplyMyPreset}
-                    title={
-                      myPresetStocks
-                        ? `套用我的常用標的: ${myPresetStocks.join('、')}`
-                        : '尚未設定,請先輸入標的後按右側「設為常用」儲存'
-                    }
-                    className={`text-xs px-3 py-1.5 rounded-md transition-colors border flex items-center gap-1 font-bold ${
-                      isLight
-                        ? 'bg-amber-50 hover:bg-amber-600 hover:text-white text-amber-700 border-amber-300 hover:border-amber-500'
-                        : 'bg-amber-900/30 hover:bg-amber-600 hover:text-white text-amber-300 border-amber-700/60 hover:border-amber-500'
-                    }`}
-                  >
-                    <Star className="w-3.5 h-3.5" /> 常用
-                  </button>
-                  <button
-                    onClick={handleSaveMyPreset}
-                    title="將目前輸入的標的組合儲存為「我的常用標的」"
-                    className={`text-xs px-2 py-1.5 rounded-md transition-colors border flex items-center gap-1 ${
-                      isLight
-                        ? 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
-                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600'
-                    }`}
-                  >
-                    <Save className="w-3.5 h-3.5" /> 設為常用
-                  </button>
-                  {PRESETS.map((preset, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleApplyPreset(preset.stocks)}
-                      className={`text-xs px-3 py-1.5 rounded-md transition-colors border hover:bg-emerald-600 hover:text-white hover:border-emerald-500 ${
-                        isLight
-                          ? 'bg-slate-200 text-slate-700 border-slate-300'
-                          : 'bg-slate-700 text-slate-300 border-slate-600'
-                      }`}
-                    >
-                      {preset.name}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => handleApplyPreset(['', '', '', '', '', ''])}
-                    className={`text-xs px-3 py-1.5 rounded-md transition-colors border hover:bg-rose-600 hover:text-white ml-auto ${
-                      isLight
-                        ? 'bg-rose-50 text-rose-600 border-rose-300 hover:border-rose-500'
-                        : 'bg-rose-900/40 text-rose-300 border-rose-800 hover:border-rose-500'
-                    }`}
-                  >
-                    清空
-                  </button>
-                </div>
+                <QuickApplyBar
+                  isLight={isLight}
+                  onApply={handleApplyPreset}
+                  getCurrentStocks={() =>
+                    inputs.filter((s, i) => s !== '' && enabledInputs[i])
+                  }
+                />
 
                 <div className="flex justify-between items-end mb-1">
                   <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
