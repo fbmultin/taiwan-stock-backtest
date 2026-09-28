@@ -21,6 +21,7 @@ import {
   fetchStockDisplayName,
   fetchCapitalSnapshot,
   fetchEtfUnitsSnapshot,
+  fetchEtfFeesSnapshot,
 } from './dataCache';
 import { isNonTradingDay, getLastCompletedTradingDay } from './tradingCalendar';
 import {
@@ -1827,16 +1828,17 @@ const App = () => {
       const benchmarkPromise = calcBeta
         ? fetchIndexPriceData('^TWII')
         : Promise.resolve(null);
-      // 個股股本/ETF發行單位數:官方一次性快照,不論這次比較幾檔標的都只打
-      // 這兩次 API(有快取時甚至完全不打),不會像股價那樣逐檔查詢拖慢速度;
-      // 一樣跟股價、大盤指數平行抓取,不會多佔用時間。抓失敗就當作查不到、
-      // 卡片不顯示這兩個資訊,不影響回測本身。
-      const [rawResults, benchmarkResult, capitalSnapshot, etfUnitsSnapshot] =
+      // 個股股本/ETF發行單位數/ETF總費用率:都是一次性快照(不論這次比較
+      // 幾檔標的都只打固定次數的API,有快取時甚至完全不打),不會像股價那樣
+      // 逐檔查詢拖慢速度;一樣跟股價、大盤指數平行抓取,不會多佔用時間。
+      // 抓失敗就當作查不到、卡片不顯示這些資訊,不影響回測本身。
+      const [rawResults, benchmarkResult, capitalSnapshot, etfUnitsSnapshot, etfFeesSnapshot] =
         await Promise.all([
           Promise.all(promises),
           benchmarkPromise,
           fetchCapitalSnapshot().catch(() => ({})),
           fetchEtfUnitsSnapshot().catch(() => ({})),
+          fetchEtfFeesSnapshot().catch(() => ({})),
         ]);
       const benchmarkReturnsByDate = buildDailyReturnsByDate(
         benchmarkResult?.data
@@ -2370,10 +2372,21 @@ const App = () => {
           const filteredData = rawData;
           if (filteredData.length < 1) return null;
 
-          // 查得到公開年化管理費率(經理費+保管費,%)才會有值,查不到就是 undefined。
-          // 市場成交價本身已經是基金淨值扣除這個費用後的結果,所以這裡只拿來顯示
-          // 「管理費(年化)」這個資訊性徽章,不會再從報酬率額外扣一次,避免重複扣減。
-          const feeRatePct = TW_ETF_FEES[stock.symbol];
+          // 年化總費用率(%)。優先用 etfFeesSnapshot(MoneyDJ「ETF總費用率排行」
+          // 彙整而成,見 dataCache.js fetchEtfFeesSnapshot / api/marketSnapshot.js
+          // 的完整說明)——這是依主管機關規定、基金公司依實際財報揭露的總費用率,
+          // 比土法煉鋼加總「經理費+保管費」名目費率更準確(例如00913,原本人工
+          // 查表估出0.43%,實際總費用率是0.94%)。但這份快照一次只涵蓋境內ETF的
+          // 七成多,查不到才退回用 twEtfFees.js 那份人工維護的小表當備援;兩邊都
+          // 查不到就是 undefined、卡片不顯示。市場成交價本身已經是基金淨值扣除
+          // 這個費用後的結果,所以這裡只拿來顯示資訊性徽章,不會再從報酬率額外
+          // 扣一次,避免重複扣減。
+          const scrapedFeeRatePct = etfFeesSnapshot[stock.symbol];
+          const feeRatePct =
+            scrapedFeeRatePct !== undefined
+              ? scrapedFeeRatePct
+              : TW_ETF_FEES[stock.symbol];
+          const feeRateIsOfficialDisclosure = scrapedFeeRatePct !== undefined;
 
           // 個股股本 vs. ETF資金規模:兩者互斥,一檔標的只會查到其中一種
           // (ETF是信託基金、不是公司,沒有股本;個股不是基金,沒有發行單位數)。
@@ -2785,7 +2798,9 @@ const App = () => {
               : {}),
             // 只有查得到公開費率的 ETF 才會有這個欄位,查不到就不放(而不是塞 0/null),
             // 卡片那邊用「有沒有這個欄位」決定要不要顯示管理費徽章。
-            ...(feeRatePct !== undefined ? { feeRate: feeRatePct } : {}),
+            ...(feeRatePct !== undefined
+              ? { feeRate: feeRatePct, feeRateIsOfficialDisclosure }
+              : {}),
             // 股本/ETF規模,一樣「查得到才放欄位」,查不到卡片就不顯示。
             ...(paidInCapital !== undefined ? { paidInCapital } : {}),
             ...(estimatedFundSize !== undefined ? { estimatedFundSize } : {}),
@@ -5032,9 +5047,15 @@ const App = () => {
                                 >
                                   <span
                                     className={textClass.sub}
-                                    title="這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費),僅供參考。基金公司每天直接從淨值提列這筆費用,不會另外從投資人帳戶扣款,所以左邊算出來的含息報酬本身已經反映了這個成本,不需要也不會再額外扣一次。"
+                                    title={
+                                      item.feeRateIsOfficialDisclosure
+                                        ? '這檔 ETF 依主管機關規定、基金公司依實際財報揭露的年化總費用率(不是公開說明書上「經理費+保管費」的名目費率,實際成本通常會更高一些),資料來自第三方財經網站彙整、每月更新一次,僅供參考。基金公司每天直接從淨值提列這筆費用,不會另外從投資人帳戶扣款,所以左邊算出來的含息報酬本身已經反映了這個成本,不需要也不會再額外扣一次。'
+                                        : '這檔 ETF 公開揭露的年化內扣管理費率(經理費+保管費),僅供參考。基金公司每天直接從淨值提列這筆費用,不會另外從投資人帳戶扣款,所以左邊算出來的含息報酬本身已經反映了這個成本,不需要也不會再額外扣一次。'
+                                    }
                                   >
-                                    管理費(年化)
+                                    {item.feeRateIsOfficialDisclosure
+                                      ? '總費用率(年化)'
+                                      : '管理費(年化)'}
                                   </span>
                                   <span className="font-mono text-fuchsia-500/70">
                                     {item.feeRate.toFixed(2)}%

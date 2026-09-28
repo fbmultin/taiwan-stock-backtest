@@ -830,14 +830,16 @@ export const fetchIndexPriceData = async (symbol = '^TWII') => {
 // 快照,隔天才重新抓」的方式快取,同一天內查詢幾次都不會重複打 API。
 const SNAPSHOT_CACHE_TTL_DAYS = 1;
 
-const loadSnapshotCache = (key) => {
+// ttlDays 可以個別覆寫(例如下面的ETF總費用率,資料源是第三方網站、
+// 不想太頻繁去打對方伺服器,用一個月而不是預設的一天)。
+const loadSnapshotCache = (key, ttlDays = SNAPSHOT_CACHE_TTL_DAYS) => {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || !parsed.fetchedAt || !parsed.map) return null;
     const ageDays = (Date.now() - new Date(parsed.fetchedAt).getTime()) / 86400000;
-    if (ageDays > SNAPSHOT_CACHE_TTL_DAYS) return null;
+    if (ageDays > ttlDays) return null;
     return parsed.map;
   } catch (e) {
     return null;
@@ -912,6 +914,44 @@ export const fetchEtfUnitsSnapshot = async () => {
 
   if (Object.keys(map).length > 0) {
     saveSnapshotCache(ETF_UNITS_SNAPSHOT_CACHE_KEY, map);
+  }
+  return map;
+};
+
+const ETF_FEES_SNAPSHOT_CACHE_KEY = 'etf_fees_snapshot_v1';
+
+// ETF總費用率快取多久才重新抓一次:官方完全沒有這份資料(見
+// api/marketSnapshot.js 裡 buildEtfFeesMap 的完整說明),改抓第三方財經
+// 網站(MoneyDJ)的排行頁面整理而成,這份資料本來就不是每天在變,加上不想
+// 太頻繁去打對方網站,所以用一個月而不是股本/ETF規模那兩個用的一天。
+// 這是瀏覽器端localStorage的快取時間,搭配 api/marketSnapshot.js 那邊
+// Vercel 邊緣快取(30天+30天)一起用,兩層都拉長,實際重新抓取的頻率
+// 大概就是一個月一次上下。
+const ETF_FEES_SNAPSHOT_TTL_DAYS = 30;
+
+// ETF總費用率。跟股本/ETF單位數一樣呼叫同專案的 /api/marketSnapshot 伺服器
+// 端函式取得,只是這裡的資料源(第三方網站MoneyDJ的排行頁面)一次只列
+// 「總費用率由低到高」或「由高到低」排序的前100檔,兩個方向合併大約可以
+// 涵蓋境內ETF的七成多,不是每一檔都查得到——查不到的,呼叫端(App.js)會
+// 退回用 twEtfFees.js 那份人工維護的小表當備援,兩邊都查不到才真的不顯示
+// 這個資訊,不會因為這樣就卡住整個回測或跳錯誤訊息。
+export const fetchEtfFeesSnapshot = async () => {
+  const cached = loadSnapshotCache(ETF_FEES_SNAPSHOT_CACHE_KEY, ETF_FEES_SNAPSHOT_TTL_DAYS);
+  if (cached) return cached;
+
+  let map = {};
+  try {
+    const res = await fetchWithTimeout('/api/marketSnapshot?type=etfFees', {}, 15000);
+    if (res.ok) {
+      const json = await res.json();
+      if (json && typeof json === 'object') map = json;
+    }
+  } catch (e) {
+    // 抓失敗就回傳空表,呼叫端會退回用人工維護的小表,不影響回測本身
+  }
+
+  if (Object.keys(map).length > 0) {
+    saveSnapshotCache(ETF_FEES_SNAPSHOT_CACHE_KEY, map);
   }
   return map;
 };

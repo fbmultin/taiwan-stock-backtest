@@ -15,7 +15,8 @@
 // (公司地址、董事長之類的),回傳的資料也小很多。
 //
 // 用法:/api/marketSnapshot?type=capital 查個股股本、
-//      /api/marketSnapshot?type=etfUnits 查ETF發行單位數。
+//      /api/marketSnapshot?type=etfUnits 查ETF發行單位數、
+//      /api/marketSnapshot?type=etfFees 查ETF總費用率(見下方 buildEtfFeesMap 說明)。
 
 const fetchJson = async (url) => {
   const res = await fetch(url, {
@@ -24,6 +25,18 @@ const fetchJson = async (url) => {
   if (!res.ok) return null;
   try {
     return await res.json();
+  } catch (e) {
+    return null;
+  }
+};
+
+const fetchText = async (url) => {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; taiwan-stock-backtest/1.0)' },
+  });
+  if (!res.ok) return null;
+  try {
+    return await res.text();
   } catch (e) {
     return null;
   }
@@ -85,6 +98,69 @@ const buildEtfUnitsMap = async () => {
   return map;
 };
 
+// --- ETF總費用率(境內約270檔ETF,官方完全沒有這份資料) ---
+//
+// 查證交所(TWSE)、櫃買中心(TPEx)的官方開放資料目錄(逐條核對過兩邊全部的
+// 資料集清單)後確認:兩邊都沒有任何一份「ETF費用率/經理費/保管費」的公開
+// 資料集,這是資料本身的限制,不是我們找不到門路。專案原本(twEtfFees.js)
+// 是人工一檔一檔查基金公司官網/公開說明書手動維護,只收錄了少數幾檔,新標的
+// 沒有登錄就完全不會顯示這個資訊。
+//
+// 改成從 MoneyDJ「ETF總費用率排行」頁面(www.moneydj.com/etf/x/rank/rank0005.xdjhtm)
+// 抓:這是第三方財經網站整理的資料,不是官方,但這個排行的「總費用率」欄位
+// 用的正是主管機關規定基金公司必須依實際財報揭露的「總費用率」數字(不是
+// 公開說明書上那種「經理費+保管費」的名目費率),涵蓋範圍是境內幾乎全部
+// ETF、而且是依規定計算出來的實際數字,比我們自己土法煉鋼加總經理費/保管費
+// 更準確(例如00913,原本人工查表用「經理費0.40%+保管費0.03%」估出0.43%,
+// 但這裡抓到的實際總費用率是0.94%,差了一倍以上,推測是因為主動調整成分股
+// 的交易成本、外國稅負等名目費率沒算進去的額外成本);缺點是這個頁面一次
+// 只列「由低到高」或「由高到低」排序的前100檔,兩個方向都各抓一次、合併起來
+// 大約可以涵蓋200檔上下(全部約270檔,中間費用率不上不下的那些會抓不到,
+// 之後如果有查到還是缺的標的,一樣可以在 twEtfFees.js 手動補一筆當備援)。
+//
+// 這份資料本來就不是每天在變,加上是抓第三方網站、不想太頻繁去打對方的
+// 伺服器,所以只需要大概一個月更新一次;下面 handler 那邊會把這個 type 的
+// 邊緣快取時間設定得比股本/ETF規模那兩個長很多,道理相同。
+const MONEYDJ_FEE_RANK_URLS = [
+  // 總費用率由低到高排序的前100檔
+  'https://www.moneydj.com/etf/x/rank/rank0005.xdjhtm?erank=allex&eord=t100160&esort=2',
+  // 總費用率由高到低排序的前100檔(跟上面那個實測完全不重複,兩個合併
+  // 大約可以蓋到全部ETF的七成多)
+  'https://www.moneydj.com/etf/x/rank/rank0005.xdjhtm?erank=allex&eord=t100160&esort=1',
+];
+
+// 這個排行頁面是傳統伺服器端渲染的HTML表格(不是前端SPA打API組出來的),
+// 直接用簡單的規則比對抓「代碼」跟「col10」(表頭核對過是「總費用率」那一欄,
+// col09 是「管理費」單一數字、不是總費用率,兩者不一樣,不要抓錯欄)這兩個
+// 值就好,不需要引入完整的HTML parser函式庫。用 <tr 切開成一列一列,每一列
+// 各自找「etfid='代碼.TW'」跟「col10">數字」,兩個都找得到才算一筆有效資料;
+// 找不到就跳過(例如表頭那一列、或頁面上其他跟這個表格無關的區塊)。
+const parseFeeRankingPage = (html) => {
+  const map = {};
+  if (typeof html !== 'string') return map;
+  const rows = html.split('<tr');
+  rows.forEach((row) => {
+    const codeMatch = row.match(/etfid='([^'.]+)\.TW'/);
+    const totalMatch = row.match(/class="col10">([^<]*)</);
+    if (!codeMatch || !totalMatch) return;
+    const symbol = codeMatch[1];
+    const totalExpenseRatio = parseFloat(totalMatch[1]);
+    if (symbol && Number.isFinite(totalExpenseRatio)) {
+      map[symbol] = totalExpenseRatio;
+    }
+  });
+  return map;
+};
+
+const buildEtfFeesMap = async () => {
+  const map = {};
+  for (const url of MONEYDJ_FEE_RANK_URLS) {
+    const html = await fetchText(url).catch(() => null);
+    Object.assign(map, parseFeeRankingPage(html));
+  }
+  return map;
+};
+
 // 用 module.exports(CommonJS)而不是 export default:專案的 package.json
 // 沒有設定 "type": "module",用 CommonJS 是 Vercel Node.js Function 保證
 // 相容的寫法,不必依賴建置工具是否自動判斷/轉譯 ESM 語法。
@@ -93,22 +169,29 @@ module.exports = async function handler(req, res) {
 
   try {
     let map = {};
+    let cacheControl = 's-maxage=43200, stale-while-revalidate=86400';
     if (type === 'capital') {
       map = await buildCapitalMap();
     } else if (type === 'etfUnits') {
       map = await buildEtfUnitsMap();
+    } else if (type === 'etfFees') {
+      map = await buildEtfFeesMap();
+      // 這份改抓第三方網站,不想太頻繁去打對方伺服器,邊緣快取設定成
+      // 30天(s-maxage)+30天(stale-while-revalidate),等於最長大概兩個月
+      // 才會真的重新抓一次;抓不到某檔本來就當作「這批沒收錄」處理,
+      // 不需要因為這樣就縮短快取時間、逼近更頻繁地重抓。
+      cacheControl = 's-maxage=2592000, stale-while-revalidate=2592000';
     } else {
-      res.status(400).json({ error: 'invalid type, expected capital or etfUnits' });
+      res
+        .status(400)
+        .json({ error: 'invalid type, expected capital, etfUnits or etfFees' });
       return;
     }
 
-    // 這份資料一天內不會變,交給 Vercel 邊緣快取 12 小時,減少重複打政府網站
-    // API 的次數;stale-while-revalidate 讓快取過期的那次查詢先回舊資料,
-    // 背景重新整理,使用者不會因為快取剛好過期就多等一次完整抓取時間。
-    res.setHeader(
-      'Cache-Control',
-      's-maxage=43200, stale-while-revalidate=86400'
-    );
+    // 這份資料一天內不會變,交給 Vercel 邊緣快取一段時間,減少重複打對方
+    // API/網站的次數;stale-while-revalidate 讓快取過期的那次查詢先回舊
+    // 資料,背景重新整理,使用者不會因為快取剛好過期就多等一次完整抓取時間。
+    res.setHeader('Cache-Control', cacheControl);
     res.status(200).json(map);
   } catch (e) {
     res.status(502).json({ error: 'upstream fetch failed' });
