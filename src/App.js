@@ -1649,6 +1649,11 @@ const App = () => {
         // 這裡若改用本地時區(getFullYear/setMonth)在台灣(UTC+8)執行時,
         // 會跟股價資料的日期基準對不齊,導致抓到的結束日比預期少一天。
         rangeStart = new Date(Date.UTC(rangeStart.getUTCFullYear(), 0, 1));
+      } else if (timeRange === '5d' || timeRange === '10d' || timeRange === '20d') {
+        // 短天期(5日/10日/20日):以日曆天數往回推,起始日若落在非交易日,
+        // 下方既有的「起始日避開非交易日」邏輯會自動往後推到最近一個交易日。
+        const days = timeRange === '5d' ? 5 : timeRange === '10d' ? 10 : 20;
+        rangeStart.setUTCDate(rangeStart.getUTCDate() - days);
       } else {
         const months =
           timeRange === '3m'
@@ -3816,7 +3821,7 @@ const App = () => {
                     回測投資年限
                   </label>
                   <div className="grid grid-cols-3 gap-1">
-                    {['ytd', '3m', '6m', '12m', '2y', '3y', '5y'].map((t) => (
+                    {['ytd', '3m', '6m', '12m', '2y', '3y', '5y', '5d', '10d', '20d'].map((t) => (
                       <button
                         key={t}
                         onClick={() => setTimeRange(t)}
@@ -3838,7 +3843,13 @@ const App = () => {
                           ? '近2年'
                           : t === '3y'
                           ? '近3年'
-                          : '近5年'}
+                          : t === '5y'
+                          ? '近5年'
+                          : t === '5d'
+                          ? '05日'
+                          : t === '10d'
+                          ? '10日'
+                          : '20日'}
                       </button>
                     ))}
                     {/* 常用的固定起始日快捷鈕:點擊即把起始日設為該固定日期、結束日固定為今天,
@@ -4312,7 +4323,13 @@ const App = () => {
                       ? '近2年'
                       : timeRange === '3y'
                       ? '近3年'
-                      : '近5年'}
+                      : timeRange === '5y'
+                      ? '近5年'
+                      : timeRange === '5d'
+                      ? '近05日'
+                      : timeRange === '10d'
+                      ? '近10日'
+                      : '近20日'}
                   </span>
                   {comparisonInfo && (
                     <>
