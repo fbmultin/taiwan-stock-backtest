@@ -1490,15 +1490,11 @@ const App = () => {
                     >
                       <div className="flex flex-col items-center leading-tight">
                         <span
-                          className={`font-bold ${
+                          className={
                             rank === 1
-                              ? isLight
-                                ? 'text-rose-600'
-                                : 'text-rose-400'
-                              : isLight
-                              ? 'text-slate-600'
-                              : 'text-slate-300'
-                          }`}
+                              ? `font-extrabold text-base ${isLight ? 'text-rose-600' : 'text-rose-400'}`
+                              : `font-bold ${isLight ? 'text-slate-600' : 'text-slate-300'}`
+                          }
                         >
                           {rank ?? '—'}
                         </span>
