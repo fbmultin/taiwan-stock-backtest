@@ -221,10 +221,21 @@ export function estimateFee(group, price, shares) {
   return Math.max(Math.round(raw), Math.round(minFee || 0));
 }
 
-// 證交稅:賣出 0.3%(ETF 目前多數是 0.1%,這裡先用一般股票 0.3% 當預設,
-// 之後若要更精準可以比照 twEtfFees.js 的方式做對照表)。
-export function estimateTax(price, shares, isDayTrade = false) {
-  return Math.round(price * shares * 0.001 * (isDayTrade ? 0.5 : 1));
+// 粗略判斷代號是不是ETF:台灣證交所的ETF(含ETN、槓反、債券、主動式ETF)
+// 編號慣例全部以「00」開頭(0050、0056、00878、00631L...),一般個股則是
+// 4碼不以00開頭。證交稅就是用這個規則區分——ETF證交稅千分之1,一般股票是
+// 三倍的千分之3,猜錯會讓已實現/估計出場損益差出好幾倍的稅額。這只是慣例
+// 判斷不保證100%準確,所以新增交易時仍保留手動切換的選項。
+export function isLikelyETF(symbol) {
+  return /^00/.test(String(symbol || '').trim());
+}
+
+// 證交稅:一般股票千分之3,ETF(含ETN、槓反、債券ETF等)千分之1,當沖(同一天
+// 同股票先買後賣)不分ETF或個股都再減半。taxRate 由呼叫端依 isLikelyETF 或
+// 使用者手動切換的結果傳入;沒有傳的話預設用一般股票的千分之3(比較保守,
+// 高估稅額好過低估)。
+export function estimateTax(price, shares, { isDayTrade = false, taxRate = 0.003 } = {}) {
+  return Math.round(price * shares * taxRate * (isDayTrade ? 0.5 : 1));
 }
 
 // 判斷一筆賣出交易是否算「當沖」:同一天、同一檔股票,交易紀錄裡已經有買進
@@ -374,7 +385,8 @@ export function computeSymbolSummary(
   const lastGroupId = sorted.length ? sorted[sorted.length - 1].groupId : null;
   const exitGroup = groups.find((g) => g.id === lastGroupId) || groups[0] || null;
   const estimatedExitFee = shares > 0 ? estimateFee(exitGroup, currentPrice, shares) : 0;
-  const estimatedExitTax = shares > 0 ? estimateTax(currentPrice, shares) : 0;
+  const exitTaxRate = isLikelyETF(sorted.length ? sorted[sorted.length - 1].symbol : null) ? 0.001 : 0.003;
+  const estimatedExitTax = shares > 0 ? estimateTax(currentPrice, shares, { taxRate: exitTaxRate }) : 0;
   const estimatedExitCost = estimatedExitFee + estimatedExitTax;
   const unrealizedPnl = marketValue - costBasis - estimatedExitCost;
   const realizedPnl = realizedCapitalGain + cashDividend;

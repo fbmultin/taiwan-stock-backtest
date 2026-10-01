@@ -37,6 +37,7 @@ import {
   estimateFee,
   estimateTax,
   isDayTradeSell,
+  isLikelyETF,
   stepPrice,
   netShareDelta,
   computeSymbolSummary,
@@ -156,7 +157,16 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [priceLoading, setPriceLoading] = useState(false);
   const priceTouchedRef = useRef(isEdit); // 編輯既有交易時視為「已手動設定」,不要被自動帶入蓋掉
+  const [isEtfTax, setIsEtfTax] = useState(() => isLikelyETF(symbol));
+  const taxRateTouchedRef = useRef(isEdit);
   const nameGuess = TW_STOCK_NAMES[symbol.toUpperCase()] || '';
+
+  // 代號改變時,如果使用者還沒手動切換過證交稅稅率,就依代號猜測是ETF(千分之1)
+  // 還是一般股票(千分之3)——猜錯會讓估計的已實現/出場損益差到好幾倍的稅額。
+  useEffect(() => {
+    if (taxRateTouchedRef.current) return;
+    setIsEtfTax(isLikelyETF(symbol));
+  }, [symbol]);
 
   // 新增買進/賣出交易時,價格欄位預設帶入最近一個已知收盤價(這裡沿用整個
   // 專案統一的「資料抓取基準日」規則——台灣時間下午3:30後用當天,之前用
@@ -213,7 +223,8 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     symbol.trim() &&
     date &&
     isDayTradeSell(data.transactions, symbol.trim().toUpperCase(), date, isEdit ? initial.id : null);
-  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, isDayTrade) : 0;
+  const taxRate = isEtfTax ? 0.001 : 0.003;
+  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { isDayTrade, taxRate }) : 0;
   const computedAmount =
     type === TX_TYPES.BUY
       ? -(priceNum * sharesNum + fee)
@@ -510,6 +521,37 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     <span>60%</span>
                     <span>80%</span>
                     <span>100%</span>
+                  </div>
+                </div>
+              )}
+              {type === TX_TYPES.SELL && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">證交稅稅率</span>
+                  <div className={`flex rounded-full p-0.5 ${isLight ? 'bg-slate-100' : 'bg-slate-800'}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        taxRateTouchedRef.current = true;
+                        setIsEtfTax(true);
+                      }}
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        isEtfTax ? 'bg-amber-500 text-white' : 'opacity-60'
+                      }`}
+                    >
+                      ETF 0.1%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        taxRateTouchedRef.current = true;
+                        setIsEtfTax(false);
+                      }}
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        !isEtfTax ? 'bg-amber-500 text-white' : 'opacity-60'
+                      }`}
+                    >
+                      一般股票 0.3%
+                    </button>
                   </div>
                 </div>
               )}
