@@ -42,9 +42,15 @@ const defaultGroup = () => ({
   id: uid(),
   name: '我的持股',
   color: DEFAULT_GROUP_COLORS[0],
-  feeDiscountPct: 100, // 手續費優惠(折數的百分比表示,100 = 不打折)
-  minFeeNormal: 20, // 一般交易手續費低消(元)
-  minFeeOdd: 20, // 零股交易手續費低消(元)
+  // 手續費優惠跟低消,ETF跟一般股票很多券商會分開報價(各自的折數活動、低消
+  // 門檻不一樣),所以這裡分成兩組獨立設定,新增交易時依代號自動判斷套用
+  // 哪一組(也可以手動切換)。折數是百分比表示,100 = 不打折。
+  etfFeeDiscountPct: 100,
+  etfMinFeeNormal: 20, // ETF一般交易手續費低消(元)
+  etfMinFeeOdd: 20, // ETF零股交易手續費低消(元)
+  stockFeeDiscountPct: 100,
+  stockMinFeeNormal: 20, // 一般股票交易手續費低消(元)
+  stockMinFeeOdd: 20, // 一般股票零股交易手續費低消(元)
   createdAt: Date.now(),
   order: 0,
 });
@@ -60,6 +66,25 @@ function defaultData() {
   };
 }
 
+// 把舊版資料(只有一組 feeDiscountPct/minFeeNormal/minFeeOdd,不分ETF跟一般
+// 股票)搬到新的欄位,ETF跟一般股票先沿用原本那組數字當起始值,之後使用者可以
+// 在群組設定裡各自調整。已經是新版格式(存在 etfFeeDiscountPct 等欄位)的
+// 群組就原封不動,不會覆蓋使用者已經設定好的值。
+function migrateGroup(g) {
+  const legacyDiscount = typeof g.feeDiscountPct === 'number' ? g.feeDiscountPct : 100;
+  const legacyMinNormal = typeof g.minFeeNormal === 'number' ? g.minFeeNormal : 20;
+  const legacyMinOdd = typeof g.minFeeOdd === 'number' ? g.minFeeOdd : 20;
+  return {
+    ...g,
+    etfFeeDiscountPct: typeof g.etfFeeDiscountPct === 'number' ? g.etfFeeDiscountPct : legacyDiscount,
+    etfMinFeeNormal: typeof g.etfMinFeeNormal === 'number' ? g.etfMinFeeNormal : legacyMinNormal,
+    etfMinFeeOdd: typeof g.etfMinFeeOdd === 'number' ? g.etfMinFeeOdd : legacyMinOdd,
+    stockFeeDiscountPct: typeof g.stockFeeDiscountPct === 'number' ? g.stockFeeDiscountPct : legacyDiscount,
+    stockMinFeeNormal: typeof g.stockMinFeeNormal === 'number' ? g.stockMinFeeNormal : legacyMinNormal,
+    stockMinFeeOdd: typeof g.stockMinFeeOdd === 'number' ? g.stockMinFeeOdd : legacyMinOdd,
+  };
+}
+
 export function loadPortfolioData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -70,7 +95,7 @@ export function loadPortfolioData() {
     }
     return {
       version: 1,
-      groups: parsed.groups,
+      groups: parsed.groups.map(migrateGroup),
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
       transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
       activeGroupId: parsed.activeGroupId || parsed.groups[0].id,
@@ -212,12 +237,17 @@ export function moveSymbolsToGroup(data, symbols, groupId) {
 
 // 依群組的手續費優惠設定,算出一筆買賣交易的手續費(四捨五入到整數元)。
 // 零股(不足1000股)用「零股交易手續費低消」,整張交易用「一般交易手續費低消」。
-export function estimateFee(group, price, shares) {
+// 很多券商ETF跟一般股票的折數、低消門檻是分開報價的,所以群組底下分成兩組
+// 獨立設定,由 isEtf 決定要用哪一組(預設為一般股票)。
+export function estimateFee(group, price, shares, isEtf = false) {
   if (!group || !price || !shares) return 0;
   const isOddLot = shares % 1000 !== 0;
-  const minFee = isOddLot ? group.minFeeOdd : group.minFeeNormal;
-  const discountPct = typeof group.feeDiscountPct === 'number' ? group.feeDiscountPct : 100;
-  const raw = price * shares * 0.001425 * (discountPct / 100);
+  const discountPct = isEtf ? group.etfFeeDiscountPct : group.stockFeeDiscountPct;
+  const minFeeNormal = isEtf ? group.etfMinFeeNormal : group.stockMinFeeNormal;
+  const minFeeOdd = isEtf ? group.etfMinFeeOdd : group.stockMinFeeOdd;
+  const minFee = isOddLot ? minFeeOdd : minFeeNormal;
+  const effectiveDiscountPct = typeof discountPct === 'number' ? discountPct : 100;
+  const raw = price * shares * 0.001425 * (effectiveDiscountPct / 100);
   return Math.max(Math.round(raw), Math.round(minFee || 0));
 }
 
@@ -384,9 +414,9 @@ export function computeSymbolSummary(
   // 股票目前所屬群組(以最後一筆交易的群組為準)的優惠折數/低消設定。
   const lastGroupId = sorted.length ? sorted[sorted.length - 1].groupId : null;
   const exitGroup = groups.find((g) => g.id === lastGroupId) || groups[0] || null;
-  const estimatedExitFee = shares > 0 ? estimateFee(exitGroup, currentPrice, shares) : 0;
-  const exitTaxRate = isLikelyETF(sorted.length ? sorted[sorted.length - 1].symbol : null) ? 0.001 : 0.003;
-  const estimatedExitTax = shares > 0 ? estimateTax(currentPrice, shares, { taxRate: exitTaxRate }) : 0;
+  const exitIsEtf = isLikelyETF(sorted.length ? sorted[sorted.length - 1].symbol : null);
+  const estimatedExitFee = shares > 0 ? estimateFee(exitGroup, currentPrice, shares, exitIsEtf) : 0;
+  const estimatedExitTax = shares > 0 ? estimateTax(currentPrice, shares, { taxRate: exitIsEtf ? 0.001 : 0.003 }) : 0;
   const estimatedExitCost = estimatedExitFee + estimatedExitTax;
   const unrealizedPnl = marketValue - costBasis - estimatedExitCost;
   const realizedPnl = realizedCapitalGain + cashDividend;

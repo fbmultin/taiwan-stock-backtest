@@ -150,22 +150,29 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   });
   const [fixedFee, setFixedFee] = useState(false);
   const [manualFee, setManualFee] = useState(initial && initial.fee ? String(initial.fee) : '');
-  const [feeDiscountPct, setFeeDiscountPct] = useState(() => {
+  // ETF跟一般股票的手續費優惠分開存,新增交易時依代號自動套用對應那組(也可
+  // 以用下面的「商品類型」切換手動覆蓋),跟證交稅的判斷邏輯共用同一個開關。
+  const [etfFeeDiscountPct, setEtfFeeDiscountPct] = useState(() => {
     const g = data.groups.find((x) => x.id === groupId);
-    return g ? g.feeDiscountPct : 100;
+    return g && typeof g.etfFeeDiscountPct === 'number' ? g.etfFeeDiscountPct : 100;
+  });
+  const [stockFeeDiscountPct, setStockFeeDiscountPct] = useState(() => {
+    const g = data.groups.find((x) => x.id === groupId);
+    return g && typeof g.stockFeeDiscountPct === 'number' ? g.stockFeeDiscountPct : 100;
   });
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [priceLoading, setPriceLoading] = useState(false);
   const priceTouchedRef = useRef(isEdit); // 編輯既有交易時視為「已手動設定」,不要被自動帶入蓋掉
-  const [isEtfTax, setIsEtfTax] = useState(() => isLikelyETF(symbol));
-  const taxRateTouchedRef = useRef(isEdit);
+  const [isEtf, setIsEtf] = useState(() => isLikelyETF(symbol));
+  const etfTouchedRef = useRef(isEdit);
   const nameGuess = TW_STOCK_NAMES[symbol.toUpperCase()] || '';
 
-  // 代號改變時,如果使用者還沒手動切換過證交稅稅率,就依代號猜測是ETF(千分之1)
-  // 還是一般股票(千分之3)——猜錯會讓估計的已實現/出場損益差到好幾倍的稅額。
+  // 代號改變時,如果使用者還沒手動切換過「商品類型」,就依代號猜測是ETF還是
+  // 一般股票——這個判斷同時決定手續費優惠套用哪一組、證交稅稅率千分之1還是3,
+  // 猜錯會讓估計的手續費、已實現/出場損益差到好幾倍。
   useEffect(() => {
-    if (taxRateTouchedRef.current) return;
-    setIsEtfTax(isLikelyETF(symbol));
+    if (etfTouchedRef.current) return;
+    setIsEtf(isLikelyETF(symbol));
   }, [symbol]);
 
   // 新增買進/賣出交易時,價格欄位預設帶入最近一個已知收盤價(這裡沿用整個
@@ -215,7 +222,10 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     return computeSymbolSummary(txs).shares;
   }, [symbolUpper, data.transactions, isEdit, initial]);
   const isBuySell = type === TX_TYPES.BUY || type === TX_TYPES.SELL;
-  const autoFee = isBuySell ? estimateFee({ ...group, feeDiscountPct }, priceNum, sharesNum) : 0;
+  const activeFeeDiscountPct = isEtf ? etfFeeDiscountPct : stockFeeDiscountPct;
+  const autoFee = isBuySell
+    ? estimateFee({ ...group, etfFeeDiscountPct, stockFeeDiscountPct }, priceNum, sharesNum, isEtf)
+    : 0;
   const fee = fixedFee ? parseFloat(manualFee) || 0 : autoFee;
   // 當沖判斷:同一天、同一檔股票的交易紀錄裡已經有買進,賣出的證交稅就減半。
   const isDayTrade =
@@ -223,7 +233,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     symbol.trim() &&
     date &&
     isDayTradeSell(data.transactions, symbol.trim().toUpperCase(), date, isEdit ? initial.id : null);
-  const taxRate = isEtfTax ? 0.001 : 0.003;
+  const taxRate = isEtf ? 0.001 : 0.003;
   const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { isDayTrade, taxRate }) : 0;
   const computedAmount =
     type === TX_TYPES.BUY
@@ -423,7 +433,8 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       setGroupId(g.id);
-                      setFeeDiscountPct(g.feeDiscountPct);
+                      setEtfFeeDiscountPct(typeof g.etfFeeDiscountPct === 'number' ? g.etfFeeDiscountPct : 100);
+                      setStockFeeDiscountPct(typeof g.stockFeeDiscountPct === 'number' ? g.stockFeeDiscountPct : 100);
                       setShowGroupPicker(false);
                     }}
                     className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm ${
@@ -470,6 +481,36 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
           {isBuySell && (
             <div className={`pt-3 mt-1 border-t ${isLight ? 'border-slate-100' : 'border-slate-800'} space-y-3`}>
               <div className="flex items-center justify-between">
+                <span className="text-sm">商品類型</span>
+                <div className={`flex rounded-full p-0.5 ${isLight ? 'bg-slate-100' : 'bg-slate-800'}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      etfTouchedRef.current = true;
+                      setIsEtf(true);
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      isEtf ? 'bg-amber-500 text-white' : 'opacity-60'
+                    }`}
+                  >
+                    ETF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      etfTouchedRef.current = true;
+                      setIsEtf(false);
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      !isEtf ? 'bg-amber-500 text-white' : 'opacity-60'
+                    }`}
+                  >
+                    一般股票
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
                 <span className="text-sm">固定手續費</span>
                 <button
                   type="button"
@@ -503,15 +544,19 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                   }`}
                 >
                   <div className="flex items-center justify-between text-sm mb-2">
-                    <span>手續費優惠</span>
-                    <span className="font-mono font-bold">{feeDiscountPct}%</span>
+                    <span>手續費優惠({isEtf ? 'ETF' : '一般股票'})</span>
+                    <span className="font-mono font-bold">{activeFeeDiscountPct}%</span>
                   </div>
                   <input
                     type="range"
                     min="0"
                     max="100"
-                    value={feeDiscountPct}
-                    onChange={(e) => setFeeDiscountPct(parseInt(e.target.value, 10))}
+                    value={activeFeeDiscountPct}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (isEtf) setEtfFeeDiscountPct(v);
+                      else setStockFeeDiscountPct(v);
+                    }}
                     className="w-full accent-amber-500"
                   />
                   <div className="flex justify-between text-[10px] opacity-50 font-mono mt-1">
@@ -524,42 +569,11 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                   </div>
                 </div>
               )}
-              {type === TX_TYPES.SELL && (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">證交稅稅率</span>
-                  <div className={`flex rounded-full p-0.5 ${isLight ? 'bg-slate-100' : 'bg-slate-800'}`}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        taxRateTouchedRef.current = true;
-                        setIsEtfTax(true);
-                      }}
-                      className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        isEtfTax ? 'bg-amber-500 text-white' : 'opacity-60'
-                      }`}
-                    >
-                      ETF 0.1%
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        taxRateTouchedRef.current = true;
-                        setIsEtfTax(false);
-                      }}
-                      className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        !isEtfTax ? 'bg-amber-500 text-white' : 'opacity-60'
-                      }`}
-                    >
-                      一般股票 0.3%
-                    </button>
-                  </div>
-                </div>
-              )}
               <div className="text-xs opacity-60 flex justify-between">
                 <span>試算手續費:{formatMoney(fee)} 元</span>
                 {type === TX_TYPES.SELL && (
                   <span>
-                    證交稅:{formatMoney(tax)} 元{isDayTrade ? '(當沖減半)' : ''}
+                    證交稅({isEtf ? '0.1%' : '0.3%'}):{formatMoney(tax)} 元{isDayTrade ? '(當沖減半)' : ''}
                   </span>
                 )}
               </div>
@@ -779,9 +793,24 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
 function GroupEditorModal({ isLight, group, isNew, onClose, onSave, onDelete }) {
   const [name, setName] = useState(group?.name || '新群組');
   const [color, setColor] = useState(group?.color || DEFAULT_GROUP_COLORS[0]);
-  const [feeDiscountPct, setFeeDiscountPct] = useState(group?.feeDiscountPct ?? 100);
-  const [minFeeNormal, setMinFeeNormal] = useState(group?.minFeeNormal ?? 20);
-  const [minFeeOdd, setMinFeeOdd] = useState(group?.minFeeOdd ?? 20);
+  // ETF跟一般股票的手續費優惠、低消各自獨立設定(很多券商兩邊報價不一樣),
+  // 新增交易時依代號自動套用對應那組,這裡用一個分頁切換來編輯,避免表單
+  // 一次塞兩組設定、要一直往下滑。
+  const [feeTab, setFeeTab] = useState('etf');
+  const [etfFeeDiscountPct, setEtfFeeDiscountPct] = useState(group?.etfFeeDiscountPct ?? 100);
+  const [etfMinFeeNormal, setEtfMinFeeNormal] = useState(group?.etfMinFeeNormal ?? 20);
+  const [etfMinFeeOdd, setEtfMinFeeOdd] = useState(group?.etfMinFeeOdd ?? 20);
+  const [stockFeeDiscountPct, setStockFeeDiscountPct] = useState(group?.stockFeeDiscountPct ?? 100);
+  const [stockMinFeeNormal, setStockMinFeeNormal] = useState(group?.stockMinFeeNormal ?? 20);
+  const [stockMinFeeOdd, setStockMinFeeOdd] = useState(group?.stockMinFeeOdd ?? 20);
+
+  const isEtfTab = feeTab === 'etf';
+  const feeDiscountPct = isEtfTab ? etfFeeDiscountPct : stockFeeDiscountPct;
+  const setFeeDiscountPct = isEtfTab ? setEtfFeeDiscountPct : setStockFeeDiscountPct;
+  const minFeeNormal = isEtfTab ? etfMinFeeNormal : stockMinFeeNormal;
+  const setMinFeeNormal = isEtfTab ? setEtfMinFeeNormal : setStockMinFeeNormal;
+  const minFeeOdd = isEtfTab ? etfMinFeeOdd : stockMinFeeOdd;
+  const setMinFeeOdd = isEtfTab ? setEtfMinFeeOdd : setStockMinFeeOdd;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
@@ -829,41 +858,80 @@ function GroupEditorModal({ isLight, group, isNew, onClose, onSave, onDelete }) 
             </div>
           </div>
 
-          <div className={`border rounded-xl px-4 py-3 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
-            <div className="flex items-center justify-between text-sm mb-2">
-              <span>預設手續費優惠</span>
-              <span className="font-mono font-bold">{feeDiscountPct}%</span>
+          <div>
+            <div className="flex items-center justify-between text-sm mb-2 opacity-70">
+              <span>手續費設定</span>
+              <span className="text-xs opacity-60">新增交易依代號(00開頭)自動套用</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={feeDiscountPct}
-              onChange={(e) => setFeeDiscountPct(parseInt(e.target.value, 10))}
-              className="w-full accent-amber-500"
-            />
-          </div>
+            <div className={`flex rounded-full p-0.5 mb-3 ${isLight ? 'bg-slate-100' : 'bg-slate-800'}`}>
+              <button
+                type="button"
+                onClick={() => setFeeTab('etf')}
+                className={`flex-1 px-3 py-1.5 rounded-full text-xs font-bold ${
+                  isEtfTab ? 'bg-amber-500 text-white' : 'opacity-60'
+                }`}
+              >
+                ETF
+              </button>
+              <button
+                type="button"
+                onClick={() => setFeeTab('stock')}
+                className={`flex-1 px-3 py-1.5 rounded-full text-xs font-bold ${
+                  !isEtfTab ? 'bg-amber-500 text-white' : 'opacity-60'
+                }`}
+              >
+                一般股票
+              </button>
+            </div>
 
-          <FieldBox label="一般交易手續費低消" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
-            <input
-              type="number"
-              value={minFeeNormal}
-              onChange={(e) => setMinFeeNormal(parseFloat(e.target.value) || 0)}
-              className={`flex-1 bg-transparent outline-none text-lg font-mono font-bold ${
-                isLight ? 'text-slate-900' : 'text-white'
-              }`}
-            />
-          </FieldBox>
-          <FieldBox label="零股交易手續費低消" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
-            <input
-              type="number"
-              value={minFeeOdd}
-              onChange={(e) => setMinFeeOdd(parseFloat(e.target.value) || 0)}
-              className={`flex-1 bg-transparent outline-none text-lg font-mono font-bold ${
-                isLight ? 'text-slate-900' : 'text-white'
-              }`}
-            />
-          </FieldBox>
+            <div
+              className={`border rounded-xl px-4 py-3 mb-3 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}
+            >
+              <div className="flex items-center justify-between text-sm mb-2">
+                <span>{isEtfTab ? 'ETF' : '一般股票'}手續費優惠</span>
+                <span className="font-mono font-bold">{feeDiscountPct}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={feeDiscountPct}
+                onChange={(e) => setFeeDiscountPct(parseInt(e.target.value, 10))}
+                className="w-full accent-amber-500"
+              />
+            </div>
+
+            <div className="space-y-4">
+              <FieldBox
+                label={`${isEtfTab ? 'ETF' : '一般股票'}一般交易手續費低消`}
+                icon={<span className="opacity-60 font-mono">$</span>}
+                isLight={isLight}
+              >
+                <input
+                  type="number"
+                  value={minFeeNormal}
+                  onChange={(e) => setMinFeeNormal(parseFloat(e.target.value) || 0)}
+                  className={`flex-1 bg-transparent outline-none text-lg font-mono font-bold ${
+                    isLight ? 'text-slate-900' : 'text-white'
+                  }`}
+                />
+              </FieldBox>
+              <FieldBox
+                label={`${isEtfTab ? 'ETF' : '一般股票'}零股交易手續費低消`}
+                icon={<span className="opacity-60 font-mono">$</span>}
+                isLight={isLight}
+              >
+                <input
+                  type="number"
+                  value={minFeeOdd}
+                  onChange={(e) => setMinFeeOdd(parseFloat(e.target.value) || 0)}
+                  className={`flex-1 bg-transparent outline-none text-lg font-mono font-bold ${
+                    isLight ? 'text-slate-900' : 'text-white'
+                  }`}
+                />
+              </FieldBox>
+            </div>
+          </div>
 
           <div className="flex gap-2 pt-2">
             {!isNew && (
@@ -877,7 +945,16 @@ function GroupEditorModal({ isLight, group, isNew, onClose, onSave, onDelete }) 
             )}
             <button
               onClick={() =>
-                onSave({ name: name.trim() || '未命名群組', color, feeDiscountPct, minFeeNormal, minFeeOdd })
+                onSave({
+                  name: name.trim() || '未命名群組',
+                  color,
+                  etfFeeDiscountPct,
+                  etfMinFeeNormal,
+                  etfMinFeeOdd,
+                  stockFeeDiscountPct,
+                  stockMinFeeNormal,
+                  stockMinFeeOdd,
+                })
               }
               className="flex-1 py-3 rounded-full bg-amber-500 text-white font-bold text-sm"
             >
