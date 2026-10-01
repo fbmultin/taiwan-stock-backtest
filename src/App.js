@@ -370,6 +370,9 @@ const RANKING_PERIODS = [
   { key: '3y', label: '近3年', months: 36 },
   { key: '4y', label: '近4年', months: 48 },
   { key: '5y', label: '近5年', months: 60 },
+  { key: '5d', label: '近05日', days: 5 },
+  { key: '10d', label: '近10日', days: 10 },
+  { key: '20d', label: '近20日', days: 20 },
 ];
 
 // 算法跟 runBacktest 裡「無加碼」時的起訖日推算完全同一套邏輯(結束日固定為
@@ -385,6 +388,9 @@ const computeRankingPeriodRange = (period) => {
     // 一律是 UTC 午夜基準,這裡若改用本地時區(getFullYear/setMonth/setDate)
     // 在台灣(UTC+8)執行時會跟股價資料的日期基準對不齊,少算/多算一天。
     rangeStart = new Date(Date.UTC(rangeEnd.getUTCFullYear(), 0, 1));
+  } else if (period.days) {
+    rangeStart = new Date(rangeEnd);
+    rangeStart.setUTCDate(rangeStart.getUTCDate() - period.days);
   } else {
     rangeStart = new Date(rangeEnd);
     rangeStart.setUTCMonth(rangeStart.getUTCMonth() - period.months);
