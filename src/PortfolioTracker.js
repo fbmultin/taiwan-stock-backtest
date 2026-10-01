@@ -33,6 +33,7 @@ import {
   updateTransaction,
   deleteTransaction,
   moveTransactionToGroup,
+  moveSymbolsToGroup,
   estimateFee,
   estimateTax,
   computeSymbolSummary,
@@ -47,6 +48,29 @@ import {
 // ============== 共用小工具 ==============
 
 const todayStr = () => new Date().toISOString().split('T')[0];
+
+// 手機鍵盤彈出時,大部分瀏覽器的 position:fixed 仍然是用「整個頁面」的高度在定位,
+// 不會跟著可視區域縮小,導致原本貼在畫面最下面的浮動按鈕被鍵盤整個擋住、變成看
+// 不到也點不到。用 visualViewport 量出鍵盤佔用的高度,讓浮動按鈕往上跟著讓開。
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const update = () => {
+      const diff = window.innerHeight - vv.height - vv.offsetTop;
+      setInset(diff > 0 ? diff : 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+  return inset;
+}
 
 // 買進(紅) / 賣出(綠) / 股利(橘) 三段式切換鈕,樣式對齊截圖:
 // 選中項為實色填滿,未選中的兩項中間用一條細線分隔。
@@ -104,6 +128,7 @@ function FieldBox({ label, icon, children, isLight, className = '' }) {
 // ============== 新增/編輯交易 Modal ==============
 
 function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDelete }) {
+  const keyboardInset = useKeyboardInset();
   const isEdit = Boolean(initial && initial.id);
   const presetSymbol = initial && initial.symbol ? initial.symbol : '';
   const [symbol, setSymbol] = useState(presetSymbol);
@@ -213,7 +238,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
         }`}
       >
         <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <button onClick={onClose} className="p-1 -ml-1">
+          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
@@ -461,7 +486,8 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
         <button
           type="button"
           onClick={onClose}
-          className={`fixed bottom-6 right-4 z-[80] w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          style={{ bottom: `calc(1.5rem + ${keyboardInset}px)` }}
+          className={`fixed right-4 z-[80] w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
             isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
           }`}
         >
@@ -534,7 +560,7 @@ function TxActionSheet({ isLight, tx, onClose, onEdit, onMove, onDelete }) {
 
 // ============== 移動交易到別的群組 ==============
 
-function MoveGroupSheet({ isLight, data, tx, onClose, onConfirm }) {
+function MoveGroupSheet({ isLight, data, title = '移動到群組', currentGroupId = null, onClose, onConfirm }) {
   return (
     <div className="fixed inset-0 z-[75] flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
@@ -543,12 +569,12 @@ function MoveGroupSheet({ isLight, data, tx, onClose, onConfirm }) {
           isLight ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'
         }`}
       >
-        <div className="text-center font-bold py-2">移動到群組</div>
+        <div className="text-center font-bold py-2">{title}</div>
         {data.groups.map((g) => (
           <button
             key={g.id}
             onClick={() => {
-              onConfirm(tx.id, g.id);
+              onConfirm(g.id);
               onClose();
             }}
             className={`w-full flex items-center gap-3 px-5 py-3 text-left ${
@@ -557,7 +583,7 @@ function MoveGroupSheet({ isLight, data, tx, onClose, onConfirm }) {
           >
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: g.color }} />
             <span className="flex-1">{g.name}</span>
-            {g.id === tx.groupId && <Check className="w-4 h-4 text-emerald-500" />}
+            {g.id === currentGroupId && <Check className="w-4 h-4 text-emerald-500" />}
           </button>
         ))}
       </div>
@@ -668,7 +694,7 @@ function GroupEditorModal({ isLight, group, isNew, onClose, onSave, onDelete }) 
         }`}
       >
         <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <button onClick={onClose} className="p-1 -ml-1">
+          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="font-bold">{isNew ? '新增群組' : '群組設定'}</div>
@@ -848,10 +874,10 @@ function GroupSwitcherSheet({ isLight, data, onClose, onSelect, onNewGroup, onOp
 
 // ============== 小統計卡片 ==============
 
-function StatCard({ isLight, label, value, valueClass = '' }) {
+function StatCard({ isLight, label, value, valueClass = '', sizeClass = 'shrink-0 min-w-[110px]' }) {
   return (
     <div
-      className={`rounded-xl px-3 py-2.5 shrink-0 min-w-[110px] ${
+      className={`rounded-xl px-3 py-2.5 ${sizeClass} ${
         isLight ? 'bg-slate-100' : 'bg-slate-800/60'
       }`}
     >
@@ -877,6 +903,11 @@ function HoldingsListView({
   onOpenSummary,
   onAddTx,
   activeGroup,
+  selectMode,
+  selectedSymbols,
+  onToggleSelectMode,
+  onToggleSelectSymbol,
+  onOpenMoveSymbols,
 }) {
   return (
     <div className="pb-24">
@@ -919,18 +950,20 @@ function HoldingsListView({
           查看全部 &gt;
         </button>
       </div>
-      <div className="px-4 mt-2 flex gap-2 overflow-x-auto pb-1">
+      <div className="px-4 mt-2 flex gap-2 pb-1">
         <StatCard
           isLight={isLight}
           label="今日損益"
           value={`${formatSigned(totalSummary.todayPnl)}｜${formatPct(totalSummary.todayPnlPct)}`}
           valueClass={pnlColorClass(totalSummary.todayPnl, isLight)}
+          sizeClass="flex-1 min-w-0"
         />
         <StatCard
           isLight={isLight}
           label="總損益"
           value={`${formatSigned(totalSummary.totalPnl)}｜${formatPct(totalSummary.totalPnlPct)}`}
           valueClass={pnlColorClass(totalSummary.totalPnl, isLight)}
+          sizeClass="flex-1 min-w-0"
         />
       </div>
 
@@ -941,14 +974,28 @@ function HoldingsListView({
             顯示{holdings.length}檔{hiddenCount > 0 ? `，隱藏${hiddenCount}檔` : ''}
           </span>
         </div>
-        {hiddenCount > 0 && (
+        <div className="flex items-center gap-2">
+          {hiddenCount > 0 && (
+            <button
+              onClick={onToggleHidden}
+              className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+            >
+              {showHidden ? '隱藏已出場' : '顯示已出場部位'}
+            </button>
+          )}
           <button
-            onClick={onToggleHidden}
-            className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+            onClick={onToggleSelectMode}
+            className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+              selectMode
+                ? 'bg-amber-500 text-white'
+                : isLight
+                ? 'bg-slate-100 text-slate-600'
+                : 'bg-slate-800 text-slate-300'
+            }`}
           >
-            {showHidden ? '隱藏已出場' : '顯示已出場部位'}
+            {selectMode ? '完成' : '框選移動'}
           </button>
-        )}
+        </div>
       </div>
 
       <div className="px-4 mt-2 space-y-2">
@@ -958,50 +1005,76 @@ function HoldingsListView({
           </div>
         )}
         {holdings.map((h) => (
-          <button
+          <div
             key={h.symbol}
-            onClick={() => onOpenDetail(h.symbol)}
-            className={`w-full grid grid-cols-3 gap-2 rounded-xl px-3 py-3 text-left ${
+            onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
+            className={`w-full flex items-center gap-2 rounded-xl px-3 py-3 cursor-pointer ${
               isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
             }`}
           >
-            <div className="min-w-0">
-              <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
-              <div className="font-bold text-sm truncate">{h.name}</div>
-              <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                {formatMoney(h.summary.shares)}股
+            {selectMode && (
+              <div
+                className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                  selectedSymbols.has(h.symbol)
+                    ? 'bg-amber-500 border-amber-500'
+                    : isLight
+                    ? 'border-slate-400'
+                    : 'border-slate-500'
+                }`}
+              >
+                {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
+              </div>
+            )}
+            <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-left">
+              <div className="min-w-0">
+                <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
+                <div className="font-bold text-sm truncate">{h.name}</div>
+                <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                  {formatMoney(h.summary.shares)}股
+                </div>
+              </div>
+              <div className="text-right">
+                <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                  {h.summary.avgPrice.toFixed(2)}
+                </div>
+                <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                  {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
+                </div>
+                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                  {formatPct(h.summary.todayPnlPct)}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono font-bold">{formatMoney(h.summary.marketValue)}</div>
+                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  {formatSigned(h.summary.totalPnl)}
+                </div>
+                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  {formatPct(h.summary.totalPnlPct)}
+                </div>
               </div>
             </div>
-            <div className="text-right">
-              <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                {h.summary.avgPrice.toFixed(2)}
-              </div>
-              <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
-                {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
-              </div>
-              <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
-                {formatPct(h.summary.todayPnlPct)}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="font-mono font-bold">{formatMoney(h.summary.marketValue)}</div>
-              <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
-                {formatSigned(h.summary.totalPnl)}
-              </div>
-              <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
-                {formatPct(h.summary.totalPnlPct)}
-              </div>
-            </div>
-          </button>
+          </div>
         ))}
       </div>
 
-      <button
-        onClick={onAddTx}
-        className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-amber-500 text-white shadow-lg flex items-center justify-center z-30"
-      >
-        <Plus className="w-6 h-6" />
-      </button>
+      {!selectMode && (
+        <button
+          onClick={onAddTx}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-amber-500 text-white shadow-lg flex items-center justify-center z-30"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
+      {selectMode && selectedSymbols.size > 0 && (
+        <button
+          onClick={onOpenMoveSymbols}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm"
+        >
+          <Folder className="w-4 h-4" />
+          移動群組({selectedSymbols.size})
+        </button>
+      )}
     </div>
   );
 }
@@ -1050,7 +1123,7 @@ function StockDetailView({
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={onBack} className="p-1">
+        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
@@ -1286,24 +1359,33 @@ function StockDetailView({
           套用標籤({selectedTxIds.size})
         </button>
       )}
+
+      <button
+        onClick={onBack}
+        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        }`}
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
     </div>
   );
 }
 
 function SectionHeader({ isLight, children }) {
-  return <div className="font-bold text-sm mt-3 mb-1">{children}</div>;
+  return <div className="font-bold text-base mt-2.5 mb-0.5">{children}</div>;
 }
 
 function DataRow({ isLight, label, value, indent = 0, colorClass = '' }) {
   return (
     <div
-      className={`flex items-center justify-between py-1.5 border-b ${
+      className={`flex items-center justify-between py-1 border-b ${
         isLight ? 'border-slate-100' : 'border-slate-800'
       }`}
       style={{ paddingLeft: indent * 16 }}
     >
-      <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{label}</span>
-      <span className={`font-mono font-bold text-xs ${colorClass}`}>{value}</span>
+      <span className={`text-sm ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{label}</span>
+      <span className={`font-mono font-bold text-sm ${colorClass}`}>{value}</span>
     </div>
   );
 }
@@ -1314,7 +1396,7 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={onBack} className="p-1">
+        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
@@ -1419,6 +1501,15 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
         <DataRow isLight={isLight} label="投入資本" value={formatMoney(summary.investedCapital)} />
         <DataRow isLight={isLight} label="持有成本" value={formatMoney(summary.costBasis)} />
       </div>
+
+      <button
+        onClick={onBack}
+        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        }`}
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
     </div>
   );
 }
@@ -1446,6 +1537,11 @@ export default function PortfolioTracker({ isLight }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedTxIds, setSelectedTxIds] = useState(new Set());
   const [showTagPicker, setShowTagPicker] = useState(false);
+
+  // ---- 持股列表「框選移動群組」----
+  const [symbolSelectMode, setSymbolSelectMode] = useState(false);
+  const [selectedSymbols, setSelectedSymbols] = useState(new Set());
+  const [movingSymbols, setMovingSymbols] = useState(null); // string[] | null
 
   useEffect(() => {
     savePortfolioData(data);
@@ -1562,6 +1658,24 @@ export default function PortfolioTracker({ isLight }) {
   const handleDeleteTx = (txId) => setData((d) => deleteTransaction(d, txId));
   const handleMoveTx = (txId, groupId) => setData((d) => moveTransactionToGroup(d, txId, groupId));
 
+  // ---- 持股列表「框選移動群組」----
+  const handleToggleSymbolSelectMode = () => {
+    setSymbolSelectMode((v) => !v);
+    setSelectedSymbols(new Set());
+  };
+  const handleToggleSelectSymbol = (symbol) =>
+    setSelectedSymbols((prev) => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
+  const handleMoveSymbols = (symbols, groupId) => {
+    setData((d) => moveSymbolsToGroup(d, symbols, groupId));
+    setSymbolSelectMode(false);
+    setSelectedSymbols(new Set());
+  };
+
   // ---- 批次標籤 ----
   const handleApplyTag = (tagId) => {
     setData((d) => applyTagToTransactions(d, Array.from(selectedTxIds), tagId));
@@ -1599,6 +1713,11 @@ export default function PortfolioTracker({ isLight }) {
           onOpenSummary={() => setView('summary')}
           onAddTx={() => openAddTx(null)}
           activeGroup={activeGroup}
+          selectMode={symbolSelectMode}
+          selectedSymbols={selectedSymbols}
+          onToggleSelectMode={handleToggleSymbolSelectMode}
+          onToggleSelectSymbol={handleToggleSelectSymbol}
+          onOpenMoveSymbols={() => setMovingSymbols(Array.from(selectedSymbols))}
         />
       )}
 
@@ -1706,9 +1825,21 @@ export default function PortfolioTracker({ isLight }) {
         <MoveGroupSheet
           isLight={isLight}
           data={data}
-          tx={movingTx}
+          title="移動到群組"
+          currentGroupId={movingTx.groupId}
           onClose={() => setMovingTx(null)}
-          onConfirm={handleMoveTx}
+          onConfirm={(groupId) => handleMoveTx(movingTx.id, groupId)}
+        />
+      )}
+
+      {movingSymbols && (
+        <MoveGroupSheet
+          isLight={isLight}
+          data={data}
+          title={`移動 ${movingSymbols.length} 檔持股到群組`}
+          currentGroupId={null}
+          onClose={() => setMovingSymbols(null)}
+          onConfirm={(groupId) => handleMoveSymbols(movingSymbols, groupId)}
         />
       )}
 

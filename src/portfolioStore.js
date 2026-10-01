@@ -198,6 +198,16 @@ export function moveTransactionToGroup(data, txId, groupId) {
   return updateTransaction(data, txId, { groupId });
 }
 
+// 把某幾檔股票「底下所有交易紀錄」一次搬到另一個群組(持股列表的「框選移動」
+// 用這個,跟上面單筆交易的移動是兩個不同的操作入口)。
+export function moveSymbolsToGroup(data, symbols, groupId) {
+  const set = new Set(symbols);
+  return {
+    ...data,
+    transactions: data.transactions.map((tx) => (set.has(tx.symbol) ? { ...tx, groupId } : tx)),
+  };
+}
+
 // ---------- 手續費試算 ----------
 
 // 依群組的手續費優惠設定,算出一筆買賣交易的手續費(四捨五入到整數元)。
