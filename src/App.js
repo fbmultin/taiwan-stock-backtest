@@ -3,6 +3,7 @@ import TW_STOCK_NAMES from './data/twStockNames';
 import TW_STOCK_SPLITS from './data/twStockSplits';
 import TW_ETF_FEES from './data/twEtfFees';
 import DcaOptimizer from './DcaOptimizer';
+import PortfolioTracker from './PortfolioTracker';
 import QuickApplyBar from './QuickApplyBar';
 import { PRESETS } from './presets';
 import {
@@ -3096,6 +3097,18 @@ const App = () => {
           >
             定期定額策略最佳化
           </button>
+          <button
+            onClick={() => setActiveTab('portfolio')}
+            className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
+              activeTab === 'portfolio'
+                ? 'border-emerald-400 text-emerald-400'
+                : isLight
+                ? 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            我的持股
+          </button>
         </div>
         <button
           onClick={toggleTheme}
@@ -3118,6 +3131,14 @@ const App = () => {
         <div className={containerClass}>
           <div className="max-w-6xl mx-auto p-4 sm:p-6">
             <DcaOptimizer isLight={isLight} />
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'portfolio' && (
+        <div className={containerClass}>
+          <div className="max-w-3xl mx-auto">
+            <PortfolioTracker isLight={isLight} />
           </div>
         </div>
       )}
