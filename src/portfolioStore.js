@@ -236,6 +236,33 @@ export function isDayTradeSell(transactions, symbol, date, excludeTxId = null) {
   );
 }
 
+// 台股股價升降單位(最小跳動)級距,依證交所公告的價格級距表:
+// <10 元:0.01 / 10~50 元:0.05 / 50~100 元:0.1 / 100~500 元:0.5 / 500~1000 元:1 / >=1000 元:5
+export function tickSize(price) {
+  const p = Number(price) || 0;
+  if (p < 10) return 0.01;
+  if (p < 50) return 0.05;
+  if (p < 100) return 0.1;
+  if (p < 500) return 0.5;
+  if (p < 1000) return 1;
+  return 5;
+}
+
+// 依目前價格所在的級距,把價格往上或往下調整一個最小跳動單位。方向 direction
+// 傳 1(往上)或 -1(往下);四捨五入到該級距對應的小數位數,避免浮點數誤差
+// 累積出 0.3000000004 這種顯示瑕疵。
+export function stepPrice(price, direction) {
+  const current = Number(price) || 0;
+  const tick = tickSize(current);
+  const next = Math.max(0, current + tick * direction);
+  // 跨級距時用「調整後價格」的級距重新算一次跳動單位對齊到整數倍,避免卡在
+  // 級距邊界(例如從 49.98 往上跳,照 10~50 元級距應落在 50.00 而不是 50.03)。
+  const nextTick = tickSize(next);
+  const rounded = Math.round(next / nextTick) * nextTick;
+  const decimals = nextTick < 1 ? 2 : 0;
+  return Number(rounded.toFixed(decimals));
+}
+
 // ---------- 持股試算引擎 ----------
 //
 // 用「移動加權平均成本法」逐筆重播交易紀錄:
@@ -275,6 +302,7 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
 
   let shares = 0;
   let costBasis = 0; // 目前庫存的持有成本
+  let pureCostBasis = 0; // 目前庫存的持有成本(不含手續費,只算買進價*股數,供「買進成本」均價顯示用)
   let investedCapital = 0; // 投入資本(歷史買進金額累計,含已出場部位)
   let realizedCapitalGain = 0;
   let cashDividend = 0;
@@ -286,18 +314,23 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
   sorted.forEach((tx) => {
     if (tx.type === TX_TYPES.BUY) {
       const cost = tx.price * tx.shares + (tx.fee || 0);
+      const pureCost = tx.price * tx.shares;
       shares += tx.shares;
       costBasis += cost;
+      pureCostBasis += pureCost;
       investedCapital += cost;
       totalFee += tx.fee || 0;
     } else if (tx.type === TX_TYPES.SELL) {
       const avgCost = shares > 0 ? costBasis / shares : 0;
+      const pureAvgCost = shares > 0 ? pureCostBasis / shares : 0;
       const soldShares = Math.min(tx.shares, shares);
       const costOfSold = avgCost * soldShares;
+      const pureCostOfSold = pureAvgCost * soldShares;
       const proceeds = tx.price * soldShares - (tx.fee || 0) - (tx.tax || 0);
       realizedCapitalGain += proceeds - costOfSold;
       shares -= soldShares;
       costBasis -= costOfSold;
+      pureCostBasis -= pureCostOfSold;
       totalFee += tx.fee || 0;
       totalTax += tx.tax || 0;
     } else if (tx.type === TX_TYPES.CASH_DIVIDEND) {
@@ -309,6 +342,8 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
   });
 
   const avgPrice = shares > 0 ? costBasis / shares : 0;
+  // 不含手續費、只看「剩下持有股數」的買進均價,供首頁持股列表的「買進成本」顯示用。
+  const pureAvgPrice = shares > 0 ? pureCostBasis / shares : 0;
   const marketValue = shares * (currentPrice || 0);
 
   // 未實現損益預先扣掉「如果現在用市價賣出」會產生的手續費跟證交稅,呈現比較
@@ -332,6 +367,7 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
   return {
     shares,
     avgPrice,
+    pureAvgPrice,
     currentPrice,
     investmentYears: years,
     marketValue,

@@ -37,6 +37,7 @@ import {
   estimateFee,
   estimateTax,
   isDayTradeSell,
+  stepPrice,
   computeSymbolSummary,
   aggregateSummaries,
   getTransactionsByGroup,
@@ -192,6 +193,16 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   const group = data.groups.find((g) => g.id === groupId) || data.groups[0];
   const priceNum = parseFloat(price) || 0;
   const sharesNum = parseFloat(shares) || 0;
+  const symbolUpper = symbol.trim().toUpperCase();
+  // 賣出這檔股票時,「剩下持有股數」用來顯示清倉按鈕、一鍵帶入全部庫存張數。
+  // 編輯既有交易時要排除自己這一筆,避免把自己算進庫存裡造成誤差。
+  const remainingShares = useMemo(() => {
+    if (!symbolUpper) return 0;
+    const txs = data.transactions.filter(
+      (t) => t.symbol === symbolUpper && !(isEdit && initial && t.id === initial.id)
+    );
+    return computeSymbolSummary(txs).shares;
+  }, [symbolUpper, data.transactions, isEdit, initial]);
   const isBuySell = type === TX_TYPES.BUY || type === TX_TYPES.SELL;
   const autoFee = isBuySell ? estimateFee({ ...group, feeDiscountPct }, priceNum, sharesNum) : 0;
   const fee = fixedFee ? parseFloat(manualFee) || 0 : autoFee;
@@ -321,7 +332,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       priceTouchedRef.current = true;
-                      setPrice(String(Math.max(0, (parseFloat(price) || 0) - 0.05).toFixed(2)));
+                      setPrice(String(stepPrice(parseFloat(price) || 0, -1)));
                     }}
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
@@ -331,7 +342,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       priceTouchedRef.current = true;
-                      setPrice(String(((parseFloat(price) || 0) + 0.05).toFixed(2)));
+                      setPrice(String(stepPrice(parseFloat(price) || 0, 1)));
                     }}
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
@@ -342,15 +353,31 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
             </div>
           )}
 
-          <FieldBox label="數量(股)" icon={<span className="opacity-60">#</span>} isLight={isLight}>
-            <input
-              type="number"
-              value={shares}
-              onChange={(e) => setShares(e.target.value)}
-              placeholder="數量"
-              className={inputBase}
-            />
-          </FieldBox>
+          <div className="flex items-start gap-2">
+            <FieldBox
+              label="數量(股)"
+              icon={<span className="opacity-60">#</span>}
+              isLight={isLight}
+              className="flex-1 min-w-0"
+            >
+              <input
+                type="number"
+                value={shares}
+                onChange={(e) => setShares(e.target.value)}
+                placeholder="數量"
+                className={inputBase}
+              />
+            </FieldBox>
+            {type === TX_TYPES.SELL && remainingShares > 0 && (
+              <button
+                type="button"
+                onClick={() => setShares(String(remainingShares))}
+                className="h-11 mt-1 px-3 rounded-xl bg-rose-500 text-white text-sm font-bold shrink-0"
+              >
+                清倉
+              </button>
+            )}
+          </div>
           <div className="text-xs opacity-60 -mt-2">1張 = 1000股</div>
 
           <div className="relative">
@@ -920,6 +947,12 @@ function HoldingsListView({
   onToggleSelectSymbol,
   onOpenMoveSymbols,
 }) {
+  // 框選移動時,預設把已經清倉(股數為0,通常是因為使用者另外開了「顯示已出場
+  // 部位」)的標的隱藏起來,避免框選清單裡混進一堆不需要移動群組的舊部位。
+  // 這個開關只在框選模式下生效,跟首頁的「顯示已出場部位」各自獨立。
+  const [hideClosedInSelect, setHideClosedInSelect] = useState(true);
+  const displayedHoldings =
+    selectMode && hideClosedInSelect ? holdings.filter((h) => h.summary.shares > 0) : holdings;
   return (
     <div className="pb-24">
       <div className="flex items-center justify-between px-4 pt-4">
@@ -994,6 +1027,20 @@ function HoldingsListView({
               {showHidden ? '隱藏已出場' : '顯示已出場部位'}
             </button>
           )}
+          {selectMode && (
+            <button
+              onClick={() => setHideClosedInSelect((v) => !v)}
+              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                hideClosedInSelect
+                  ? 'bg-amber-500 text-white'
+                  : isLight
+                  ? 'bg-slate-100 text-slate-600'
+                  : 'bg-slate-800 text-slate-300'
+              }`}
+            >
+              隱藏已清倉
+            </button>
+          )}
           <button
             onClick={onToggleSelectMode}
             className={`text-xs font-bold px-2.5 py-1 rounded-full ${
@@ -1010,12 +1057,12 @@ function HoldingsListView({
       </div>
 
       <div className="px-4 mt-2 space-y-2">
-        {holdings.length === 0 && (
+        {displayedHoldings.length === 0 && (
           <div className={`text-center py-10 text-sm ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
             這個群組還沒有任何持股,點右下角「＋」新增第一筆交易。
           </div>
         )}
-        {holdings.map((h) => (
+        {displayedHoldings.map((h) => (
           <div
             key={h.symbol}
             onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
@@ -1046,7 +1093,7 @@ function HoldingsListView({
               </div>
               <div className="text-right">
                 <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {h.summary.avgPrice.toFixed(2)}
+                  {h.summary.pureAvgPrice.toFixed(2)}
                 </div>
                 <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                   {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
