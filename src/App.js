@@ -1468,10 +1468,13 @@ const App = () => {
                     : max;
                 }, null)
               : null;
+            // 短天期區間(5日/10日/20日)跟上面依時間長短排列的區間不是同一套時間順序,
+            // 在這一列的上緣加一條較粗的虛線分隔,提醒使用者這裡開始是另一組短天期區間。
+            const isFirstShortPeriod = Boolean(p.days) && !RANKING_PERIODS[i - 1]?.days;
             return (
               <tr
                 key={p.key}
-                className={
+                className={`${
                   isLight
                     ? i % 2 === 0
                       ? 'bg-white'
@@ -1479,11 +1482,25 @@ const App = () => {
                     : i % 2 === 0
                     ? 'bg-slate-800/70'
                     : 'bg-slate-800/30'
-                }
+                } ${
+                  isFirstShortPeriod
+                    ? isLight
+                      ? 'border-t-2 border-t-amber-400 border-dashed'
+                      : 'border-t-2 border-t-amber-500 border-dashed'
+                    : ''
+                }`}
               >
                 <td
                   className={`px-2 py-1.5 border font-mono font-bold sticky left-0 bg-inherit whitespace-nowrap ${
                     isLight ? 'border-slate-300 text-slate-700' : 'border-slate-700 text-slate-200'
+                  } ${
+                    p.days ? (isLight ? 'text-amber-600' : 'text-amber-400') : ''
+                  } ${
+                    isFirstShortPeriod
+                      ? isLight
+                        ? 'border-t-2 border-t-amber-400 border-dashed'
+                        : 'border-t-2 border-t-amber-500 border-dashed'
+                      : ''
                   }`}
                 >
                   {p.label}
@@ -1503,6 +1520,12 @@ const App = () => {
                       key={row.symbol}
                       className={`px-2 py-1.5 border font-mono whitespace-nowrap ${
                         isLight ? 'border-slate-300' : 'border-slate-700'
+                      } ${
+                        isFirstShortPeriod
+                          ? isLight
+                            ? 'border-t-2 border-t-amber-400 border-dashed'
+                            : 'border-t-2 border-t-amber-500 border-dashed'
+                          : ''
                       }`}
                     >
                       <div className="flex flex-col items-center leading-tight">
@@ -5559,14 +5582,28 @@ const App = () => {
                       {[...returnChartHover.payload]
                         .filter((p) => typeof p.value === 'number')
                         .sort((a, b) => b.value - a.value)
-                        .map((p) => (
-                          <div key={p.dataKey} style={{ color: p.color }}>
-                            {Number(p.value).toFixed(2)}%{' '}
-                            {p.dataKey === '綜合績效'
-                              ? '綜合績效'
-                              : formatLineLabel(p.dataKey)}
-                          </div>
-                        ))}
+                        .map((p) => {
+                          const isPortfolio = p.dataKey === '綜合績效';
+                          return (
+                            <div
+                              key={p.dataKey}
+                              className="flex items-center justify-between gap-2"
+                              style={{ color: p.color }}
+                            >
+                              <span className="flex items-center gap-1.5 min-w-0 truncate">
+                                <span className="font-bold shrink-0">
+                                  {isPortfolio ? '⭐ 綜合績效' : p.dataKey}
+                                </span>
+                                {!isPortfolio && stockNames[p.dataKey] && (
+                                  <span className="truncate">{stockNames[p.dataKey]}</span>
+                                )}
+                              </span>
+                              <span className="font-mono font-bold shrink-0">
+                                {Number(p.value).toFixed(2)}%
+                              </span>
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 ) : (
