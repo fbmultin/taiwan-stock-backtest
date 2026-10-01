@@ -14,6 +14,7 @@ import {
   Tag,
   ArrowLeft,
   Folder,
+  Upload,
 } from 'lucide-react';
 import TW_STOCK_NAMES from './data/twStockNames';
 import { fetchStockPriceData, fetchStockDisplayName } from './dataCache';
@@ -596,6 +597,420 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   );
 }
 
+// ============== CSV 匯入(試用版)==============
+//
+// 先支援最單純的情境:CSV 表頭含日期/代號/類型(買/賣)/股數/價格,常見欄位
+// 別名可以自動辨識。手續費/證交稅沒有欄位可用時,依匯入目標群組的設定跟代號
+// (00開頭視為ETF)自動估算,跟手動新增交易用的是同一套邏輯跟稅率/當沖判斷。
+
+// 簡易 CSV 解析:支援雙引號包住的欄位(內含逗號、換行、用 "" 轉義雙引號),
+// 一般試算表(Excel/Numbers/Google試算表)另存CSV的格式都在支援範圍內。
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const pushField = () => {
+    row.push(field);
+    field = '';
+  };
+  const pushRow = () => {
+    pushField();
+    rows.push(row);
+    row = [];
+  };
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < normalized.length; i += 1) {
+    const c = normalized[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (normalized[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      pushField();
+    } else if (c === '\n') {
+      pushRow();
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) pushRow();
+  return rows.filter((r) => r.some((cell) => cell.trim() !== ''));
+}
+
+const CSV_HEADER_ALIASES = {
+  date: ['日期', '交易日期', '成交日期', 'date'],
+  symbol: ['代號', '股票代號', '證券代號', 'symbol', 'code'],
+  name: ['名稱', '股票名稱', 'name'],
+  type: ['類型', '買賣', '買賣別', 'type'],
+  shares: ['股數', '股數(股)', '數量', 'shares', 'quantity'],
+  price: ['價格', '成交價', '價格(元)', 'price'],
+};
+
+const CSV_TYPE_MAP = {
+  買: TX_TYPES.BUY,
+  買進: TX_TYPES.BUY,
+  buy: TX_TYPES.BUY,
+  b: TX_TYPES.BUY,
+  賣: TX_TYPES.SELL,
+  賣出: TX_TYPES.SELL,
+  sell: TX_TYPES.SELL,
+  s: TX_TYPES.SELL,
+};
+
+const CSV_REQUIRED_COLUMNS = ['date', 'symbol', 'type', 'shares', 'price'];
+
+function detectCsvColumns(headerRow) {
+  const normalized = headerRow.map((h) => h.trim().toLowerCase());
+  const map = {};
+  Object.entries(CSV_HEADER_ALIASES).forEach(([key, aliases]) => {
+    const idx = normalized.findIndex((h) => aliases.some((a) => a.toLowerCase() === h));
+    if (idx >= 0) map[key] = idx;
+  });
+  return map;
+}
+
+function parseImportRows(csvText) {
+  const table = parseCsvText(csvText);
+  if (table.length === 0) return { rows: [], columns: {}, missingColumns: CSV_REQUIRED_COLUMNS };
+  const columns = detectCsvColumns(table[0]);
+  const missingColumns = CSV_REQUIRED_COLUMNS.filter((key) => columns[key] === undefined);
+  const dataRows = table.slice(1);
+  const rows = dataRows.map((cols, idx) => {
+    const get = (key) => (columns[key] !== undefined ? (cols[columns[key]] || '').trim() : '');
+    const dateRaw = get('date');
+    const symbolRaw = get('symbol').toUpperCase();
+    const typeRaw = get('type');
+    const sharesRaw = get('shares').replace(/,/g, '');
+    const priceRaw = get('price').replace(/,/g, '');
+    const name = get('name');
+
+    const errors = [];
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : null;
+    if (!date) errors.push('日期格式需為YYYY-MM-DD');
+    if (!symbolRaw) errors.push('缺少代號');
+    const type = CSV_TYPE_MAP[typeRaw.trim().toLowerCase()];
+    if (!type) errors.push(`不支援的類型「${typeRaw}」(目前僅支援買/賣)`);
+    const shares = parseFloat(sharesRaw);
+    if (!shares || shares <= 0) errors.push('股數需為正數');
+    const price = parseFloat(priceRaw);
+    if (!price || price <= 0) errors.push('價格需為正數');
+
+    return {
+      rowIndex: idx,
+      date,
+      symbol: symbolRaw,
+      name,
+      type,
+      shares: shares || 0,
+      price: price || 0,
+      errors,
+      valid: errors.length === 0 && missingColumns.length === 0,
+    };
+  });
+  return { rows, columns, missingColumns };
+}
+
+function ImportCsvModal({ isLight, data, onClose, onImport }) {
+  const [csvText, setCsvText] = useState('');
+  const [groupId, setGroupId] = useState(
+    data.activeGroupId !== ALL_GROUP_ID ? data.activeGroupId : data.groups[0]?.id
+  );
+  const [parsed, setParsed] = useState(null); // { rows, columns, missingColumns } | null
+  const [checkedRows, setCheckedRows] = useState({}); // rowIndex -> boolean
+  const fileInputRef = useRef(null);
+
+  const group = data.groups.find((g) => g.id === groupId) || data.groups[0];
+
+  const handleFile = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => setCsvText(String(e.target.result || ''));
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const handleParse = () => {
+    const result = parseImportRows(csvText);
+    // 重複偵測:日期+代號+類型+股數+價格都相同就視為跟現有紀錄重複,預設不勾選
+    // (避免同一份CSV不小心匯入兩次),使用者可以自己勾選覆蓋。
+    const keyOf = (t) => `${t.date}|${t.symbol}|${t.type}|${t.shares}|${t.price}`;
+    const existingSet = new Set(data.transactions.map(keyOf));
+    const withDup = result.rows.map((r) => ({
+      ...r,
+      isDuplicate: r.valid && existingSet.has(keyOf(r)),
+    }));
+    setParsed({ ...result, rows: withDup });
+    const initialChecked = {};
+    withDup.forEach((r) => {
+      initialChecked[r.rowIndex] = r.valid && !r.isDuplicate;
+    });
+    setCheckedRows(initialChecked);
+  };
+
+  // 計算每一筆被勾選交易的估計手續費/證交稅(含當沖判斷——批次匯入裡同一天
+  // 同一檔股票如果有買又有賣,賣出那筆也要比照手動輸入減半課稅),組成最終
+  // 準備寫入的交易物件。
+  const computedRows = useMemo(() => {
+    if (!parsed || !group) return [];
+    const selected = parsed.rows.filter((r) => r.valid && checkedRows[r.rowIndex]);
+    const dayTradeLookup = [
+      ...data.transactions,
+      ...selected.map((r) => ({ symbol: r.symbol, date: r.date, type: r.type })),
+    ];
+    return selected.map((r) => {
+      const isEtf = isLikelyETF(r.symbol);
+      const fee = estimateFee(group, r.price, r.shares, isEtf);
+      const isDayTrade = r.type === TX_TYPES.SELL && isDayTradeSell(dayTradeLookup, r.symbol, r.date, null);
+      const tax =
+        r.type === TX_TYPES.SELL ? estimateTax(r.price, r.shares, { isDayTrade, taxRate: isEtf ? 0.001 : 0.003 }) : 0;
+      const amount = r.type === TX_TYPES.BUY ? -(r.price * r.shares + fee) : r.price * r.shares - fee - tax;
+      return { ...r, fee, tax, isDayTrade, isEtf, amount };
+    });
+  }, [parsed, checkedRows, group, data.transactions]);
+
+  const computedByIndex = useMemo(() => {
+    const m = {};
+    computedRows.forEach((r) => {
+      m[r.rowIndex] = r;
+    });
+    return m;
+  }, [computedRows]);
+
+  const selectedCount = computedRows.length;
+  const totalFee = computedRows.reduce((s, r) => s + r.fee, 0);
+  const totalTax = computedRows.reduce((s, r) => s + r.tax, 0);
+
+  const toggleRow = (rowIndex) => setCheckedRows((prev) => ({ ...prev, [rowIndex]: !prev[rowIndex] }));
+
+  const handleConfirmImport = () => {
+    if (!group || computedRows.length === 0) return;
+    const payloads = computedRows.map((r) => ({
+      symbol: r.symbol,
+      type: r.type,
+      date: r.date,
+      price: r.price,
+      shares: r.shares,
+      amount: r.amount,
+      fee: r.fee,
+      tax: r.tax,
+      groupId: group.id,
+    }));
+    onImport(payloads);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div
+        className={`relative w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto ${
+          isLight ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'
+        }`}
+      >
+        <div className="flex items-center gap-3 px-4 pt-4 pb-2">
+          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="font-bold">CSV 匯入交易(試用版)</div>
+        </div>
+
+        <div className="px-4 pb-6 space-y-4">
+          {!parsed && (
+            <>
+              <div className={`text-xs rounded-lg px-3 py-2 ${isLight ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
+                目前只支援「買/賣」兩種類型,表頭需包含日期、代號、類型、股數、價格(常見欄位別名可自動辨識),日期格式需為YYYY-MM-DD。手續費/證交稅沒有欄位的話,會依下面選的群組設定跟代號(00開頭視為ETF)自動估算,邏輯跟手動新增交易一致。
+              </div>
+
+              <div>
+                <div className="text-sm font-bold mb-1.5">匯入到群組</div>
+                <div className="flex gap-2 flex-wrap">
+                  {data.groups.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => setGroupId(g.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm ${
+                        g.id === groupId ? 'border-amber-500 bg-amber-500/10' : isLight ? 'border-slate-300' : 'border-slate-600'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: g.color }} />
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  className={`w-full flex items-center justify-center gap-2 border border-dashed rounded-xl px-3 py-4 text-sm font-bold ${
+                    isLight ? 'border-slate-300 text-slate-600' : 'border-slate-600 text-slate-300'
+                  }`}
+                >
+                  <Upload className="w-4 h-4" />
+                  選擇CSV檔案
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files && e.target.files[0];
+                    if (file) handleFile(file);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+
+              <div>
+                <div className="text-sm font-bold mb-1.5">或直接貼上CSV內容</div>
+                <textarea
+                  value={csvText}
+                  onChange={(e) => setCsvText(e.target.value)}
+                  rows={8}
+                  placeholder={'日期,代號,名稱,類型,股數,價格\n2026-09-29,6182,合晶,買,2000,117.5'}
+                  className={`w-full rounded-xl border px-3 py-2 text-xs font-mono outline-none ${
+                    isLight ? 'border-slate-300 bg-white' : 'border-slate-600 bg-slate-800/40'
+                  }`}
+                />
+              </div>
+
+              <button
+                type="button"
+                disabled={!csvText.trim() || !groupId}
+                onClick={handleParse}
+                className={`w-full py-3 rounded-full font-bold text-sm ${
+                  csvText.trim() && groupId
+                    ? 'bg-amber-500 text-white'
+                    : isLight
+                    ? 'bg-slate-200 text-slate-400'
+                    : 'bg-slate-700 text-slate-500'
+                }`}
+              >
+                解析預覽
+              </button>
+            </>
+          )}
+
+          {parsed && (
+            <>
+              {parsed.missingColumns.length > 0 && (
+                <div className={`text-xs rounded-lg px-3 py-2 ${isLight ? 'bg-red-50 text-red-600' : 'bg-red-900/30 text-red-300'}`}>
+                  找不到欄位:{parsed.missingColumns.join('、')}。請確認CSV表頭名稱,或改用常見的日期/代號/類型/股數/價格命名。
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold">
+                  預覽({parsed.rows.length}筆,已選{selectedCount}筆)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setParsed(null);
+                    setCheckedRows({});
+                  }}
+                  className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+                >
+                  重新選擇
+                </button>
+              </div>
+
+              <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                {parsed.rows.map((r) => {
+                  const c = computedByIndex[r.rowIndex];
+                  return (
+                    <div
+                      key={r.rowIndex}
+                      className={`rounded-xl px-3 py-2 text-xs ${
+                        !r.valid
+                          ? isLight
+                            ? 'bg-red-50'
+                            : 'bg-red-900/20'
+                          : r.isDuplicate
+                          ? isLight
+                            ? 'bg-amber-50'
+                            : 'bg-amber-900/20'
+                          : isLight
+                          ? 'bg-slate-100'
+                          : 'bg-slate-800/60'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {r.valid ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleRow(r.rowIndex)}
+                            className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                              checkedRows[r.rowIndex]
+                                ? 'bg-amber-500 border-amber-500'
+                                : isLight
+                                ? 'border-slate-400'
+                                : 'border-slate-500'
+                            }`}
+                          >
+                            {checkedRows[r.rowIndex] && <Check className="w-3 h-3 text-white" />}
+                          </button>
+                        ) : (
+                          <X className="w-4 h-4 text-red-500 shrink-0" />
+                        )}
+                        <div className="flex-1 font-mono">
+                          {r.date || '－'}　{r.symbol || '－'}
+                          {r.name ? ` ${r.name}` : ''}　{r.type ? TX_TYPE_LABELS[r.type] : '－'}
+                          {r.shares ? formatMoney(r.shares) : '－'}股　{r.price || '－'}
+                        </div>
+                        {r.isDuplicate && <span className="text-amber-600 font-bold shrink-0">疑似重複</span>}
+                      </div>
+                      {!r.valid && <div className="mt-1 text-red-500 pl-6">{r.errors.join('、')}</div>}
+                      {r.valid && checkedRows[r.rowIndex] && c && (
+                        <div className="mt-1 pl-6 opacity-60">
+                          估計手續費{formatMoney(c.fee)}元・估計證交稅{formatMoney(c.tax)}元
+                          {c.isDayTrade ? '(當沖減半)' : ''}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {selectedCount > 0 && (
+                <div className="text-xs opacity-60 flex justify-between">
+                  <span>預估手續費合計:{formatMoney(totalFee)} 元</span>
+                  <span>預估證交稅合計:{formatMoney(totalTax)} 元</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={selectedCount === 0}
+                onClick={handleConfirmImport}
+                className={`w-full py-3 rounded-full font-bold text-sm ${
+                  selectedCount > 0
+                    ? 'bg-amber-500 text-white'
+                    : isLight
+                    ? 'bg-slate-200 text-slate-400'
+                    : 'bg-slate-700 text-slate-500'
+                }`}
+              >
+                確認匯入{selectedCount}筆
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============== 交易操作選單(編輯/移動/刪除) ==============
 
 function TxActionSheet({ isLight, tx, onClose, onEdit, onMove, onDelete }) {
@@ -1077,6 +1492,7 @@ function HoldingsListView({
   onOpenSettings,
   onOpenSummary,
   onAddTx,
+  onOpenImport,
   activeGroup,
   selectMode,
   selectedSymbols,
@@ -1112,7 +1528,13 @@ function HoldingsListView({
           <span className="font-bold text-sm">{activeGroup ? activeGroup.name : '全部'}</span>
           <ChevronDown className="w-4 h-4 opacity-60" />
         </button>
-        <div className="w-9" />
+        <button
+          onClick={onOpenImport}
+          className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
+          title="CSV 匯入交易"
+        >
+          <Upload className="w-5 h-5 opacity-70" />
+        </button>
       </div>
 
       <div className="px-4 pt-3 text-center">
@@ -1818,6 +2240,7 @@ export default function PortfolioTracker({ isLight }) {
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [groupEditor, setGroupEditor] = useState(null); // { group, isNew } | null
   const [showAddTx, setShowAddTx] = useState(false);
+  const [showImportCsv, setShowImportCsv] = useState(false);
   const [addTxSymbol, setAddTxSymbol] = useState(null);
   const [editingTx, setEditingTx] = useState(null);
   const [actionTx, setActionTx] = useState(null);
@@ -1947,6 +2370,13 @@ export default function PortfolioTracker({ isLight }) {
   const handleDeleteTx = (txId) => setData((d) => deleteTransaction(d, txId));
   const handleMoveTx = (txId, groupId) => setData((d) => moveTransactionToGroup(d, txId, groupId));
 
+  // ---- CSV 匯入 ----
+  // 一次性把所有匯入的交易套用到同一份資料上再存檔,避免逐筆 setState 互相蓋過。
+  const handleImportTransactions = (rows) => {
+    setData((d) => rows.reduce((acc, row) => addTransaction(acc, row), d));
+    setShowImportCsv(false);
+  };
+
   // ---- 持股列表「框選移動群組」----
   const handleToggleSymbolSelectMode = () => {
     setSymbolSelectMode((v) => !v);
@@ -2006,6 +2436,7 @@ export default function PortfolioTracker({ isLight }) {
           onOpenSettings={handleOpenGroupSettings}
           onOpenSummary={() => setView('summary')}
           onAddTx={() => openAddTx(null)}
+          onOpenImport={() => setShowImportCsv(true)}
           activeGroup={activeGroup}
           selectMode={symbolSelectMode}
           selectedSymbols={selectedSymbols}
@@ -2134,6 +2565,15 @@ export default function PortfolioTracker({ isLight }) {
           currentGroupId={null}
           onClose={() => setMovingSymbols(null)}
           onConfirm={(groupId) => handleMoveSymbols(movingSymbols, groupId)}
+        />
+      )}
+
+      {showImportCsv && (
+        <ImportCsvModal
+          isLight={isLight}
+          data={data}
+          onClose={() => setShowImportCsv(false)}
+          onImport={handleImportTransactions}
         />
       )}
 
