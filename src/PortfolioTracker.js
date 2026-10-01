@@ -321,70 +321,6 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
           </FieldBox>
           <div className="text-xs opacity-60 -mt-2">1張 = 1000股</div>
 
-          {isBuySell && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">固定手續費</span>
-                <button
-                  type="button"
-                  onClick={() => setFixedFee((v) => !v)}
-                  className={`w-11 h-6 rounded-full transition-colors relative ${
-                    fixedFee ? 'bg-amber-500' : isLight ? 'bg-slate-300' : 'bg-slate-600'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${
-                      fixedFee ? 'left-5' : 'left-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {fixedFee ? (
-                <FieldBox label="手續費(元)" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
-                  <input
-                    type="number"
-                    value={manualFee}
-                    onChange={(e) => setManualFee(e.target.value)}
-                    placeholder="0"
-                    className={inputBase}
-                  />
-                </FieldBox>
-              ) : (
-                <div
-                  className={`border rounded-xl px-4 py-3 ${
-                    isLight ? 'border-slate-300' : 'border-slate-600'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-sm mb-2">
-                    <span>手續費優惠</span>
-                    <span className="font-mono font-bold">{feeDiscountPct}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={feeDiscountPct}
-                    onChange={(e) => setFeeDiscountPct(parseInt(e.target.value, 10))}
-                    className="w-full accent-amber-500"
-                  />
-                  <div className="flex justify-between text-[10px] opacity-50 font-mono mt-1">
-                    <span>0%</span>
-                    <span>20%</span>
-                    <span>40%</span>
-                    <span>60%</span>
-                    <span>80%</span>
-                    <span>100%</span>
-                  </div>
-                </div>
-              )}
-              <div className="text-xs opacity-60 flex justify-between">
-                <span>試算手續費:{formatMoney(fee)} 元</span>
-                {type === TX_TYPES.SELL && <span>證交稅:{formatMoney(tax)} 元</span>}
-              </div>
-            </>
-          )}
-
           <div className="relative">
             <button
               type="button"
@@ -454,7 +390,83 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
               + {isEdit ? '儲存' : '新增'}
             </button>
           </div>
+
+          {/* 手續費相關設定不常用,移到「新增」鈕下方,這樣主要操作(送出)
+              不用滑到最下面才按得到;要調整手續費的人再往下滑開啟即可。 */}
+          {isBuySell && (
+            <div className={`pt-3 mt-1 border-t ${isLight ? 'border-slate-100' : 'border-slate-800'} space-y-3`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">固定手續費</span>
+                <button
+                  type="button"
+                  onClick={() => setFixedFee((v) => !v)}
+                  className={`w-11 h-6 rounded-full transition-colors relative ${
+                    fixedFee ? 'bg-amber-500' : isLight ? 'bg-slate-300' : 'bg-slate-600'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${
+                      fixedFee ? 'left-5' : 'left-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {fixedFee ? (
+                <FieldBox label="手續費(元)" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
+                  <input
+                    type="number"
+                    value={manualFee}
+                    onChange={(e) => setManualFee(e.target.value)}
+                    placeholder="0"
+                    className={inputBase}
+                  />
+                </FieldBox>
+              ) : (
+                <div
+                  className={`border rounded-xl px-4 py-3 ${
+                    isLight ? 'border-slate-300' : 'border-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span>手續費優惠</span>
+                    <span className="font-mono font-bold">{feeDiscountPct}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={feeDiscountPct}
+                    onChange={(e) => setFeeDiscountPct(parseInt(e.target.value, 10))}
+                    className="w-full accent-amber-500"
+                  />
+                  <div className="flex justify-between text-[10px] opacity-50 font-mono mt-1">
+                    <span>0%</span>
+                    <span>20%</span>
+                    <span>40%</span>
+                    <span>60%</span>
+                    <span>80%</span>
+                    <span>100%</span>
+                  </div>
+                </div>
+              )}
+              <div className="text-xs opacity-60 flex justify-between">
+                <span>試算手續費:{formatMoney(fee)} 元</span>
+                {type === TX_TYPES.SELL && <span>證交稅:{formatMoney(tax)} 元</span>}
+              </div>
+            </div>
+          )}
         </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className={`fixed bottom-6 right-4 z-[80] w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+            isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+          }`}
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
       </div>
     </div>
   );
@@ -1279,19 +1291,19 @@ function StockDetailView({
 }
 
 function SectionHeader({ isLight, children }) {
-  return <div className="font-bold text-base mt-5 mb-1.5">{children}</div>;
+  return <div className="font-bold text-sm mt-3 mb-1">{children}</div>;
 }
 
 function DataRow({ isLight, label, value, indent = 0, colorClass = '' }) {
   return (
     <div
-      className={`flex items-center justify-between py-2.5 border-b ${
+      className={`flex items-center justify-between py-1.5 border-b ${
         isLight ? 'border-slate-100' : 'border-slate-800'
       }`}
       style={{ paddingLeft: indent * 16 }}
     >
-      <span className={`text-sm ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{label}</span>
-      <span className={`font-mono font-bold text-sm ${colorClass}`}>{value}</span>
+      <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{label}</span>
+      <span className={`font-mono font-bold text-xs ${colorClass}`}>{value}</span>
     </div>
   );
 }
@@ -1482,10 +1494,11 @@ export default function PortfolioTracker({ isLight }) {
         const summary = computeSymbolSummary(txs, {
           currentPrice: priceInfo.price || 0,
           prevClose: priceInfo.prevClose,
+          groups: data.groups,
         });
         return { symbol, name: stockNames[symbol] || symbol, summary, loading: priceInfo.loading };
       }),
-    [symbols, txBySymbol, prices, stockNames]
+    [symbols, txBySymbol, prices, stockNames, data.groups]
   );
 
   const openPositions = allSymbolHoldings.filter((h) => h.summary.shares > 0);
@@ -1610,6 +1623,7 @@ export default function PortfolioTracker({ isLight }) {
               : computeSymbolSummary(detailTxs, {
                   currentPrice: (prices[detailSymbol] || {}).price || 0,
                   prevClose: (prices[detailSymbol] || {}).prevClose,
+                  groups: data.groups,
                 })
           }
           transactions={detailTxs}

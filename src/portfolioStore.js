@@ -251,7 +251,7 @@ function annualize(periodReturnPct, years) {
 
 // 針對「單一標的」的交易紀錄(已經是過濾好的陣列),算出完整摘要。
 // currentPrice / prevClose 由呼叫端傳入(來自 dataCache 抓到的即時報價)。
-export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose = null } = {}) {
+export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose = null, groups = [] } = {}) {
   const sorted = [...transactions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   let shares = 0;
@@ -291,7 +291,16 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
 
   const avgPrice = shares > 0 ? costBasis / shares : 0;
   const marketValue = shares * (currentPrice || 0);
-  const unrealizedPnl = marketValue - costBasis;
+
+  // 未實現損益預先扣掉「如果現在用市價賣出」會產生的手續費跟證交稅,呈現比較
+  // 接近實際可以落袋的淨損益,而不是單純的市值跟成本價差。手續費規則沿用這檔
+  // 股票目前所屬群組(以最後一筆交易的群組為準)的優惠折數/低消設定。
+  const lastGroupId = sorted.length ? sorted[sorted.length - 1].groupId : null;
+  const exitGroup = groups.find((g) => g.id === lastGroupId) || groups[0] || null;
+  const estimatedExitFee = shares > 0 ? estimateFee(exitGroup, currentPrice, shares) : 0;
+  const estimatedExitTax = shares > 0 ? estimateTax(currentPrice, shares) : 0;
+  const estimatedExitCost = estimatedExitFee + estimatedExitTax;
+  const unrealizedPnl = marketValue - costBasis - estimatedExitCost;
   const realizedPnl = realizedCapitalGain + cashDividend;
   const totalPnl = unrealizedPnl + realizedPnl;
   const years = computeYears(firstDate);
@@ -311,6 +320,7 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
     totalPnlPct: (totalPnl / investedBase) * 100,
     unrealizedPnl,
     unrealizedPnlPct: (unrealizedPnl / costBase) * 100,
+    estimatedExitCost,
     todayPnl,
     todayPnlPct: (todayPnl / marketBase) * 100,
     realizedPnl,
@@ -348,6 +358,7 @@ export function aggregateSummaries(symbolSummaries) {
     tax: 0,
     investedCapital: 0,
     costBasis: 0,
+    estimatedExitCost: 0,
   };
   let earliestDate = null;
   symbolSummaries.forEach((s) => {
@@ -363,6 +374,7 @@ export function aggregateSummaries(symbolSummaries) {
     base.tax += s.tax;
     base.investedCapital += s.investedCapital;
     base.costBasis += s.costBasis;
+    base.estimatedExitCost += s.estimatedExitCost || 0;
     if (s.firstDate && (!earliestDate || s.firstDate < earliestDate)) earliestDate = s.firstDate;
   });
   const years = computeYears(earliestDate);
