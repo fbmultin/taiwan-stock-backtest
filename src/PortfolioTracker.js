@@ -79,12 +79,12 @@ function TypeSegmented({ value, onChange, isLight }) {
   );
 }
 
-function FieldBox({ label, icon, children, isLight }) {
+function FieldBox({ label, icon, children, isLight, className = '' }) {
   return (
     <div
       className={`relative border rounded-xl px-3 pt-4 pb-3 ${
         isLight ? 'border-slate-300 bg-white' : 'border-slate-600 bg-slate-800/40'
-      }`}
+      } ${className}`}
     >
       <span
         className={`absolute -top-2.5 left-3 px-1 text-[11px] ${
@@ -93,7 +93,7 @@ function FieldBox({ label, icon, children, isLight }) {
       >
         {label}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         {icon}
         {children}
       </div>
@@ -126,7 +126,42 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     return g ? g.feeDiscountPct : 100;
   });
   const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const priceTouchedRef = useRef(isEdit); // 編輯既有交易時視為「已手動設定」,不要被自動帶入蓋掉
   const nameGuess = TW_STOCK_NAMES[symbol.toUpperCase()] || '';
+
+  // 新增買進/賣出交易時,價格欄位預設帶入最近一個已知收盤價(這裡沿用整個
+  // 專案統一的「資料抓取基準日」規則——台灣時間下午3:30後用當天,之前用
+  // 前一個交易日——避免帶入 TWSE 尚未正式收錄、可能跟隔天資料對不上的尾盤價)。
+  // 只要使用者自己改過價格(或用±按鈕調整過),就不再自動覆寫。
+  useEffect(() => {
+    if (isEdit) return;
+    if (type !== TX_TYPES.BUY && type !== TX_TYPES.SELL) return;
+    const sym = symbol.trim().toUpperCase();
+    if (sym.length < 4) return;
+    let cancelled = false;
+    setPriceLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await fetchStockPriceData(sym);
+        if (cancelled) return;
+        const d = (result && result.data) || [];
+        const last = d[d.length - 1];
+        if (last && !priceTouchedRef.current) {
+          setPrice(String(last.price));
+        }
+      } catch (e) {
+        // 抓不到收盤價就讓使用者自己輸入,不特別提示。
+      } finally {
+        if (!cancelled) setPriceLoading(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setPriceLoading(false);
+    };
+  }, [symbol, type, isEdit]);
 
   const group = data.groups.find((g) => g.id === groupId) || data.groups[0];
   const priceNum = parseFloat(price) || 0;
@@ -165,7 +200,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     });
   };
 
-  const inputBase = `flex-1 bg-transparent outline-none text-lg font-mono font-bold ${
+  const inputBase = `flex-1 min-w-0 bg-transparent outline-none text-lg font-mono font-bold ${
     isLight ? 'text-slate-900 placeholder-slate-400' : 'text-white placeholder-slate-500'
   }`;
 
@@ -230,30 +265,43 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
           ) : (
             <div className="flex items-start gap-2">
               {type !== TX_TYPES.STOCK_DIVIDEND && (
-                <FieldBox label="價格" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
+                <FieldBox
+                  label="價格"
+                  icon={<span className="opacity-60 font-mono">$</span>}
+                  isLight={isLight}
+                  className="flex-1 min-w-0"
+                >
                   <input
                     type="number"
                     value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="0.00"
+                    onChange={(e) => {
+                      setPrice(e.target.value);
+                      priceTouchedRef.current = true;
+                    }}
+                    placeholder={priceLoading ? '抓取收盤價中…' : '0.00'}
                     className={inputBase}
                   />
-                  <span className="text-xs opacity-60 shrink-0">NTD</span>
                 </FieldBox>
               )}
               {type !== TX_TYPES.STOCK_DIVIDEND && (
                 <div className="flex gap-1 shrink-0 pt-1">
                   <button
                     type="button"
-                    onClick={() => setPrice(String(Math.max(0, (parseFloat(price) || 0) - 0.05).toFixed(2)))}
-                    className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center"
+                    onClick={() => {
+                      priceTouchedRef.current = true;
+                      setPrice(String(Math.max(0, (parseFloat(price) || 0) - 0.05).toFixed(2)));
+                    }}
+                    className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
                     <Minus className="w-4 h-4" />
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPrice(String(((parseFloat(price) || 0) + 0.05).toFixed(2)))}
-                    className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center"
+                    onClick={() => {
+                      priceTouchedRef.current = true;
+                      setPrice(String(((parseFloat(price) || 0) + 0.05).toFixed(2)));
+                    }}
+                    className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
                     <Plus className="w-4 h-4" />
                   </button>
@@ -999,24 +1047,30 @@ function StockDetailView({
         </div>
       </div>
 
-      <div className="px-4 pt-2 text-center">
-        <div className="text-3xl font-mono font-bold tracking-tight">{formatMoney(summary.marketValue)}</div>
-        <div className={`mt-1 font-mono font-bold text-sm ${pnlColorClass(summary.unrealizedPnl, isLight)}`}>
-          {formatSigned(summary.unrealizedPnl)}｜{formatPct(summary.unrealizedPnlPct)}
-        </div>
-      </div>
+      {/* 在「詳細數據」分頁時,把市值大數字跟這排統計卡收起來,
+          讓下面的數據表格不用滑動就能一次看完;切回「交易紀錄」分頁時照常顯示。 */}
+      {tab === 'transactions' && (
+        <>
+          <div className="px-4 pt-2 text-center">
+            <div className="text-3xl font-mono font-bold tracking-tight">{formatMoney(summary.marketValue)}</div>
+            <div className={`mt-1 font-mono font-bold text-sm ${pnlColorClass(summary.unrealizedPnl, isLight)}`}>
+              {formatSigned(summary.unrealizedPnl)}｜{formatPct(summary.unrealizedPnlPct)}
+            </div>
+          </div>
 
-      <div className="px-4 mt-3 flex gap-2 overflow-x-auto">
-        <StatCard isLight={isLight} label="持有股數" value={`${formatMoney(summary.shares)}股`} />
-        <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
-        <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
-        <StatCard
-          isLight={isLight}
-          label="今日損益"
-          value={formatPct(summary.todayPnlPct)}
-          valueClass={pnlColorClass(summary.todayPnl, isLight)}
-        />
-      </div>
+          <div className="px-4 mt-3 flex gap-2 overflow-x-auto">
+            <StatCard isLight={isLight} label="持有股數" value={`${formatMoney(summary.shares)}股`} />
+            <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
+            <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
+            <StatCard
+              isLight={isLight}
+              label="今日損益"
+              value={formatPct(summary.todayPnlPct)}
+              valueClass={pnlColorClass(summary.todayPnl, isLight)}
+            />
+          </div>
+        </>
+      )}
 
       <div
         className={`sticky top-0 z-10 mt-4 flex gap-5 px-4 border-b ${
