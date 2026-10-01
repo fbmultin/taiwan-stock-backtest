@@ -332,7 +332,10 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       priceTouchedRef.current = true;
-                      setPrice(String(stepPrice(parseFloat(price) || 0, -1)));
+                      // 用函式型 setState(讀前一個「待更新」的值而不是這次渲染當下的
+                      // closure 變數),避免快速連點時因為尚未重新渲染、好幾次點擊都
+                      // 讀到同一個舊的 price 值,導致點擊被「吃掉」、感覺卡住不動。
+                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, -1)));
                     }}
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
@@ -342,7 +345,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       priceTouchedRef.current = true;
-                      setPrice(String(stepPrice(parseFloat(price) || 0, 1)));
+                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, 1)));
                     }}
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
@@ -947,12 +950,12 @@ function HoldingsListView({
   onToggleSelectSymbol,
   onOpenMoveSymbols,
 }) {
-  // 框選移動時,預設把已經清倉(股數為0,通常是因為使用者另外開了「顯示已出場
-  // 部位」)的標的隱藏起來,避免框選清單裡混進一堆不需要移動群組的舊部位。
-  // 這個開關只在框選模式下生效,跟首頁的「顯示已出場部位」各自獨立。
-  const [hideClosedInSelect, setHideClosedInSelect] = useState(true);
-  const displayedHoldings =
-    selectMode && hideClosedInSelect ? holdings.filter((h) => h.summary.shares > 0) : holdings;
+  // 「隱藏已清倉」:跟首頁的「顯示已出場部位」各自獨立的額外開關,只要清單裡
+  // 有已出場部位(hiddenCount > 0,不限框選模式)就一定會顯示,方便使用者在
+  // 已經打開「顯示已出場部位」瀏覽的情況下,框選移動時能臨時再把這些已清倉的
+  // 部位濾掉,不用特地跑去關掉上面那個全域開關。預設關閉,不影響原本行為。
+  const [hideClosed, setHideClosed] = useState(false);
+  const displayedHoldings = hideClosed ? holdings.filter((h) => h.summary.shares > 0) : holdings;
   return (
     <div className="pb-24">
       <div className="flex items-center justify-between px-4 pt-4">
@@ -1027,11 +1030,11 @@ function HoldingsListView({
               {showHidden ? '隱藏已出場' : '顯示已出場部位'}
             </button>
           )}
-          {selectMode && (
+          {hiddenCount > 0 && (
             <button
-              onClick={() => setHideClosedInSelect((v) => !v)}
+              onClick={() => setHideClosed((v) => !v)}
               className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                hideClosedInSelect
+                hideClosed
                   ? 'bg-amber-500 text-white'
                   : isLight
                   ? 'bg-slate-100 text-slate-600'
