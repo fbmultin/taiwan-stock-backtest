@@ -2,8 +2,19 @@
 <html lang="zh-TW">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>台股回測比較</title>
+
+    <!-- PWA:可加到主畫面、全螢幕獨立運作 -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/favicon-64.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="theme-color" content="#059669" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="台股持股" />
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       // 字體放大：在不超出欄位/容器寬度的前提下盡量放大具名的 Tailwind 字級，
