@@ -814,6 +814,7 @@ function HoldingsListView({
   onOpenDetail,
   onOpenSwitcher,
   onOpenSettings,
+  onOpenSummary,
   onAddTx,
   activeGroup,
 }) {
@@ -851,6 +852,12 @@ function HoldingsListView({
 
       <div className="px-4 mt-5 flex items-center justify-between">
         <div className="font-bold">績效數據</div>
+        <button
+          onClick={onOpenSummary}
+          className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+        >
+          查看全部 &gt;
+        </button>
       </div>
       <div className="px-4 mt-2 flex gap-2 overflow-x-auto pb-1">
         <StatCard
@@ -864,18 +871,6 @@ function HoldingsListView({
           label="總損益"
           value={`${formatSigned(totalSummary.totalPnl)}｜${formatPct(totalSummary.totalPnlPct)}`}
           valueClass={pnlColorClass(totalSummary.totalPnl, isLight)}
-        />
-        <StatCard
-          isLight={isLight}
-          label="已實現損益"
-          value={formatSigned(totalSummary.realizedPnl)}
-          valueClass={pnlColorClass(totalSummary.realizedPnl, isLight)}
-        />
-        <StatCard
-          isLight={isLight}
-          label="年化報酬率"
-          value={formatPct(totalSummary.annualizedReturnPct)}
-          valueClass={pnlColorClass(totalSummary.annualizedReturnPct, isLight)}
         />
       </div>
 
@@ -970,7 +965,7 @@ function StockDetailView({
   onToggleSelectTx,
   onOpenTagPicker,
 }) {
-  const [tab, setTab] = useState('data');
+  const [tab, setTab] = useState('transactions');
   const sorted = [...transactions].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   const grouped = {};
   sorted.forEach((tx) => {
@@ -1029,8 +1024,8 @@ function StockDetailView({
         }`}
       >
         {[
-          { key: 'data', label: '詳細數據' },
           { key: 'transactions', label: '交易紀錄' },
+          { key: 'data', label: '詳細數據' },
         ].map((t) => (
           <button
             key={t.key}
@@ -1247,6 +1242,121 @@ function DataRow({ isLight, label, value, indent = 0, colorClass = '' }) {
   );
 }
 
+// ============== 總覽詳細資料(首頁「查看全部」) ==============
+
+function AllSummaryDetailView({ isLight, summary, title, onBack }) {
+  return (
+    <div className="pb-24">
+      <div className="flex items-center gap-2 px-4 pt-4">
+        <button onClick={onBack} className="p-1">
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1 text-center -ml-7">
+          <div className="font-bold">{title}</div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-2 text-center">
+        <div className="text-3xl font-mono font-bold tracking-tight">{formatMoney(summary.marketValue)}</div>
+        <div className={`mt-1 font-mono font-bold text-sm ${pnlColorClass(summary.unrealizedPnl, isLight)}`}>
+          {formatSigned(summary.unrealizedPnl)}｜{formatPct(summary.unrealizedPnlPct)}
+        </div>
+      </div>
+
+      <div className="px-4 mt-3 flex gap-2 overflow-x-auto">
+        <StatCard
+          isLight={isLight}
+          label="今日損益"
+          value={`${formatSigned(summary.todayPnl)}｜${formatPct(summary.todayPnlPct)}`}
+          valueClass={pnlColorClass(summary.todayPnl, isLight)}
+        />
+        <StatCard
+          isLight={isLight}
+          label="總損益"
+          value={`${formatSigned(summary.totalPnl)}｜${formatPct(summary.totalPnlPct)}`}
+          valueClass={pnlColorClass(summary.totalPnl, isLight)}
+        />
+        <StatCard
+          isLight={isLight}
+          label="已實現損益"
+          value={formatSigned(summary.realizedPnl)}
+          valueClass={pnlColorClass(summary.realizedPnl, isLight)}
+        />
+        <StatCard
+          isLight={isLight}
+          label="年化報酬率"
+          value={formatPct(summary.annualizedReturnPct)}
+          valueClass={pnlColorClass(summary.annualizedReturnPct, isLight)}
+        />
+      </div>
+
+      <div className="px-4 mt-2">
+        <SectionHeader isLight={isLight}>損益</SectionHeader>
+        <DataRow
+          isLight={isLight}
+          label="總損益"
+          value={`${formatSigned(summary.totalPnl)}｜${formatPct(summary.totalPnlPct)}`}
+          colorClass={pnlColorClass(summary.totalPnl, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={1}
+          label="未實現損益"
+          value={`${formatSigned(summary.unrealizedPnl)}｜${formatPct(summary.unrealizedPnlPct)}`}
+          colorClass={pnlColorClass(summary.unrealizedPnl, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={1}
+          label="今日損益"
+          value={`${formatSigned(summary.todayPnl)}｜${formatPct(summary.todayPnlPct)}`}
+          colorClass={pnlColorClass(summary.todayPnl, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={1}
+          label="已實現損益"
+          value={`${formatSigned(summary.realizedPnl)}｜${formatPct(summary.realizedPnlPct)}`}
+          colorClass={pnlColorClass(summary.realizedPnl, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={2}
+          label="資本利得"
+          value={`${formatSigned(summary.capitalGain)}｜${formatPct(summary.capitalGainPct)}`}
+          colorClass={pnlColorClass(summary.capitalGain, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={2}
+          label="現金股利"
+          value={`${formatSigned(summary.cashDividend)}｜${formatPct(summary.cashDividendPct)}`}
+          colorClass={pnlColorClass(summary.cashDividend, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          label="年化殖利率"
+          value={formatPct(summary.annualizedYieldPct)}
+          colorClass={pnlColorClass(summary.annualizedYieldPct, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          label="年化報酬率"
+          value={formatPct(summary.annualizedReturnPct)}
+          colorClass={pnlColorClass(summary.annualizedReturnPct, isLight)}
+        />
+
+        <SectionHeader isLight={isLight}>成本</SectionHeader>
+        <DataRow isLight={isLight} label="交易成本" value={formatMoney(summary.tradeCost)} />
+        <DataRow isLight={isLight} indent={1} label="手續費" value={formatMoney(summary.fee)} />
+        <DataRow isLight={isLight} indent={1} label="證券交易稅" value={formatMoney(summary.tax)} />
+        <DataRow isLight={isLight} label="投入資本" value={formatMoney(summary.investedCapital)} />
+        <DataRow isLight={isLight} label="持有成本" value={formatMoney(summary.costBasis)} />
+      </div>
+    </div>
+  );
+}
+
 // ============== 主元件 ==============
 
 export default function PortfolioTracker({ isLight }) {
@@ -1274,6 +1384,13 @@ export default function PortfolioTracker({ isLight }) {
   useEffect(() => {
     savePortfolioData(data);
   }, [data]);
+
+  // 切換「持股列表 / 個股詳情」畫面時捲回最上方。
+  // 如果使用者在列表往下滑很多之後才點進某一檔,detail 畫面會沿用同一個捲動位置,
+  // 返回按鈕就被捲到畫面外面,看起來像是「按了沒反應」,其實只是找不到按鈕。
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
 
   const txBySymbol = useMemo(() => getTransactionsByGroup(data, data.activeGroupId), [data]);
   const symbols = useMemo(() => Object.keys(txBySymbol), [txBySymbol]);
@@ -1412,8 +1529,18 @@ export default function PortfolioTracker({ isLight }) {
           }}
           onOpenSwitcher={() => setShowSwitcher(true)}
           onOpenSettings={handleOpenGroupSettings}
+          onOpenSummary={() => setView('summary')}
           onAddTx={() => openAddTx(null)}
           activeGroup={activeGroup}
+        />
+      )}
+
+      {view === 'summary' && (
+        <AllSummaryDetailView
+          isLight={isLight}
+          summary={totalSummary}
+          title={activeGroup ? activeGroup.name : '全部'}
+          onBack={() => setView('list')}
         />
       )}
 

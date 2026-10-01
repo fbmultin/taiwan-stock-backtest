@@ -238,10 +238,15 @@ function computeYears(firstDateStr, asOfDate = new Date()) {
 }
 
 function annualize(periodReturnPct, years) {
-  if (!years || years <= 0) return 0;
+  if (!years || years <= 0) return null;
   const r = periodReturnPct / 100;
   if (r <= -1) return -100;
-  return ((Math.pow(1 + r, 1 / years) - 1) * 100);
+  // 持有不到 30 天就套複利年化公式,會把短期的小波動放大成失真的誇張數字
+  // (例如才持有 3 天賺 1%,年化算出來會變成好幾千%),這種情況下年化率沒有
+  // 參考意義,直接回傳 null,畫面上會改顯示「-」。
+  if (years < 30 / 365) return null;
+  const result = (Math.pow(1 + r, 1 / years) - 1) * 100;
+  return isFinite(result) ? result : null;
 }
 
 // 針對「單一標的」的交易紀錄(已經是過濾好的陣列),算出完整摘要。
@@ -404,7 +409,8 @@ export function formatSigned(n) {
 }
 
 export function formatPct(n, digits = 2) {
-  const v = Number(n) || 0;
+  if (n === null || n === undefined || !isFinite(n)) return '-';
+  const v = Number(n);
   const sign = v > 0 ? '+' : '';
   return `${sign}${v.toFixed(digits)}%`;
 }
