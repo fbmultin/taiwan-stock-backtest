@@ -3349,13 +3349,16 @@ const App = () => {
               }`}
             >
               <div
-                className={`lg:col-span-4 min-w-0 space-y-4 border-b lg:border-b-0 lg:border-r pb-4 lg:pb-0 pr-0 lg:pr-4 ${
+                className={`lg:col-span-2 min-w-0 space-y-4 border-b lg:border-b-0 lg:border-r pb-4 lg:pb-0 pr-0 lg:pr-4 ${
                   isLight ? 'border-slate-300' : 'border-slate-700'
                 }`}
               >
                 <div className="flex flex-col gap-2">
                   <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     總投入本金 (萬元)
+                    <span className={`ml-1.5 text-[11px] font-normal ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
+                      (全部預設100萬)
+                    </span>
                   </label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
@@ -3384,10 +3387,339 @@ const App = () => {
                       100萬
                     </button>
                   </div>
-                  <div className={`text-[14px] text-right ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
-                    = {Math.round(totalCapital).toLocaleString()} 元
+                </div>
+              </div>
+
+              <div className="lg:col-span-6 min-w-0 space-y-3">
+                <QuickApplyBar
+                  isLight={isLight}
+                  onApply={handleApplyPreset}
+                  getCurrentStocks={() =>
+                    inputs.filter((s, i) => s !== '' && enabledInputs[i])
+                  }
+                />
+
+                <div className="flex justify-between items-end mb-1">
+                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                    標的選擇
+                  </label>
+                  <span className="text-xs font-mono font-bold text-emerald-400">
+                    已勾選 {inputs.filter((v, i) => v && enabledInputs[i]).length} 檔
+                    (平均分配本金)
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
+                  {inputs.map((val, idx) => {
+                    const isEnabled = enabledInputs[idx];
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-center gap-2 transition-opacity ${
+                          isEnabled ? 'opacity-100' : 'opacity-50'
+                        }`}
+                      >
+                        <button
+                          onClick={() => toggleEnabled(idx)}
+                          className={`shrink-0 ${isLight ? 'text-slate-400 hover:text-black' : 'text-slate-500 hover:text-white'}`}
+                        >
+                          {isEnabled ? (
+                            <CheckSquare className="w-5 h-5 text-emerald-500" />
+                          ) : (
+                            <Square className="w-5 h-5" />
+                          )}
+                        </button>
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            onFocus={handleInputFocus}
+                            value={val}
+                            onChange={(e) =>
+                              handleInputChange(idx, e.target.value)
+                            }
+                            onBlur={() => handleInputBlurInApp(idx, val)}
+                            placeholder={`標的 ${idx + 1}`}
+                            className={`w-full rounded-md py-1.5 pl-2 pr-2 text-sm font-mono uppercase border ${
+                              isLight
+                                ? 'bg-white border-slate-300 text-slate-900'
+                                : 'bg-slate-800 border-slate-600 text-white'
+                            }`}
+                          />
+                          {stockNames[val] && (
+                            <div
+                              className={`absolute left-0 -bottom-4 text-[13px] whitespace-nowrap overflow-hidden text-ellipsis w-full ${
+                                isLight ? 'text-slate-500' : 'text-slate-400'
+                              }`}
+                            >
+                              {stockNames[val]}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 排名表區塊的捲動錨點,見上方 rankingTableAnchorRef 註解 */}
+                <div ref={rankingTableAnchorRef} />
+
+                {anyTopUpEnabled && (
+                  <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                        標的組合排名表(含加碼)
+                      </label>
+                      <button
+                        onClick={updateRankingTable}
+                        disabled={rankingLoading || !hasSelectedStock}
+                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isLight
+                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
+                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
+                        }`}
+                      >
+                        {rankingLoading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Table2 className="w-3.5 h-3.5" />
+                        )}
+                        更新排名表
+                      </button>
+                    </div>
+                    <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                      套用目前的加碼策略設定(
+                      {[
+                        monthlyTopUpEnabled && '每月固定日期加碼',
+                        klineTopUpEnabled && 'K線穿越均線加碼',
+                      ]
+                        .filter(Boolean)
+                        .join('+')}
+                      ,{monthlyTopUpIncludeLumpSum ? '含' : '不含'}
+                      最上面的一次性本金),假設每一檔各自固定投入 100 萬計算(不受上方「總投入本金」與勾選標的檔數影響),
+                      跟下面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
+                      這段區間內完全沒有實際加碼買進時顯示「—」。該區間損益金額最高的標的以紅色標示。
+                    </div>
+                    {rankingError && (
+                      <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
+                        {rankingError}
+                      </div>
+                    )}
+                    {rankingDataTopUp &&
+                      renderRankingTable(rankingDataTopUp, { highlightMaxNetProfit: true })}
+                  </div>
+                )}
+
+                <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                      標的組合排名表
+                    </label>
+                    {!anyTopUpEnabled && (
+                      <button
+                        onClick={updateRankingTable}
+                        disabled={rankingLoading || !hasSelectedStock}
+                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isLight
+                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
+                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
+                        }`}
+                      >
+                        {rankingLoading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Table2 className="w-3.5 h-3.5" />
+                        )}
+                        更新排名表
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    列出目前已勾選標的,在「回測投資年限」的 7 個區間及 2 個固定起始日下的含息報酬率排名(1
+                    =表現最好,以紅字標示)。只算已勾選的標的、不含加碼{anyTopUpEnabled ? ',跟上面含加碼的排名表用同一組「更新排名表」按鈕一起更新,不用另外按' : ''}
+                    ,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
+                  </div>
+                  {!anyTopUpEnabled && rankingError && (
+                    <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
+                      {rankingError}
+                    </div>
+                  )}
+                  {rankingData && renderRankingTable(rankingData)}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                    回測投資年限
+                  </label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {['ytd', '3m', '6m', '12m', '2y', '3y', '5y', '5d', '10d', '20d'].map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setTimeRange(t)}
+                        className={`py-2 text-[14px] rounded border font-bold ${
+                          timeRange === t
+                            ? 'bg-emerald-600 border-emerald-500 text-white'
+                            : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
+                        }`}
+                      >
+                        {t === 'ytd'
+                          ? '今年'
+                          : t === '3m'
+                          ? '3個月'
+                          : t === '6m'
+                          ? '半年'
+                          : t === '12m'
+                          ? '近1年'
+                          : t === '2y'
+                          ? '近2年'
+                          : t === '3y'
+                          ? '近3年'
+                          : t === '5y'
+                          ? '近5年'
+                          : t === '5d'
+                          ? '05日'
+                          : t === '10d'
+                          ? '10日'
+                          : '20日'}
+                      </button>
+                    ))}
+                    {/* 常用的固定起始日快捷鈕:點擊即把起始日設為該固定日期、結束日固定為今天,
+                        沿用「自訂區間」既有邏輯,不需另外新增 timeRange 狀態 */}
+                    {[
+                      { label: '2026/06/22', dateStr: '2026-06-22' },
+                      { label: '2026/07/29', dateStr: '2026-07-29' },
+                    ].map(({ label, dateStr }) => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      const isActive =
+                        timeRange === 'custom' &&
+                        customStart === dateStr &&
+                        customEnd === todayStr;
+                      return (
+                        <button
+                          key={dateStr}
+                          onClick={() => {
+                            setCustomStart(dateStr);
+                            setCustomEnd(todayStr);
+                            setTimeRange('custom');
+                          }}
+                          className={`py-2 text-[14px] rounded border font-bold ${
+                            isActive
+                              ? 'bg-emerald-600 border-emerald-500 text-white'
+                              : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setTimeRange('custom')}
+                    className={`text-xs w-full py-2 rounded border ${
+                      timeRange === 'custom'
+                        ? 'bg-emerald-600 border-emerald-500 text-white'
+                        : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
+                    }`}
+                  >
+                    自訂區間
+                  </button>
+                  <div className="flex gap-1 mt-1">
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => {
+                        setCustomStart(e.target.value);
+                        setTimeRange('custom');
+                      }}
+                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                    />
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => {
+                        setCustomEnd(e.target.value);
+                        setTimeRange('custom');
+                      }}
+                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-1, 'day')}
+                        title="起始日往前推1天"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        −
+                      </button>
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
+                        日
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(1, 'day')}
+                        title="起始日往後推1天"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        ＋
+                      </button>
+                    </div>
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-1)}
+                        title="整段區間往前推1個月"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        −
+                      </button>
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
+                        月
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(1)}
+                        title="整段區間往後推1個月"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        ＋
+                      </button>
+                    </div>
+                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(-3)}
+                        title="整段區間往前推1季(3個月)"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        −
+                      </button>
+                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
+                        季
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => shiftCustomRange(3)}
+                        title="整段區間往後推1季(3個月)"
+                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                      >
+                        ＋
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className={`mt-1.5 text-[13px] font-mono text-center rounded py-1 border ${
+                      isLight
+                        ? 'text-emerald-600 bg-slate-100 border-slate-300'
+                        : 'text-emerald-400 bg-slate-900/60 border-slate-700'
+                    }`}
+                  >
+                    {formatDateForDisplay(customStart)} ～{' '}
+                    {formatDateForDisplay(customEnd)}
                   </div>
                 </div>
+              </div>
+
+              <div className="lg:col-span-4 min-w-0 mt-4 lg:mt-0 space-y-4">
                 <div
                   className={`flex flex-col gap-2 rounded-lg p-3 border ${
                     isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-800/60 border-slate-700'
@@ -3833,338 +4165,6 @@ const App = () => {
                     </div>
                   )}
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                    回測投資年限
-                  </label>
-                  <div className="grid grid-cols-3 gap-1">
-                    {['ytd', '3m', '6m', '12m', '2y', '3y', '5y', '5d', '10d', '20d'].map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setTimeRange(t)}
-                        className={`py-2 text-[14px] rounded border font-bold ${
-                          timeRange === t
-                            ? 'bg-emerald-600 border-emerald-500 text-white'
-                            : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
-                        }`}
-                      >
-                        {t === 'ytd'
-                          ? '今年'
-                          : t === '3m'
-                          ? '3個月'
-                          : t === '6m'
-                          ? '半年'
-                          : t === '12m'
-                          ? '近1年'
-                          : t === '2y'
-                          ? '近2年'
-                          : t === '3y'
-                          ? '近3年'
-                          : t === '5y'
-                          ? '近5年'
-                          : t === '5d'
-                          ? '05日'
-                          : t === '10d'
-                          ? '10日'
-                          : '20日'}
-                      </button>
-                    ))}
-                    {/* 常用的固定起始日快捷鈕:點擊即把起始日設為該固定日期、結束日固定為今天,
-                        沿用「自訂區間」既有邏輯,不需另外新增 timeRange 狀態 */}
-                    {[
-                      { label: '2026/06/22', dateStr: '2026-06-22' },
-                      { label: '2026/07/29', dateStr: '2026-07-29' },
-                    ].map(({ label, dateStr }) => {
-                      const todayStr = new Date().toISOString().split('T')[0];
-                      const isActive =
-                        timeRange === 'custom' &&
-                        customStart === dateStr &&
-                        customEnd === todayStr;
-                      return (
-                        <button
-                          key={dateStr}
-                          onClick={() => {
-                            setCustomStart(dateStr);
-                            setCustomEnd(todayStr);
-                            setTimeRange('custom');
-                          }}
-                          className={`py-2 text-[14px] rounded border font-bold ${
-                            isActive
-                              ? 'bg-emerald-600 border-emerald-500 text-white'
-                              : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={() => setTimeRange('custom')}
-                    className={`text-xs w-full py-2 rounded border ${
-                      timeRange === 'custom'
-                        ? 'bg-emerald-600 border-emerald-500 text-white'
-                        : (isLight ? 'bg-slate-100 border-slate-300 text-slate-500' : 'bg-slate-800 border-slate-600 text-slate-400')
-                    }`}
-                  >
-                    自訂區間
-                  </button>
-                  <div className="flex gap-1 mt-1">
-                    <input
-                      type="date"
-                      value={customStart}
-                      onChange={(e) => {
-                        setCustomStart(e.target.value);
-                        setTimeRange('custom');
-                      }}
-                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
-                    />
-                    <input
-                      type="date"
-                      value={customEnd}
-                      onChange={(e) => {
-                        setCustomEnd(e.target.value);
-                        setTimeRange('custom');
-                      }}
-                      className={`w-1/2 rounded text-xs p-1 ${isLight ? 'bg-white border border-slate-300 text-slate-900' : 'bg-slate-800 border-slate-600'}`}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(-1, 'day')}
-                        title="起始日往前推1天"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        −
-                      </button>
-                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
-                        日
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(1, 'day')}
-                        title="起始日往後推1天"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        ＋
-                      </button>
-                    </div>
-                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(-1)}
-                        title="整段區間往前推1個月"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        −
-                      </button>
-                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
-                        月
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(1)}
-                        title="整段區間往後推1個月"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        ＋
-                      </button>
-                    </div>
-                    <div className={`flex items-center rounded border overflow-hidden shrink-0 ${isLight ? 'border-slate-300' : 'border-slate-600'}`}>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(-3)}
-                        title="整段區間往前推1季(3個月)"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        −
-                      </button>
-                      <span className={`px-2 py-1 text-[11px] border-x ${isLight ? 'text-slate-500 bg-slate-100 border-slate-300' : 'text-slate-400 bg-slate-900 border-slate-600'}`}>
-                        季
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => shiftCustomRange(3)}
-                        title="整段區間往後推1季(3個月)"
-                        className={`px-2 py-1 text-xs font-bold ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                      >
-                        ＋
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    className={`mt-1.5 text-[13px] font-mono text-center rounded py-1 border ${
-                      isLight
-                        ? 'text-emerald-600 bg-slate-100 border-slate-300'
-                        : 'text-emerald-400 bg-slate-900/60 border-slate-700'
-                    }`}
-                  >
-                    {formatDateForDisplay(customStart)} ～{' '}
-                    {formatDateForDisplay(customEnd)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="lg:col-span-6 min-w-0 space-y-3">
-                <QuickApplyBar
-                  isLight={isLight}
-                  onApply={handleApplyPreset}
-                  getCurrentStocks={() =>
-                    inputs.filter((s, i) => s !== '' && enabledInputs[i])
-                  }
-                />
-
-                <div className="flex justify-between items-end mb-1">
-                  <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                    標的選擇
-                  </label>
-                  <span className="text-xs font-mono font-bold text-emerald-400">
-                    已勾選 {inputs.filter((v, i) => v && enabledInputs[i]).length} 檔
-                    (平均分配本金)
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
-                  {inputs.map((val, idx) => {
-                    const isEnabled = enabledInputs[idx];
-
-                    return (
-                      <div
-                        key={idx}
-                        className={`flex items-center gap-2 transition-opacity ${
-                          isEnabled ? 'opacity-100' : 'opacity-50'
-                        }`}
-                      >
-                        <button
-                          onClick={() => toggleEnabled(idx)}
-                          className={`shrink-0 ${isLight ? 'text-slate-400 hover:text-black' : 'text-slate-500 hover:text-white'}`}
-                        >
-                          {isEnabled ? (
-                            <CheckSquare className="w-5 h-5 text-emerald-500" />
-                          ) : (
-                            <Square className="w-5 h-5" />
-                          )}
-                        </button>
-                        <div className="relative flex-1">
-                          <input
-                            type="text"
-                            onFocus={handleInputFocus}
-                            value={val}
-                            onChange={(e) =>
-                              handleInputChange(idx, e.target.value)
-                            }
-                            onBlur={() => handleInputBlurInApp(idx, val)}
-                            placeholder={`標的 ${idx + 1}`}
-                            className={`w-full rounded-md py-1.5 pl-2 pr-2 text-sm font-mono uppercase border ${
-                              isLight
-                                ? 'bg-white border-slate-300 text-slate-900'
-                                : 'bg-slate-800 border-slate-600 text-white'
-                            }`}
-                          />
-                          {stockNames[val] && (
-                            <div
-                              className={`absolute left-0 -bottom-4 text-[13px] whitespace-nowrap overflow-hidden text-ellipsis w-full ${
-                                isLight ? 'text-slate-500' : 'text-slate-400'
-                              }`}
-                            >
-                              {stockNames[val]}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* 排名表區塊的捲動錨點,見上方 rankingTableAnchorRef 註解 */}
-                <div ref={rankingTableAnchorRef} />
-
-                {anyTopUpEnabled && (
-                  <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
-                    <div className="flex items-center justify-between mb-1 gap-2">
-                      <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                        標的組合排名表(含加碼)
-                      </label>
-                      <button
-                        onClick={updateRankingTable}
-                        disabled={rankingLoading || !hasSelectedStock}
-                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
-                          isLight
-                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
-                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
-                        }`}
-                      >
-                        {rankingLoading ? (
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Table2 className="w-3.5 h-3.5" />
-                        )}
-                        更新排名表
-                      </button>
-                    </div>
-                    <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                      套用目前的加碼策略設定(
-                      {[
-                        monthlyTopUpEnabled && '每月固定日期加碼',
-                        klineTopUpEnabled && 'K線穿越均線加碼',
-                      ]
-                        .filter(Boolean)
-                        .join('+')}
-                      ,{monthlyTopUpIncludeLumpSum ? '含' : '不含'}
-                      最上面的一次性本金),假設每一檔各自固定投入 100 萬計算(不受上方「總投入本金」與勾選標的檔數影響),
-                      跟下面純本金的排名表用同一組「更新排名表」按鈕一起更新,不用另外按。
-                      這段區間內完全沒有實際加碼買進時顯示「—」。該區間損益金額最高的標的以紅色標示。
-                    </div>
-                    {rankingError && (
-                      <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
-                        {rankingError}
-                      </div>
-                    )}
-                    {rankingDataTopUp &&
-                      renderRankingTable(rankingDataTopUp, { highlightMaxNetProfit: true })}
-                  </div>
-                )}
-
-                <div className={`mt-4 pt-3 border-t ${isLight ? 'border-slate-300' : 'border-slate-700/60'}`}>
-                  <div className="flex items-center justify-between mb-1 gap-2">
-                    <label className={`text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                      標的組合排名表
-                    </label>
-                    {!anyTopUpEnabled && (
-                      <button
-                        onClick={updateRankingTable}
-                        disabled={rankingLoading || !hasSelectedStock}
-                        className={`text-xs px-3 py-1.5 rounded-md border transition-colors flex items-center gap-1 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
-                          isLight
-                            ? 'bg-slate-200 hover:bg-slate-300 disabled:hover:bg-slate-200 text-slate-700 border-slate-300'
-                            : 'bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 text-white border-slate-600'
-                        }`}
-                      >
-                        {rankingLoading ? (
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Table2 className="w-3.5 h-3.5" />
-                        )}
-                        更新排名表
-                      </button>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                    列出目前已勾選標的,在「回測投資年限」的 7 個區間及 2 個固定起始日下的含息報酬率排名(1
-                    =表現最好,以紅字標示)。只算已勾選的標的、不含加碼{anyTopUpEnabled ? ',跟上面含加碼的排名表用同一組「更新排名表」按鈕一起更新,不用另外按' : ''}
-                    ,只有按下「更新排名表」才會重新抓資料計算,不會隨著「開始回測」或切換回測投資年限自動更新。
-                  </div>
-                  {!anyTopUpEnabled && rankingError && (
-                    <div className={`text-[13px] mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>
-                      {rankingError}
-                    </div>
-                  )}
-                  {rankingData && renderRankingTable(rankingData)}
-                </div>
-              </div>
-
-              <div className="lg:col-span-2 min-w-0 mt-4 lg:mt-0">
                 <div className="flex flex-col gap-2">
                   <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded-lg transition-colors ${isLight ? 'bg-white border-slate-300 hover:bg-slate-50' : 'bg-slate-800 border-slate-600 hover:bg-slate-700/50'}`}>
                     <div className="relative flex-shrink-0">
