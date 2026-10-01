@@ -356,7 +356,17 @@ export function computeSymbolSummary(
   transactions,
   { currentPrice = 0, prevClose = null, groups = [], todayDate = new Date().toISOString().split('T')[0] } = {}
 ) {
-  const sorted = [...transactions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  // 同一天如果同時有買又有賣,買要先處理、賣後處理——不然像「同一天先賣掉庫存、
+  // 再買回來」這種單純依資料列原始順序(例如CSV匯入照檔案行數排)排出來的結果,
+  // 遇到賣出當下庫存還不夠(因為同一天的買還沒套用)會被誤判成「庫存不足,只能
+  // 賣掉庫存那麼多」,導致賣出股數被少算,庫存股數因此虛增。只排日期、沒有這個
+  // 次要排序時就會踩到這個雷。
+  const sorted = [...transactions].sort((a, b) => {
+    if (a.date < b.date) return -1;
+    if (a.date > b.date) return 1;
+    const rank = (t) => (t.type === TX_TYPES.SELL ? 1 : 0);
+    return rank(a) - rank(b);
+  });
 
   let shares = 0;
   let costBasis = 0; // 目前庫存的持有成本
