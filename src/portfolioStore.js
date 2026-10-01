@@ -236,6 +236,18 @@ export function isDayTradeSell(transactions, symbol, date, excludeTxId = null) {
   );
 }
 
+// 計算一組交易紀錄的「淨股數」變化:買進、股票股利增加股數,賣出減少股數,
+// 現金股利不影響股數。框選套用標籤(標記成一組「已清倉」波段)時用這個檢查
+// 選取的交易淨股數是否等於0——等於0才代表這組交易買了又全部賣光,沒有剩餘
+// 庫存,可以自成一組獨立計算已實現損益,不會跟其他波段的庫存混在一起算錯。
+export function netShareDelta(txs) {
+  return txs.reduce((sum, tx) => {
+    if (tx.type === TX_TYPES.BUY || tx.type === TX_TYPES.STOCK_DIVIDEND) return sum + tx.shares;
+    if (tx.type === TX_TYPES.SELL) return sum - tx.shares;
+    return sum;
+  }, 0);
+}
+
 // 台股股價升降單位(最小跳動)級距,依證交所公告的價格級距表:
 // <10 元:0.01 / 10~50 元:0.05 / 50~100 元:0.1 / 100~500 元:0.5 / 500~1000 元:1 / >=1000 元:5
 export function tickSize(price) {
@@ -297,7 +309,12 @@ function annualize(periodReturnPct, years) {
 
 // 針對「單一標的」的交易紀錄(已經是過濾好的陣列),算出完整摘要。
 // currentPrice / prevClose 由呼叫端傳入(來自 dataCache 抓到的即時報價)。
-export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose = null, groups = [] } = {}) {
+// todayDate 預設是「今天」的日期字串(YYYY-MM-DD),用來額外累計「本日已實現
+// 損益」;外部呼叫端一般不需要自己傳,只有測試時才需要固定日期。
+export function computeSymbolSummary(
+  transactions,
+  { currentPrice = 0, prevClose = null, groups = [], todayDate = new Date().toISOString().split('T')[0] } = {}
+) {
   const sorted = [...transactions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   let shares = 0;
@@ -309,6 +326,7 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
   let stockDividendShares = 0;
   let totalFee = 0;
   let totalTax = 0;
+  let todayRealizedGain = 0; // 本日(日期等於 todayDate 的交易)已實現損益,含資本利得與現金股利
   let firstDate = sorted.length ? sorted[0].date : null;
 
   sorted.forEach((tx) => {
@@ -327,14 +345,18 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
       const costOfSold = avgCost * soldShares;
       const pureCostOfSold = pureAvgCost * soldShares;
       const proceeds = tx.price * soldShares - (tx.fee || 0) - (tx.tax || 0);
-      realizedCapitalGain += proceeds - costOfSold;
+      const gain = proceeds - costOfSold;
+      realizedCapitalGain += gain;
+      if (tx.date === todayDate) todayRealizedGain += gain;
       shares -= soldShares;
       costBasis -= costOfSold;
       pureCostBasis -= pureCostOfSold;
       totalFee += tx.fee || 0;
       totalTax += tx.tax || 0;
     } else if (tx.type === TX_TYPES.CASH_DIVIDEND) {
-      cashDividend += tx.amount || tx.price * tx.shares || 0;
+      const amt = tx.amount || tx.price * tx.shares || 0;
+      cashDividend += amt;
+      if (tx.date === todayDate) todayRealizedGain += amt;
     } else if (tx.type === TX_TYPES.STOCK_DIVIDEND) {
       shares += tx.shares;
       stockDividendShares += tx.shares;
@@ -380,6 +402,7 @@ export function computeSymbolSummary(transactions, { currentPrice = 0, prevClose
     todayPnlPct: (todayPnl / marketBase) * 100,
     realizedPnl,
     realizedPnlPct: (realizedPnl / investedBase) * 100,
+    todayRealizedPnl: todayRealizedGain,
     capitalGain: realizedCapitalGain,
     capitalGainPct: (realizedCapitalGain / investedBase) * 100,
     cashDividend,
@@ -406,6 +429,7 @@ export function aggregateSummaries(symbolSummaries) {
     unrealizedPnl: 0,
     todayPnl: 0,
     realizedPnl: 0,
+    todayRealizedPnl: 0,
     capitalGain: 0,
     cashDividend: 0,
     tradeCost: 0,
@@ -422,6 +446,7 @@ export function aggregateSummaries(symbolSummaries) {
     base.unrealizedPnl += s.unrealizedPnl;
     base.todayPnl += s.todayPnl;
     base.realizedPnl += s.realizedPnl;
+    base.todayRealizedPnl += s.todayRealizedPnl || 0;
     base.capitalGain += s.capitalGain;
     base.cashDividend += s.cashDividend;
     base.tradeCost += s.tradeCost;

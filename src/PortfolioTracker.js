@@ -38,6 +38,7 @@ import {
   estimateTax,
   isDayTradeSell,
   stepPrice,
+  netShareDelta,
   computeSymbolSummary,
   aggregateSummaries,
   getTransactionsByGroup,
@@ -634,10 +635,11 @@ function MoveGroupSheet({ isLight, data, title = '移動到群組', currentGroup
 
 // ============== 批次標籤選擇 ==============
 
-function TagPickerModal({ isLight, tags, onClose, onApply, onCreate }) {
+function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClose, onApply, onCreate }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [color, setColor] = useState(DEFAULT_GROUP_COLORS[2]);
+  const blocked = netShares !== 0;
   return (
     <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
@@ -648,17 +650,29 @@ function TagPickerModal({ isLight, tags, onClose, onApply, onCreate }) {
       >
         <div className="font-bold mb-2">套用批次標籤</div>
         <div className="text-xs opacity-60 mb-3">
-          標記這幾筆交易屬於同一個操作波段,方便你自己日後辨識(只有你看得到標籤文字)。
+          標記這幾筆交易屬於同一個已清倉波段,方便你自己日後辨識、各自獨立檢視損益(只有你看得到標籤文字)。
         </div>
+
+        {blocked && (
+          <div
+            className={`text-xs rounded-lg px-3 py-2 mb-3 ${
+              isLight ? 'bg-amber-50 text-amber-700' : 'bg-amber-900/30 text-amber-300'
+            }`}
+          >
+            已選{selectedCount}筆,淨股數{formatSigned(netShares)}股——要淨股數為0(完整買賣平倉)才能套用標籤。
+          </div>
+        )}
+
         <div className="space-y-1 max-h-48 overflow-y-auto">
           {tags.map((t) => (
             <button
               key={t.id}
+              disabled={blocked}
               onClick={() => {
                 onApply(t.id);
                 onClose();
               }}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left ${
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left disabled:opacity-40 ${
                 isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-700'
               }`}
             >
@@ -673,7 +687,7 @@ function TagPickerModal({ isLight, tags, onClose, onApply, onCreate }) {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="標籤名稱,例如:低接波段"
+              placeholder="標籤名稱(留空會自動命名,例如:已清倉1)"
               className={`w-full border rounded-lg px-3 py-2 text-sm outline-none ${
                 isLight ? 'border-slate-300' : 'border-slate-600 bg-slate-900/40'
               }`}
@@ -691,7 +705,7 @@ function TagPickerModal({ isLight, tags, onClose, onApply, onCreate }) {
               ))}
             </div>
             <button
-              disabled={!name.trim()}
+              disabled={blocked}
               onClick={() => {
                 onCreate(name.trim(), color);
                 setCreating(false);
@@ -705,7 +719,8 @@ function TagPickerModal({ isLight, tags, onClose, onApply, onCreate }) {
         ) : (
           <button
             onClick={() => setCreating(true)}
-            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg mt-1 text-sm font-bold ${
+            disabled={blocked}
+            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg mt-1 text-sm font-bold disabled:opacity-40 ${
               isLight ? 'text-amber-600 hover:bg-amber-50' : 'text-amber-400 hover:bg-slate-700'
             }`}
           >
@@ -1160,12 +1175,35 @@ function StockDetailView({
   onOpenTagPicker,
 }) {
   const [tab, setTab] = useState('transactions');
+  const [expandedTagIds, setExpandedTagIds] = useState(() => new Set());
   const sorted = [...transactions].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  const grouped = {};
+
+  // 框選套用標籤時,選取的這幾筆交易「淨股數」要等於0,才代表構成一個完整的
+  // 已清倉波段,之後才能各自獨立、準確地計算這組自己的已實現損益。
+  const selectedNetShares = netShareDelta(sorted.filter((tx) => selectedTxIds.has(tx.id)));
+
+  // 已經套用同一個標籤的交易,在畫面上合併成一張可收合的「已清倉」卡片,累積
+  // 越多組波段也不會讓交易紀錄越滑越長。只在「第一次遇到」(因為是新到舊
+  // 排序,也就是這組裡最新的一筆)的位置插入卡片,組內其餘交易不再重複列出。
+  const seenTagIds = new Set();
+  const renderItems = [];
   sorted.forEach((tx) => {
-    const month = tx.date.slice(0, 7).replace('-', '/');
+    if (tx.tagId) {
+      if (seenTagIds.has(tx.tagId)) return;
+      seenTagIds.add(tx.tagId);
+      const tag = tags.find((t) => t.id === tx.tagId);
+      const groupTxs = sorted.filter((t) => t.tagId === tx.tagId);
+      renderItems.push({ kind: 'group', date: tx.date, tag, tagId: tx.tagId, txs: groupTxs });
+    } else {
+      renderItems.push({ kind: 'tx', date: tx.date, tx });
+    }
+  });
+
+  const grouped = {};
+  renderItems.forEach((item) => {
+    const month = item.date.slice(0, 7).replace('-', '/');
     if (!grouped[month]) grouped[month] = [];
-    grouped[month].push(tx);
+    grouped[month].push(item);
   });
 
   const typeColor = (t) =>
@@ -1180,6 +1218,55 @@ function StockDetailView({
       : isLight
       ? 'text-amber-600'
       : 'text-amber-400';
+
+  const toggleGroupExpanded = (tagId) => {
+    setExpandedTagIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  };
+
+  const renderTxRow = (tx) => (
+    <div
+      key={tx.id}
+      onClick={() => (selectMode ? onToggleSelectTx(tx.id) : onOpenAction(tx))}
+      className={`flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer ${
+        isLight ? 'bg-slate-100' : 'bg-slate-800/60'
+      }`}
+    >
+      {selectMode && (
+        <div
+          className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+            selectedTxIds.has(tx.id)
+              ? 'bg-amber-500 border-amber-500'
+              : isLight
+              ? 'border-slate-400'
+              : 'border-slate-500'
+          }`}
+        >
+          {selectedTxIds.has(tx.id) && <Check className="w-3.5 h-3.5 text-white" />}
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className={`font-bold text-sm ${typeColor(tx.type)}`}>{TX_TYPE_LABELS[tx.type]}</div>
+        <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{tx.date}</div>
+        {tx.type !== TX_TYPES.CASH_DIVIDEND && (
+          <div className="font-mono font-bold text-sm">{tx.price.toFixed(2)}</div>
+        )}
+      </div>
+      <div className="text-right shrink-0">
+        <div className="font-mono font-bold text-sm">{formatSigned(tx.amount)}</div>
+        {tx.type !== TX_TYPES.CASH_DIVIDEND && (
+          <div className={`font-mono text-xs ${typeColor(tx.type)}`}>
+            {tx.type === TX_TYPES.SELL ? '-' : '+'}
+            {formatMoney(tx.shares)}股
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="pb-24">
@@ -1281,6 +1368,13 @@ function StockDetailView({
           <DataRow
             isLight={isLight}
             indent={2}
+            label="本日已實現損益"
+            value={`(${formatSigned(summary.todayRealizedPnl)})`}
+            colorClass={pnlColorClass(summary.todayRealizedPnl, isLight)}
+          />
+          <DataRow
+            isLight={isLight}
+            indent={2}
             label="資本利得"
             value={`${formatSigned(summary.capitalGain)}｜${formatPct(summary.capitalGainPct)}`}
             colorClass={pnlColorClass(summary.capitalGain, isLight)}
@@ -1338,62 +1432,70 @@ function StockDetailView({
             </button>
           </div>
 
-          {Object.entries(grouped).map(([month, txs]) => (
+          {Object.entries(grouped).map(([month, items]) => (
             <div key={month} className="mt-3">
               <div className={`text-xs mb-1.5 ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>{month}</div>
               <div className="space-y-2">
-                {txs.map((tx) => {
-                  const tag = tags.find((t) => t.id === tx.tagId);
+                {items.map((item) => {
+                  if (item.kind === 'tx') return renderTxRow(item.tx);
+
+                  const { tag, tagId, txs: groupTxs } = item;
+                  const groupSummary = computeSymbolSummary(groupTxs);
+                  const groupNet = netShareDelta(groupTxs);
+                  const expanded = expandedTagIds.has(tagId);
+                  const groupDates = groupTxs.map((t) => t.date).sort();
+                  const dateRange =
+                    groupDates[0] === groupDates[groupDates.length - 1]
+                      ? groupDates[0]
+                      : `${groupDates[0]} ~ ${groupDates[groupDates.length - 1]}`;
                   return (
                     <div
-                      key={tx.id}
-                      onClick={() => (selectMode ? onToggleSelectTx(tx.id) : onOpenAction(tx))}
-                      className={`flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer ${
-                        isLight ? 'bg-slate-100' : 'bg-slate-800/60'
+                      key={tagId}
+                      className={`rounded-xl overflow-hidden ${
+                        isLight ? 'bg-slate-50 border border-slate-200' : 'bg-slate-800/30 border border-slate-700'
                       }`}
-                      style={tag ? { borderLeft: `3px solid ${tag.color}` } : undefined}
                     >
-                      {selectMode && (
-                        <div
-                          className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
-                            selectedTxIds.has(tx.id)
-                              ? 'bg-amber-500 border-amber-500'
-                              : isLight
-                              ? 'border-slate-400'
-                              : 'border-slate-500'
-                          }`}
-                        >
-                          {selectedTxIds.has(tx.id) && <Check className="w-3.5 h-3.5 text-white" />}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className={`font-bold text-sm ${typeColor(tx.type)}`}>
-                          {TX_TYPE_LABELS[tx.type]}{' '}
-                          {tag && (
-                            <span
-                              className="ml-1 text-[10px] font-normal px-1.5 py-0.5 rounded-full align-middle"
-                              style={{ background: `${tag.color}33`, color: tag.color }}
-                            >
-                              {tag.name}
-                            </span>
-                          )}
-                        </div>
-                        <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                          {tx.date}
-                        </div>
-                        {tx.type !== TX_TYPES.CASH_DIVIDEND && (
-                          <div className="font-mono font-bold text-sm">{tx.price.toFixed(2)}</div>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="font-mono font-bold text-sm">{formatSigned(tx.amount)}</div>
-                        {tx.type !== TX_TYPES.CASH_DIVIDEND && (
-                          <div className={`font-mono text-xs ${typeColor(tx.type)}`}>
-                            {tx.type === TX_TYPES.SELL ? '-' : '+'}
-                            {formatMoney(tx.shares)}股
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupExpanded(tagId)}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ background: tag?.color || '#94a3b8' }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-sm truncate">
+                            {tag?.name || '已清倉'}
+                            {groupNet !== 0 && (
+                              <span className="ml-1.5 text-[10px] font-normal text-rose-500">
+                                ⚠淨股數{formatSigned(groupNet)}股
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </div>
+                          <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                            {dateRange}｜共{groupTxs.length}筆
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div
+                            className={`font-mono font-bold text-sm ${pnlColorClass(groupSummary.realizedPnl, isLight)}`}
+                          >
+                            {formatSigned(groupSummary.realizedPnl)}
+                          </div>
+                          <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                            已實現損益
+                          </div>
+                        </div>
+                        <ChevronDown
+                          className={`w-4 h-4 opacity-60 shrink-0 transition-transform ${
+                            expanded ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </button>
+                      {expanded && (
+                        <div className="px-2 pb-2 space-y-2">{groupTxs.map((tx) => renderTxRow(tx))}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -1412,13 +1514,20 @@ function StockDetailView({
         </button>
       )}
       {selectMode && selectedTxIds.size > 0 && (
-        <button
-          onClick={onOpenTagPicker}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm"
-        >
-          <Tag className="w-4 h-4" />
-          套用標籤({selectedTxIds.size})
-        </button>
+        selectedNetShares === 0 ? (
+          <button
+            onClick={onOpenTagPicker}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm"
+          >
+            <Tag className="w-4 h-4" />
+            套用標籤({selectedTxIds.size})
+          </button>
+        ) : (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-slate-400 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm">
+            <Tag className="w-4 h-4" />
+            淨股數{formatSigned(selectedNetShares)}股,需為0
+          </div>
+        )
       )}
 
       <button
@@ -1744,7 +1853,12 @@ export default function PortfolioTracker({ isLight }) {
     setSelectMode(false);
   };
   const handleCreateTag = (name, color) => {
-    setData((d) => createTagAndApply(d, { name, color }, Array.from(selectedTxIds)));
+    // 手動框選已清倉波段時,不想每組都還要特地取名字——名稱留空就自動按照
+    // 這檔股票目前已經用掉幾個標籤來編號(已清倉1、已清倉2...)。
+    const trimmed = (name || '').trim();
+    const usedTagIds = new Set(detailTxs.map((tx) => tx.tagId).filter(Boolean));
+    const autoName = trimmed || `已清倉${usedTagIds.size + 1}`;
+    setData((d) => createTagAndApply(d, { name: autoName, color }, Array.from(selectedTxIds)));
     setSelectedTxIds(new Set());
     setSelectMode(false);
   };
@@ -1908,6 +2022,8 @@ export default function PortfolioTracker({ isLight }) {
         <TagPickerModal
           isLight={isLight}
           tags={data.tags}
+          netShares={netShareDelta(detailTxs.filter((tx) => selectedTxIds.has(tx.id)))}
+          selectedCount={selectedTxIds.size}
           onClose={() => setShowTagPicker(false)}
           onApply={handleApplyTag}
           onCreate={handleCreateTag}
