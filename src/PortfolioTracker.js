@@ -36,6 +36,7 @@ import {
   moveSymbolsToGroup,
   estimateFee,
   estimateTax,
+  isDayTradeSell,
   computeSymbolSummary,
   aggregateSummaries,
   getTransactionsByGroup,
@@ -194,7 +195,13 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   const isBuySell = type === TX_TYPES.BUY || type === TX_TYPES.SELL;
   const autoFee = isBuySell ? estimateFee({ ...group, feeDiscountPct }, priceNum, sharesNum) : 0;
   const fee = fixedFee ? parseFloat(manualFee) || 0 : autoFee;
-  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum) : 0;
+  // 當沖判斷:同一天、同一檔股票的交易紀錄裡已經有買進,賣出的證交稅就減半。
+  const isDayTrade =
+    type === TX_TYPES.SELL &&
+    symbol.trim() &&
+    date &&
+    isDayTradeSell(data.transactions, symbol.trim().toUpperCase(), date, isEdit ? initial.id : null);
+  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, isDayTrade) : 0;
   const computedAmount =
     type === TX_TYPES.BUY
       ? -(priceNum * sharesNum + fee)
@@ -477,7 +484,11 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
               )}
               <div className="text-xs opacity-60 flex justify-between">
                 <span>試算手續費:{formatMoney(fee)} 元</span>
-                {type === TX_TYPES.SELL && <span>證交稅:{formatMoney(tax)} 元</span>}
+                {type === TX_TYPES.SELL && (
+                  <span>
+                    證交稅:{formatMoney(tax)} 元{isDayTrade ? '(當沖減半)' : ''}
+                  </span>
+                )}
               </div>
             </div>
           )}

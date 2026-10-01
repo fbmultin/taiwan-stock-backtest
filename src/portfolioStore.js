@@ -223,8 +223,17 @@ export function estimateFee(group, price, shares) {
 
 // 證交稅:賣出 0.3%(ETF 目前多數是 0.1%,這裡先用一般股票 0.3% 當預設,
 // 之後若要更精準可以比照 twEtfFees.js 的方式做對照表)。
-export function estimateTax(price, shares) {
-  return Math.round(price * shares * 0.001);
+export function estimateTax(price, shares, isDayTrade = false) {
+  return Math.round(price * shares * 0.001 * (isDayTrade ? 0.5 : 1));
+}
+
+// 判斷一筆賣出交易是否算「當沖」:同一天、同一檔股票,交易紀錄裡已經有買進
+// (不分群組,因為當沖是稅務上對同一檔股票的認定,跟這個 app 自己分的群組無關)。
+// 只影響賣出那一筆的證交稅(當沖減半),買進的手續費不受影響。
+export function isDayTradeSell(transactions, symbol, date, excludeTxId = null) {
+  return transactions.some(
+    (t) => t.id !== excludeTxId && t.symbol === symbol && t.date === date && t.type === TX_TYPES.BUY
+  );
 }
 
 // ---------- 持股試算引擎 ----------
