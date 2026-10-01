@@ -938,6 +938,17 @@ const App = () => {
   // 已知代號可直接顯示名稱、無需每次都打 API 查詢;查不到的代號才會照舊呼叫線上 API。
   const [stockNames, setStockNames] = useState(() => ({ ...TW_STOCK_NAMES }));
 
+  // 「報酬率走勢比較」圖表:滑動/觸控拖曳時的當下資料(日期+各標的報酬率),
+  // 用來在圖表下方固定顯示排名變化,取代原本會擋住畫面的浮動 Tooltip;
+  // 沒有滑動時(null)則顯示原本的顏色圖例。
+  const [returnChartHover, setReturnChartHover] = useState(null);
+  const handleReturnChartMove = (state) => {
+    if (state && state.activePayload && state.activePayload.length > 0) {
+      setReturnChartHover({ label: state.activeLabel, payload: state.activePayload });
+    }
+  };
+  const handleReturnChartLeave = () => setReturnChartHover(null);
+
   const [timeRange, setTimeRange] = useState('12m');
   const [customStart, setCustomStart] = useState('');
   // 結束日預設帶入今天,使用者不用每次都手動選today
@@ -5470,7 +5481,11 @@ const App = () => {
               </h3>
               <div className="h-[300px] w-full">
                 <ResponsiveContainer>
-                  <LineChart data={chartData}>
+                  <LineChart
+                    data={chartData}
+                    onMouseMove={handleReturnChartMove}
+                    onMouseLeave={handleReturnChartLeave}
+                  >
                     <CartesianGrid
                       strokeDasharray="3 3"
                       vertical={false}
@@ -5493,44 +5508,9 @@ const App = () => {
                       }}
                       width={35}
                     />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (!active || !payload || payload.length === 0)
-                          return null;
-                        // 比照「加碼策略報酬率走勢比較」的規則:依報酬率由高到低排序,
-                        // 且股代碼後面加上股名方便辨識,而不是只顯示代碼、照線條原本順序。
-                        const sortedPayload = [...payload]
-                          .filter((p) => typeof p.value === 'number')
-                          .sort((a, b) => b.value - a.value);
-                        return (
-                          <div
-                            style={{
-                              backgroundColor: isLight ? '#fff' : '#1e293b',
-                              border: isLight
-                                ? '1px solid #ccc'
-                                : '1px solid #475569',
-                              color: isLight ? '#000' : '#f8fafc',
-                              borderRadius: '8px',
-                              padding: '8px 12px',
-                              fontSize: '12px',
-                            }}
-                          >
-                            <div style={{ marginBottom: 4, fontWeight: 'bold' }}>
-                              日期: {label}
-                            </div>
-                            {sortedPayload.map((p) => (
-                              <div key={p.dataKey} style={{ color: p.color }}>
-                                {Number(p.value).toFixed(2)}%{' '}
-                                {p.dataKey === '綜合績效'
-                                  ? '綜合績效'
-                                  : formatLineLabel(p.dataKey)}
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      }}
-                    />
-                    <Legend />
+                    {/* 拿掉浮動的提示框(改在圖表下方固定顯示,見下方 returnChartHover 區塊),
+                        避免滑動/觸控拖曳時提示框擋住畫面;仍保留 cursor 垂直虛線方便對位。 */}
+                    <Tooltip content={() => null} />
                     <ReferenceLine y={0} stroke="#64748b" />
                     {results.map((r, i) => (
                       <Line
@@ -5557,6 +5537,56 @@ const App = () => {
                     />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+              {/* 圖表下方固定顯示區:沒有滑動/觸控拖曳時顯示原本的顏色圖例(標的代號),
+                  滑動拖曳時改成顯示當下日期、各標的報酬率排名(由高到低),兩者共用同一塊
+                  位置、不會同時出現在畫面上,也不會像原本的浮動提示框一樣擋住圖表。 */}
+              <div
+                className={`mt-2 text-xs ${isLight ? 'text-slate-600' : 'text-slate-300'}`}
+              >
+                {returnChartHover ? (
+                  <div>
+                    <div className={`font-bold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-200'}`}>
+                      日期: {returnChartHover.label}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {[...returnChartHover.payload]
+                        .filter((p) => typeof p.value === 'number')
+                        .sort((a, b) => b.value - a.value)
+                        .map((p) => (
+                          <div key={p.dataKey} style={{ color: p.color }}>
+                            {Number(p.value).toFixed(2)}%{' '}
+                            {p.dataKey === '綜合績效'
+                              ? '綜合績效'
+                              : formatLineLabel(p.dataKey)}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                    {results.map((r, i) => (
+                      <span
+                        key={r.symbol}
+                        className="flex items-center gap-1.5"
+                        style={{ color: COLORS[i % COLORS.length] }}
+                      >
+                        <span
+                          className="inline-block w-3 h-3 rounded-full"
+                          style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                        />
+                        {formatLineLabel(r.symbol)}
+                      </span>
+                    ))}
+                    <span className="flex items-center gap-1.5" style={{ color: '#facc15' }}>
+                      <span
+                        className="inline-block w-3 h-3 rounded-full"
+                        style={{ backgroundColor: '#facc15' }}
+                      />
+                      ⭐ 綜合績效 (投資組合)
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
