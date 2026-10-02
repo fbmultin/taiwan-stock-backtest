@@ -45,7 +45,6 @@ import {
   AlertTriangle,
   DollarSign,
   Clock,
-  CloudLightning,
   RefreshCw,
   Wallet,
   Zap,
@@ -4608,20 +4607,6 @@ const App = () => {
                 <li>網路轉接通道暫時壅塞，可稍後重新點擊回測。</li>
               </ul>
             </div>
-          </div>
-        )}
-
-        {!results && !loading && !errorMsg && (
-          <div
-            className={`min-h-[55vh] sm:h-64 flex flex-col items-center justify-center border-2 border-dashed rounded-xl no-print m-4 gap-2 ${
-              isLight ? 'text-slate-500 border-slate-300' : 'text-slate-600 border-slate-800'
-            }`}
-          >
-            <CloudLightning className="w-12 h-12 mb-2 opacity-30" />
-            <p>設定上方投資組合後，點擊「開始回測」</p>
-            <p className={`sm:hidden text-xs ${isLight ? 'text-slate-500' : 'text-slate-700'}`}>
-              也可以點擊右下角 ⚡ 浮動按鈕快速開始回測
-            </p>
           </div>
         )}
 
