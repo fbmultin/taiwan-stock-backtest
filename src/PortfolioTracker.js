@@ -1559,12 +1559,7 @@ function HoldingsListView({
   userEmail,
   onSignOut,
 }) {
-  // 「隱藏已清倉」:跟首頁的「顯示已出場部位」各自獨立的額外開關,只要清單裡
-  // 有已出場部位(hiddenCount > 0,不限框選模式)就一定會顯示,方便使用者在
-  // 已經打開「顯示已出場部位」瀏覽的情況下,框選移動時能臨時再把這些已清倉的
-  // 部位濾掉,不用特地跑去關掉上面那個全域開關。預設關閉,不影響原本行為。
-  const [hideClosed, setHideClosed] = useState(false);
-  const displayedHoldings = hideClosed ? holdings.filter((h) => h.summary.shares > 0) : holdings;
+  const displayedHoldings = holdings;
   return (
     <div className="pb-24">
       <div className="flex items-center justify-between px-4 pt-4">
@@ -1655,23 +1650,15 @@ function HoldingsListView({
           {hiddenCount > 0 && (
             <button
               onClick={onToggleHidden}
-              className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
-            >
-              {showHidden ? '隱藏已出場' : '顯示已出場部位'}
-            </button>
-          )}
-          {hiddenCount > 0 && (
-            <button
-              onClick={() => setHideClosed((v) => !v)}
               className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                hideClosed
+                showHidden
                   ? 'bg-amber-500 text-white'
                   : isLight
                   ? 'bg-slate-100 text-slate-600'
                   : 'bg-slate-800 text-slate-300'
               }`}
             >
-              隱藏已清倉
+              {showHidden ? '隱藏已清倉' : '顯示已出場部位'}
             </button>
           )}
           <button
@@ -1741,16 +1728,14 @@ function HoldingsListView({
                     </span>
                   </div>
                   <div className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                    已清倉｜{dateRange}｜共{txCount}筆
+                    {dateRange}｜共{txCount}筆
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className={`font-mono font-bold text-sm ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  <div className={`font-mono font-bold text-lg ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatSigned(h.summary.totalPnl)}
                   </div>
-                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                    已實現損益｜{formatPct(h.summary.totalPnlPct)}
-                  </div>
+                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>已實現損益</div>
                 </div>
               </div>
             );
