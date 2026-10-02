@@ -2681,7 +2681,7 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 // (例如某些「加到主畫面」獨立模式下),才自動退回用 signInWithRedirect,
 // 保留原本的保險。
 export default function PortfolioTracker({ isLight }) {
-  const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null });
+  const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null, attempting: null });
 
   useEffect(() => {
     // 這裡保留 getRedirectResult,是給上面「彈出視窗失敗後改用導向」這條
@@ -2711,28 +2711,48 @@ export default function PortfolioTracker({ isLight }) {
     return unsubscribe;
   }, []);
 
+  // 診斷用:把每一種可能出錯的地方都包起來,直接顯示在畫面上(紅字或灰字),
+  // 而不是只寫 console.error——因為手機上沒辦法方便看到瀏覽器的開發者
+  // 工具,之前光靠文字描述很難判斷到底是「彈出視窗被擋」「程式本身丟出
+  // 例外」還是別的原因,全部顯示出來才能實際看到發生了什麼事。
+  const describeError = (prefix, e) =>
+    `${prefix}:${(e && (e.code || e.name)) || '未知錯誤'}${e && e.message ? '(' + e.message + ')' : ''}`;
+
   const handleLogin = () => {
-    setAuthState((s) => ({ ...s, error: null }));
-    signInWithPopup(auth, googleProvider).catch((e) => {
-      const fallbackCodes = [
-        'auth/popup-blocked',
-        'auth/operation-not-supported-in-this-environment',
-        'auth/popup-closed-by-user',
-        'auth/cancelled-popup-request',
-      ];
-      // 使用者自己把彈出視窗關掉(popup-closed-by-user / cancelled-popup-request)
-      // 不算錯誤,不用顯示訊息,也不用退回導向登入,讓他自己再按一次就好。
-      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-        return;
-      }
-      if (fallbackCodes.includes(e.code)) {
-        console.warn('彈出視窗登入不可用,改用導向登入', e.code);
-        signInWithRedirect(auth, googleProvider);
-        return;
-      }
-      console.error('Google 登入失敗(彈出視窗)', e);
-      setAuthState((s) => ({ ...s, error: `登入失敗:${e.code || '未知錯誤'}${e.message ? '(' + e.message + ')' : ''}` }));
-    });
+    setAuthState((s) => ({ ...s, error: null, attempting: '嘗試使用彈出視窗登入…' }));
+    let popupPromise;
+    try {
+      popupPromise = signInWithPopup(auth, googleProvider);
+    } catch (syncError) {
+      console.error('Google 登入失敗(彈出視窗,呼叫時直接丟出例外)', syncError);
+      setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入時發生例外(彈出視窗)', syncError) }));
+      return;
+    }
+    popupPromise
+      .then(() => {
+        setAuthState((s) => ({ ...s, attempting: null }));
+      })
+      .catch((e) => {
+        // 使用者自己把彈出視窗關掉不算錯誤,不用顯示訊息,讓他自己再按一次就好。
+        if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+          setAuthState((s) => ({ ...s, attempting: null }));
+          return;
+        }
+        const fallbackCodes = ['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'];
+        if (fallbackCodes.includes(e.code)) {
+          console.warn('彈出視窗登入不可用,改用導向登入', e.code);
+          setAuthState((s) => ({ ...s, attempting: '彈出視窗被擋,改用導向登入…' }));
+          try {
+            signInWithRedirect(auth, googleProvider);
+          } catch (syncError2) {
+            console.error('Google 登入失敗(導向備援,呼叫時直接丟出例外)', syncError2);
+            setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入時發生例外(導向備援)', syncError2) }));
+          }
+          return;
+        }
+        console.error('Google 登入失敗(彈出視窗)', e);
+        setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入失敗(彈出視窗)', e) }));
+      });
   };
 
   if (authState.status === 'loading') {
@@ -2752,6 +2772,9 @@ export default function PortfolioTracker({ isLight }) {
         <p className={`text-sm mb-6 leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
           登入後,持股紀錄會自動備份到雲端,手機、電腦登入同一個帳號就能看到同一份資料。
         </p>
+        {authState.attempting && (
+          <p className={`text-sm mb-4 break-words ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{authState.attempting}</p>
+        )}
         {authState.error && (
           <p className="text-sm text-rose-500 mb-4 break-words">{authState.error}</p>
         )}
