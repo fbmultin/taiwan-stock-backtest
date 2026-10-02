@@ -905,8 +905,26 @@ const App = () => {
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
   // 列印預覽本來就會強制切成亮色樣式,跟使用者自己選的亮色主題共用同一套樣式判斷
   const isLight = printMode || theme === 'light';
-  // 兩個分頁:'backtest'=既有的「ETF回測比較」、'dca'=新增的「定期定額策略最佳化」
-  const [activeTab, setActiveTab] = useState('backtest');
+  // 三個分頁:'backtest'=既有的「ETF回測比較」、'dca'=「定期定額策略最佳化」、
+  // 'portfolio'=「我的持股」。記住在瀏覽器裡(跟上面的 theme 一樣的寫法),
+  // 是因為「我的持股」登入用的 signInWithRedirect 會整頁導去 Google 再導回來,
+  // 等於重新整理一次網頁,不記住的話每次登入完都會被彈回預設的第一個分頁,
+  // 使用者會誤以為「按了登入,結果什麼都沒發生、被踢回首頁」。
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem('activeTab');
+      return saved === 'dca' || saved === 'portfolio' ? saved : 'backtest';
+    } catch {
+      return 'backtest';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('activeTab', activeTab);
+    } catch {
+      // 私密瀏覽或儲存空間被封鎖時,略過即可,不影響切換功能
+    }
+  }, [activeTab]);
 
   const textClass = {
     main: isLight ? 'text-black' : 'text-white',
