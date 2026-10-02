@@ -1167,7 +1167,9 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [color, setColor] = useState(DEFAULT_GROUP_COLORS[2]);
-  const blocked = netShares !== 0;
+  // 只是提醒「淨股數不是0,可能不是一個完整的清倉波段」,不擋使用者實際套用——
+  // 有些情況使用者就是清楚自己在做什麼(例如分批、跨群組),不應該被卡死。
+  const netSharesWarning = netShares !== 0;
   return (
     <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
@@ -1181,13 +1183,13 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
           標記這幾筆交易屬於同一個已清倉波段,方便你自己日後辨識、各自獨立檢視損益(只有你看得到標籤文字)。
         </div>
 
-        {blocked && (
+        {netSharesWarning && (
           <div
             className={`text-xs rounded-lg px-3 py-2 mb-3 ${
               isLight ? 'bg-amber-50 text-amber-700' : 'bg-amber-900/30 text-amber-300'
             }`}
           >
-            已選{selectedCount}筆,淨股數{formatSigned(netShares)}股——要淨股數為0(完整買賣平倉)才能套用標籤。
+            ⚠已選{selectedCount}筆,淨股數{formatSigned(netShares)}股——不是0代表這批交易可能不是一個完整的買賣平倉,仍可套用,但損益計算僅供參考。
           </div>
         )}
 
@@ -1195,12 +1197,11 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
           {tags.map((t) => (
             <button
               key={t.id}
-              disabled={blocked}
               onClick={() => {
                 onApply(t.id);
                 onClose();
               }}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left disabled:opacity-40 ${
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left ${
                 isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-700'
               }`}
             >
@@ -1233,13 +1234,12 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
               ))}
             </div>
             <button
-              disabled={blocked}
               onClick={() => {
                 onCreate(name.trim(), color);
                 setCreating(false);
                 setName('');
               }}
-              className="w-full py-2 rounded-full bg-amber-500 text-white font-bold text-sm disabled:opacity-40"
+              className="w-full py-2 rounded-full bg-amber-500 text-white font-bold text-sm"
             >
               建立並套用
             </button>
@@ -1247,8 +1247,7 @@ function TagPickerModal({ isLight, tags, netShares = 0, selectedCount = 0, onClo
         ) : (
           <button
             onClick={() => setCreating(true)}
-            disabled={blocked}
-            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg mt-1 text-sm font-bold disabled:opacity-40 ${
+            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg mt-1 text-sm font-bold ${
               isLight ? 'text-amber-600 hover:bg-amber-50' : 'text-amber-400 hover:bg-slate-700'
             }`}
           >
@@ -1521,7 +1520,15 @@ function GroupSwitcherSheet({ isLight, data, onClose, onSelect, onNewGroup, onOp
 
 // ============== 小統計卡片 ==============
 
-function StatCard({ isLight, label, value, valueClass = '', sizeClass = 'shrink-0 min-w-[110px]' }) {
+function StatCard({
+  isLight,
+  label,
+  value,
+  valueClass = '',
+  subValue,
+  subValueClass = '',
+  sizeClass = 'shrink-0 min-w-[110px]',
+}) {
   return (
     <div
       className={`rounded-xl px-3 py-2.5 ${sizeClass} ${
@@ -1530,6 +1537,11 @@ function StatCard({ isLight, label, value, valueClass = '', sizeClass = 'shrink-
     >
       <div className={`text-[11px] mb-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{label}</div>
       <div className={`text-base font-mono font-bold ${valueClass}`}>{value}</div>
+      {subValue && (
+        <div className={`text-[11px] font-mono mt-0.5 ${subValueClass || (isLight ? 'text-slate-500' : 'text-slate-400')}`}>
+          ({subValue})
+        </div>
+      )}
     </div>
   );
 }
@@ -1606,10 +1618,12 @@ function HoldingsListView({
         </div>
       </div>
 
+      {/* Adam要求的版面調整:原本這兩個位置分別放「庫存市值」「未實現損益」,
+          現在位置、字型格式都不變,改放「總損益(不顯示%)」「庫存市值」。 */}
       <div className="px-4 pt-3 text-center">
-        <div className="text-4xl font-mono font-bold tracking-tight">{formatMoney(totalSummary.marketValue)}</div>
-        <div className={`mt-1 font-mono font-bold ${pnlColorClass(totalSummary.unrealizedPnl, isLight)}`}>
-          {formatSigned(totalSummary.unrealizedPnl)}｜{formatPct(totalSummary.unrealizedPnlPct)}
+        <div className="text-4xl font-mono font-bold tracking-tight">{formatSigned(totalSummary.totalPnl)}</div>
+        <div className={`mt-1 font-mono font-bold ${pnlColorClass(totalSummary.marketValue, isLight)}`}>
+          {formatMoney(totalSummary.marketValue)}
         </div>
       </div>
 
@@ -1622,19 +1636,23 @@ function HoldingsListView({
           查看全部 &gt;
         </button>
       </div>
+      {/* 同樣是版面調整:「今日損益」位置不變,下方括號多加「今日已實現損益」;
+          原本「總損益」的位置、格式不變,改放「未實現損益」。 */}
       <div className="px-4 mt-2 flex gap-2 pb-1">
         <StatCard
           isLight={isLight}
           label="今日損益"
           value={`${formatSigned(totalSummary.todayPnl)}｜${formatPct(totalSummary.todayPnlPct)}`}
           valueClass={pnlColorClass(totalSummary.todayPnl, isLight)}
+          subValue={`今日已實現損益${formatSigned(totalSummary.todayRealizedPnl)}`}
+          subValueClass={pnlColorClass(totalSummary.todayRealizedPnl, isLight)}
           sizeClass="flex-1 min-w-0"
         />
         <StatCard
           isLight={isLight}
-          label="總損益"
-          value={`${formatSigned(totalSummary.totalPnl)}｜${formatPct(totalSummary.totalPnlPct)}`}
-          valueClass={pnlColorClass(totalSummary.totalPnl, isLight)}
+          label="未實現損益"
+          value={`${formatSigned(totalSummary.unrealizedPnl)}｜${formatPct(totalSummary.unrealizedPnlPct)}`}
+          valueClass={pnlColorClass(totalSummary.unrealizedPnl, isLight)}
           sizeClass="flex-1 min-w-0"
         />
       </div>
@@ -2176,20 +2194,25 @@ function StockDetailView({
         </button>
       )}
       {selectMode && selectedTxIds.size > 0 && (
-        selectedNetShares === 0 ? (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-1.5">
+          {/* 淨股數不是0只是提醒,不擋套用標籤——使用者自己清楚是不是完整清倉波段。 */}
+          {selectedNetShares !== 0 && (
+            <div
+              className={`px-3 py-1 rounded-full text-xs font-bold shadow ${
+                isLight ? 'bg-amber-50 text-amber-700' : 'bg-amber-900/60 text-amber-300'
+              }`}
+            >
+              ⚠淨股數{formatSigned(selectedNetShares)}股,建議為0再套用
+            </div>
+          )}
           <button
             onClick={onOpenTagPicker}
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm"
+            className="px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 font-bold text-sm"
           >
             <Tag className="w-4 h-4" />
             套用標籤({selectedTxIds.size})
           </button>
-        ) : (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3.5 rounded-full bg-slate-400 text-white shadow-lg flex items-center gap-2 z-30 font-bold text-sm">
-            <Tag className="w-4 h-4" />
-            淨股數{formatSigned(selectedNetShares)}股,需為0
-          </div>
-        )
+        </div>
       )}
 
       <button
