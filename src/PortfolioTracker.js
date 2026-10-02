@@ -720,9 +720,11 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
         <button
           type="button"
           onClick={onClose}
-          style={{ bottom: `calc(1.5rem + ${keyboardInset}px)` }}
+          // 14rem跟其他頁面浮動返回鈕的 bottom-56 對齊(同樣的「往上3+1顆鈕距離」),
+          // 鍵盤彈出時再疊加 keyboardInset 往上讓開,兩者不衝突。
+          style={{ bottom: `calc(14rem + ${keyboardInset}px)` }}
           className={`fixed right-4 z-[80] w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
-            isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+            isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
           }`}
         >
           <ArrowLeft className="w-5 h-5" />
