@@ -1989,13 +1989,18 @@ function HoldingsListView({
           )}
           <div className="fixed bottom-56 right-4 z-30 flex flex-col items-center gap-2.5">
             {groupDialOpen && (
-              <>
+              // 群組一多,全部展開可能會超出畫面、搆不到;改成固定高度的捲動區,
+              // 使用者可以把想要的那顆滑到拇指方便按的位置,不用整欄都攤開。
+              <div
+                className="flex flex-col items-center gap-2.5 max-h-56 overflow-y-auto overscroll-contain py-1"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
                 <button
                   onClick={() => {
                     onNewGroup();
                     setGroupDialOpen(false);
                   }}
-                  className="w-11 h-11 rounded-full shadow-lg flex items-center justify-center bg-amber-500 text-white"
+                  className="w-11 h-11 shrink-0 rounded-full shadow-lg flex items-center justify-center bg-amber-500 text-white"
                   title="新增群組"
                 >
                   <Plus className="w-5 h-5" />
@@ -2005,7 +2010,7 @@ function HoldingsListView({
                     onSelectGroup(ALL_GROUP_ID);
                     setGroupDialOpen(false);
                   }}
-                  className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center bg-gradient-to-br from-slate-400 to-slate-600 text-white text-[11px] font-bold ${
+                  className={`w-11 h-11 shrink-0 rounded-full shadow-lg flex items-center justify-center bg-gradient-to-br from-slate-400 to-slate-600 text-white text-[11px] font-bold ${
                     data.activeGroupId === ALL_GROUP_ID ? 'ring-2 ring-white' : ''
                   }`}
                   title="全部(群組總覽)"
@@ -2020,7 +2025,7 @@ function HoldingsListView({
                       setGroupDialOpen(false);
                     }}
                     style={{ background: g.color }}
-                    className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center text-white text-[11px] font-bold ${
+                    className={`w-11 h-11 shrink-0 rounded-full shadow-lg flex items-center justify-center text-white text-[11px] font-bold ${
                       g.id === data.activeGroupId ? 'ring-2 ring-white' : ''
                     }`}
                     title={g.name}
@@ -2028,12 +2033,12 @@ function HoldingsListView({
                     {g.name.slice(0, 2)}
                   </button>
                 ))}
-              </>
+              </div>
             )}
             <button
               onClick={() => setGroupDialOpen((v) => !v)}
               style={{ background: activeGroup ? activeGroup.color : '#64748b' }}
-              className="w-12 h-12 rounded-full shadow-xl flex items-center justify-center text-white"
+              className="w-12 h-12 shrink-0 rounded-full shadow-xl flex items-center justify-center text-white"
               title="切換群組"
             >
               <Folder className="w-5 h-5" />
