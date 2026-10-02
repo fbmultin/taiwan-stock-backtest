@@ -718,24 +718,26 @@ const priceCacheMissingHighLow = (data) => {
 // 只有在即時抓取三個來源都失敗時(例如離線、或當天資料源都還沒更新),才會
 // 退回使用現有的舊快取繼續計算,並標記 stale:true,讓呼叫端可以在結果頁
 // 提示使用者「資料只更新到某天」,而不是又靜默用了過期資料。
-// force:true 給「我的持股」頁面的手動/自動刷新按鈕用——平常這個函式的
-// 「需要抓到哪一天」一律是 getLastCompletedTradingDay()(下午3:30後才算
-// 今天的資料到位,否則算前一天),這是為了ETF回測比較/定期定額策略最佳化
+// 這個函式的「需要抓到哪一天」一律是 getLastCompletedTradingDay()(下午3:30後
+// 才算今天的資料到位,否則算前一天),這是為了ETF回測比較/定期定額策略最佳化
 // 兩個分頁的歷史資料穩定性(避免抓到資料源當天還沒正式收錄的尾盤價),不能
-// 直接改掉。但「我的持股」要看的是現在最新的市值,使用者收盤後(例如下午
-// 1:35)就想看到今天的收盤價,不想等到3:30。force模式下:
-//   1. 無條件跳過「快取是否已經跟上」的檢查,一定會重新即時抓一次。
-//   2. 已經有能用的歷史快取時,只抓最近 FORCE_REFRESH_LOOKBACK_DAYS 天
-//      (見 getForceRefreshStartDate),抓到後用 mergeRecentPriceData 合併回
-//      既有快取,不是整個20年歷史重新抓一次——這段本來是直接沿用
-//      getFetchAnchorStartDate()(20年前)當起點,實測發現持股檔數一多、
-//      每次按刷新都對每一檔重新發動一次完整20年歷史的三層備援抓取,很容易
-//      把資料源/CORS代理搞到逾時卡住,偶爾高併發下某個來源還會回傳不完整
-//      資料蓋掉快取裡原本正確的數字,才改成只抓最近幾天這種輕量作法。
-//      完全沒有快取(第一次抓這檔)時沒有舊資料可以合併,還是走完整歷史錨點。
-//   3. 抓取終點用「今天」而不是 getLastCompletedTradingDay(),才有機會真的
-//      抓到資料源當天剛收錄的收盤價(抓不到的話,FinMind/TWSE/Yahoo 本來就
-//      只會回傳實際存在的交易日資料,不會因為終點設成今天而出錯)。
+// 直接改掉——下面的 force:true 模式例外(給「我的持股」頁面的手動/自動刷新
+// 按鈕用:使用者收盤後,例如下午1:35,就想看到今天的收盤價,不想等到3:30),
+// 抓取終點改用「今天」而不是 getLastCompletedTradingDay(),才有機會真的抓到
+// 資料源當天剛收錄的收盤價(抓不到的話,FinMind/TWSE/Yahoo 本來就只會回傳
+// 實際存在的交易日資料,不會因為終點設成今天而出錯)。
+//
+// 只要本機已經有能用的歷史快取(cacheUsable)、快取沒跟上最新交易日,不管是不是
+// force模式,一律只抓最近 FORCE_REFRESH_LOOKBACK_DAYS 天(見
+// getForceRefreshStartDate),抓到後用 mergeRecentPriceData 合併回既有快取,
+// 不是整個20年歷史重新抓一次——這段原本只有 force 模式(「我的持股」刷新鈕)
+// 才會這樣做,非force模式(例如ETF回測比較頁、或背景偵測到快取少了今天的資料
+// 時)一律直接沿用 getFetchAnchorStartDate()(20年前)當起點整個重抓,實測發現
+// 不管哪個模式,持股/標的檔數一多、每天第一個碰到某檔的人都要承受一次完整
+// 20年歷史的三層備援抓取,很容易把資料源/CORS代理搞到逾時卡住,偶爾高併發下
+// 某個來源還會回傳不完整資料蓋掉快取裡原本正確的數字,才統一改成只要本機有
+// 舊快取可以合併,就一律走這種輕量作法,不分force與否。完全沒有快取(第一次
+// 抓這檔)時沒有舊資料可以合併,還是走完整歷史錨點。
 export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
   const cached = loadPriceCache(symbol);
   // cacheUsable:夠完整(high/low缺值比例在門檻內)才能拿來判斷「快取是否已經
@@ -790,12 +792,14 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
     }
   }
 
-  const forceIncremental = force && cacheUsable;
-  const startDate = forceIncremental ? getForceRefreshStartDate() : getFetchAnchorStartDate();
+  // 只要有舊快取可以合併(不分force與否)就走輕量增量抓取,只有完全沒快取過
+  // 的全新標的才需要整段20年歷史錨點——詳細理由見本函式最上方的說明註解。
+  const useIncrementalFetch = cacheUsable;
+  const startDate = useIncrementalFetch ? getForceRefreshStartDate() : getFetchAnchorStartDate();
   const endDate = force ? new Date() : lastCompletedTradingDay;
   const result = await attemptLiveFetch(symbol, startDate, endDate);
   if (result && result.data.length > 0) {
-    if (forceIncremental) {
+    if (useIncrementalFetch) {
       // 輕量刷新:新抓到的最近幾天資料跟既有完整歷史合併,不是整個蓋掉。
       const mergedData = mergeRecentPriceData(cached.data, result.data);
       const mergedResult = {
