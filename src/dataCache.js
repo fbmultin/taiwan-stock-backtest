@@ -4,21 +4,46 @@
 //   1. 所有計算終點固定為「前一個交易日」，不計算當天資料(見 tradingCalendar.js)。
 //   2. 讀取順序:優先讀 localStorage 快取；但每次都會檢查快取的最後一筆日期
 //      是否已經跟得上目前的「前一個交易日」，跟得上才直接用、完全不打 API。
+//   2.5. 本機快取沒跟上、但使用者已經登入 Google 的話，接著查一次 Firestore
+//      裡的「共用雲端快取」(sharedPriceCache，跟「我的持股」用的登入狀態共用,
+//      不需要在這兩頁另外登入一次)——只要雲端那份也跟得上最新交易日，就直接
+//      用它、順便寫回本機，不用再自己即時抓一次。這是為了解決「換一台新裝置
+//      要整個重新抓」的問題：只要曾經有任何一個登入的使用者在任何一台裝置上
+//      抓過某檔股票，之後全部登入使用者的裝置都能直接讀這份共用結果。沒登入、
+//      雲端沒有、或雲端那份也還沒跟上，都會安靜放棄，繼續走下面第3步。
 //   3. 該股票代碼從來沒有成功查詢過、或快取的最後一筆日期比「前一個交易日」
 //      還舊(表示已經過了至少一個新的交易日，快取沒有涵蓋到)，都會發出即時
 //      抓取，依序嘗試 FinMind → 證交所(TWSE)官方資料 → Yahoo Finance 三層
-//      備援，抓到後覆蓋快取。三個來源都失敗時(例如離線、或資料源當天還沒
-//      更新)才退回使用現有的舊快取繼續計算，並標記 stale:true，讓呼叫端
-//      可以在結果頁提示使用者「資料只更新到某天」，不會又靜默用了過期資料。
+//      備援，抓到後覆蓋本機快取；如果當下是登入狀態，也會順手把這次抓到的
+//      結果同步寫一份到 Firestore 共用快取，造福之後其他登入裝置。三個來源
+//      都失敗時(例如離線、或資料源當天還沒更新)才退回使用現有的舊快取繼續
+//      計算，並標記 stale:true，讓呼叫端可以在結果頁提示使用者「資料只更新
+//      到某天」，不會又靜默用了過期資料。
 //      （這是之前的已知問題：舊版快取一旦存在就永久沿用、完全不管多舊，
 //      導致換了新的一天之後，回測抓到的還是好幾天前的舊資料。）
 //   4. 快取範圍:第一次成功抓取(或判定需要更新)時，一次抓最近
 //      FETCH_HISTORY_YEARS 年的完整歷史，之後不論回測期間怎麼調整，
 //      只要落在這個範圍內都直接從快取切片，不用每次都重新請求整段歷史。
 //   5. localStorage 的 key 統一用 `stock_price_<代碼>` 命名，兩個分頁共用同一份資料，
-//      彼此都看得到對方已經抓過的標的、不會重複打 API。
+//      彼此都看得到對方已經抓過的標的、不會重複打 API。Firestore 共用快取則是用
+//      代碼本身當文件ID(sharedPriceCache/<代碼>)，所有登入使用者共用同一份。
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import TW_STOCK_NAMES from './data/twStockNames';
 import { getLastCompletedTradingDay } from './tradingCalendar';
+import { auth, db } from './firebase';
+
+// 共用雲端快取用的 Firestore collection 名稱,文件ID是股票代碼。跟「我的持股」
+// 共用同一個 auth 登入狀態(整個網站是同一個 SPA、同一份 Firebase 連線),所以
+// 這裡不用另外做登入 UI——只要使用者曾經在「我的持股」登入過 Google,這裡的
+// currentUid 就會自動是登入狀態,兩個分頁即時共享。安全性規則需要另外在
+// Firebase 主控台設定(允許已登入使用者讀寫 sharedPriceCache/* ),不是靠這裡
+// 的程式碼控管。
+const SHARED_CACHE_COLLECTION = 'sharedPriceCache';
+let currentUid = null;
+onAuthStateChanged(auth, (user) => {
+  currentUid = user ? user.uid : null;
+});
 
 // --- 基礎網路工具 ---
 
@@ -563,6 +588,65 @@ export const savePriceCache = (symbol, result) => {
   }
 };
 
+// --- Firestore 共用快取(跨裝置)---
+//
+// 完全是「不登入也能用、登入了會更方便」的加分項,不是必要條件:
+// - 沒登入(currentUid 是 null)時,下面兩個函式直接什麼都不做、安靜放棄,
+//   ETF回測比較/定期定額策略最佳化兩頁的行為跟原本一模一樣,不會跳出任何
+//   登入畫面,也不會因此變慢或卡住。
+// - 讀取/寫入失敗(規則還沒設定好、離線、單筆資料超過 Firestore 1MiB上限等)
+//   也都安靜放棄,絕對不能讓共用快取的問題去影響到這次抓取本身的結果。
+// 文件結構刻意跟 localStorage 那份幾乎一樣,方便互相轉換;sanitizeForFirestore
+// 用 JSON 來回轉一次,把 high/low 可能存在的 undefined 值清掉(Firestore 不接受
+// 欄位值是 undefined,直接寫入會整次失敗)。
+const sanitizeForFirestore = (payload) => JSON.parse(JSON.stringify(payload));
+
+// 查一次雲端共用快取,只有「使用者已登入」且「雲端那份也已經跟得上最新交易日」
+// 才會拿來用——雲端那份要是也是舊的,不如直接自己即時抓一次比較準。
+const loadSharedCacheIfUsable = async (symbol, latestNeededDateStr) => {
+  if (!currentUid) return null;
+  try {
+    const snap = await getDoc(doc(db, SHARED_CACHE_COLLECTION, symbol));
+    if (!snap.exists()) return null;
+    const shared = snap.data();
+    if (!shared || shared.schemaVersion !== CACHE_SCHEMA_VERSION) return null;
+    if (!Array.isArray(shared.data) || shared.data.length === 0) return null;
+    const sharedLastDateStr = shared.data[shared.data.length - 1].date;
+    if (sharedLastDateStr < latestNeededDateStr) return null;
+    return shared;
+  } catch (e) {
+    // 沒有讀取權限(規則還沒設定)、離線、或其他任何例外,都當成「雲端沒有
+    // 可用的資料」處理,讓呼叫端照原本邏輯繼續走即時抓取,不要讓這裡的失敗
+    // 擋住整個流程。
+    return null;
+  }
+};
+
+// 即時抓取成功後,登入狀態下順手把這次的結果也同步寫一份到雲端共用快取,
+// 造福之後其他登入裝置/使用者。刻意不 await 這個函式(呼叫端用 fire-and-
+// forget 的方式呼叫),寫入雲端不應該拖慢這次使用者正在等待的回測結果。
+const saveSharedPriceCache = (symbol, result) => {
+  if (!currentUid) return;
+  try {
+    const payload = sanitizeForFirestore({
+      schemaVersion: CACHE_SCHEMA_VERSION,
+      data: result.data,
+      divDates: result.divDates,
+      dividendsMap: result.dividendsMap,
+      usedSymbol: result.usedSymbol,
+      source: result.source || '',
+      dividendDataIncomplete: result.dividendDataIncomplete || false,
+      cachedAt: new Date().toISOString(),
+    });
+    setDoc(doc(db, SHARED_CACHE_COLLECTION, symbol), payload).catch(() => {
+      // 寫入失敗(規則、額度、單筆超過1MiB等)安靜放棄,不影響這次的抓取結果。
+    });
+  } catch (e) {
+    // sanitizeForFirestore 理論上不會丟例外,保守起見還是包一層,避免萬一真的
+    // 出錯時影響到呼叫端。
+  }
+};
+
 // 抓取歷史股價時的起始錨點:第一次抓某檔代碼時，一次往回抓這麼多年的
 // 完整歷史、一次快取到位，之後不管回測起訖日怎麼調整，只要落在這個範圍
 // 內都不需要再打 API。20 年已足夠涵蓋絕大多數實際會用到的回測區間；
@@ -684,6 +768,28 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
     };
   }
 
+  // 本機快取沒跟上(或這台裝置根本沒抓過這檔),登入狀態下先查一次雲端共用
+  // 快取——只在非 force 模式才查,force 是「我的持股」刷新按鈕的即時需求,
+  // 雲端那份不一定比本機新鮮,犯不著多一趟網路請求。
+  if (!force) {
+    const shared = await loadSharedCacheIfUsable(symbol, latestNeededDateStr);
+    if (shared) {
+      savePriceCache(symbol, shared); // 順便寫回本機,這台裝置下次就不用再查雲端
+      return {
+        symbol,
+        data: shared.data,
+        divDates: shared.divDates || [],
+        dividendsMap: shared.dividendsMap || {},
+        usedSymbol: shared.usedSymbol || symbol,
+        source: shared.source || '',
+        dividendDataIncomplete: shared.dividendDataIncomplete || false,
+        fromCache: true,
+        fromSharedCache: true,
+        cachedAt: shared.cachedAt,
+      };
+    }
+  }
+
   const forceIncremental = force && cacheUsable;
   const startDate = forceIncremental ? getForceRefreshStartDate() : getFetchAnchorStartDate();
   const endDate = force ? new Date() : lastCompletedTradingDay;
@@ -703,6 +809,7 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
       // (例如還沒到資料源收錄的時間),直接維持原本快取,避免白白寫入。
       if (mergedLastDateStr > cacheLastDateStr || mergedData.length !== cached.data.length) {
         savePriceCache(symbol, mergedResult);
+        saveSharedPriceCache(symbol, mergedResult); // fire-and-forget,登入時才會真的寫
       }
       return { ...mergedResult, fromCache: false };
     }
@@ -710,6 +817,7 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
     // 避免資料源這次剛好抓到比現有快取還舊/還少的異常結果,反而把好的快取蓋掉。
     if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
       savePriceCache(symbol, result);
+      saveSharedPriceCache(symbol, result); // fire-and-forget,登入時才會真的寫
       return { ...result, fromCache: false };
     }
   }
