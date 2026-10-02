@@ -2349,8 +2349,8 @@ function StockDetailView({
 
       <button
         onClick={onBack}
-        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
-          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
         <ArrowLeft className="w-5 h-5" />
@@ -2491,8 +2491,8 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 
       <button
         onClick={onBack}
-        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
-          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
         <ArrowLeft className="w-5 h-5" />
@@ -2585,8 +2585,8 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
 
       <button
         onClick={onBack}
-        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
-          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
         <ArrowLeft className="w-5 h-5" />
