@@ -19,9 +19,11 @@ import {
 } from 'lucide-react';
 import {
   onAuthStateChanged,
+  signInWithCredential,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  GoogleAuthProvider,
   signOut,
 } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
@@ -2666,91 +2668,127 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 // App.js 裡其他分頁(回測比較、定期定額)不需要登入,所以登入判斷只包在
 // 這一層,不影響其他功能。
 //
-// 登入方式:主要用 signInWithPopup(彈出視窗),登入全程留在同一個頁面,
-// 不會整頁導去 Google 再導回來,所以沒有「導回來後要從瀏覽器儲存空間找回
-// 之前登入狀態」這一步,也就不會有那一步失敗的風險。
-//
-// 原本用的是 signInWithRedirect(整頁導向),當初的考量是這個 App 支援
-// 「加到主畫面」當獨立 PWA 開啟、彈出視窗在獨立模式下可能被擋。但實測發現
-// signInWithRedirect 在手機瀏覽器上(Brave、Chrome 都一樣)會卡在無限循環:
-// Google 登入頁面本身正常跑完,導回 App 後 getRedirectResult 卻讀不到剛剛
-// 的登入(變成 null),等於整個流程「中途失憶」。這通常是手機瀏覽器對
-// 導回來的那個網址做了儲存空間隔離或清除所導致,不是我們程式碼本身的錯,
-// 但實際上就是用不了,所以改回更簡單、全程不離開頁面的彈出視窗登入。
-// 如果彈出視窗被瀏覽器擋下來(auth/popup-blocked)或目前環境不支援彈出視窗
-// (例如某些「加到主畫面」獨立模式下),才自動退回用 signInWithRedirect,
-// 保留原本的保險。
+// 登入方式的演進(留著方便以後排查類似問題):
+// 1. 一開始用 signInWithRedirect(整頁導向去 Google 再導回來),手機瀏覽器
+//    (Brave、Chrome 都一樣)導回來後讀不到登入結果,卡在無限循環。
+// 2. 改用 signInWithPopup(彈出視窗),桌機正常,但手機瀏覽器幾乎都直接
+//    擋掉彈出視窗(auth/popup-blocked),退回方案1 等於沒解決。
+// 3. 實測關閉 Brave Shields、允許 Chrome 第三方 Cookie 都沒有用,研判是
+//    新版手機瀏覽器的「儲存空間隔離」機制(本站網域 vs. Firebase 用的
+//    firebaseapp.com 網域,被視為不同網域)——這是瀏覽器內建、無法關閉
+//    的安全機制,不是設定問題。
+// 4. 最終改用 Google 官方的 Google Identity Services(GIS)按鈕——不透過
+//    Firebase 的彈出視窗/導向機制,而是直接拿到一個登入憑證(ID token),
+//    再用 signInWithCredential 交給 Firebase,跳過前面造成問題的跨網域
+//    機制。對使用者來說體驗一樣(點一下、選帳號、登入完成)。
+//    舊的 signInWithPopup/signInWithRedirect 保留當手動備援,以防 GIS
+//    腳本本身被某些攔截器誤擋。
 export default function PortfolioTracker({ isLight }) {
   const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null, attempting: null });
+  const googleButtonRef = useRef(null);
+
+  // 把每一種可能出錯的地方都包起來,直接顯示在畫面上(紅字或灰字),而不是
+  // 只寫 console.error——手機上沒辦法方便看開發者工具,全部顯示出來才能
+  // 實際看到發生了什麼事。
+  const describeError = (prefix, e) =>
+    `${prefix}:${(e && (e.code || e.name)) || '未知錯誤'}${e && e.message ? '(' + e.message + ')' : ''}`;
 
   useEffect(() => {
-    // 這裡保留 getRedirectResult,是給上面「彈出視窗失敗後改用導向」這條
-    // 備援路徑用的——如果真的走到 signInWithRedirect,導回來後要靠這裡
-    // 把結果(或錯誤)撈出來。
+    // 這裡保留 getRedirectResult,是給「手動備援」那條 signInWithRedirect
+    // 路徑用的——如果真的走到那一步,導回來後要靠這裡把結果(或錯誤)
+    // 撈出來。
     //
     // 注意:下面 onAuthStateChanged 的回呼在「使用者狀態還是沒登入」時,
-    // 故意保留原本的 error(用 s.error,不是寫死 null)——因為 Firebase
-    // 內部在處理登入的過程中,onAuthStateChanged 常常會連續觸發好幾次
-    // (先是 null,之後才是登入成功的使用者,或者整個流程失敗時最後還是
-    // null);如果這裡每次都把 error 蓋成 null,下面 catch 設好的錯誤訊息,
-    // 常常會被這個之後才跑到的 null 回呼立刻洗掉,畫面上就完全看不到任何
-    // 錯誤線索。只有登入「成功」時才清空 error。
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result) {
-          console.log('getRedirectResult 完成:取得使用者(備援的導向登入成功)');
-        }
-      })
-      .catch((e) => {
-        console.error('Google 登入失敗(導向備援)', e);
-        setAuthState((s) => ({ ...s, error: `登入失敗:${e.code || '未知錯誤'}${e.message ? '(' + e.message + ')' : ''}` }));
-      });
+    // 故意保留原本的 error(用 s.error,不是寫死 null),避免之後才觸發的
+    // null 回呼把前面設好的錯誤訊息洗掉。只有登入「成功」時才清空 error。
+    getRedirectResult(auth).catch((e) => {
+      console.error('Google 登入失敗(導向備援)', e);
+      setAuthState((s) => ({ ...s, error: describeError('登入失敗(導向備援)', e) }));
+    });
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setAuthState((s) => ({ status: user ? 'in' : 'out', user, error: user ? null : s.error }));
+      setAuthState((s) => ({ status: user ? 'in' : 'out', user, error: user ? null : s.error, attempting: null }));
     });
     return unsubscribe;
   }, []);
 
-  // 診斷用:把每一種可能出錯的地方都包起來,直接顯示在畫面上(紅字或灰字),
-  // 而不是只寫 console.error——因為手機上沒辦法方便看到瀏覽器的開發者
-  // 工具,之前光靠文字描述很難判斷到底是「彈出視窗被擋」「程式本身丟出
-  // 例外」還是別的原因,全部顯示出來才能實際看到發生了什麼事。
-  const describeError = (prefix, e) =>
-    `${prefix}:${(e && (e.code || e.name)) || '未知錯誤'}${e && e.message ? '(' + e.message + ')' : ''}`;
+  const handleGoogleCredential = (response) => {
+    setAuthState((s) => ({ ...s, error: null, attempting: '登入中…' }));
+    const credential = GoogleAuthProvider.credential(response.credential);
+    signInWithCredential(auth, credential).catch((e) => {
+      console.error('Google 登入失敗(GIS 憑證交換)', e);
+      setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入失敗', e) }));
+    });
+  };
 
-  const handleLogin = () => {
-    setAuthState((s) => ({ ...s, error: null, attempting: '嘗試使用彈出視窗登入…' }));
+  // 載入、渲染 Google 官方的登入按鈕(腳本在 public/index.html 載入:
+  // https://accounts.google.com/gsi/client)。腳本是 async 載入的,元件
+  // 掛載當下不一定讀得到 window.google,所以用輪詢等它準備好。
+  useEffect(() => {
+    if (authState.status !== 'out') return;
+    let cancelled = false;
+    let attempts = 0;
+    const tryRender = () => {
+      if (cancelled) return;
+      if (window.google?.accounts?.id && googleButtonRef.current) {
+        window.google.accounts.id.initialize({
+          client_id: '452210413265-tirgrra93dub2hmdkjke3m8njthq0pd6.apps.googleusercontent.com',
+          callback: handleGoogleCredential,
+        });
+        window.google.accounts.id.renderButton(googleButtonRef.current, {
+          type: 'standard',
+          theme: isLight ? 'outline' : 'filled_black',
+          size: 'large',
+          text: 'signin_with',
+          shape: 'pill',
+          width: 300,
+          locale: 'zh_TW',
+        });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 50) {
+        setTimeout(tryRender, 200);
+      } else {
+        console.error('Google 登入元件載入逾時(accounts.google.com/gsi/client 沒有準備好)');
+        setAuthState((s) => ({ ...s, error: 'Google 登入元件載入失敗,請檢查網路連線後重新整理頁面,或改用下面的備用登入方式' }));
+      }
+    };
+    tryRender();
+    return () => {
+      cancelled = true;
+    };
+  }, [authState.status, isLight]);
+
+  // 備用登入方式:萬一上面 Google 官方按鈕沒辦法載入或使用(例如被某些
+  // 廣告/追蹤攔截器誤擋了 accounts.google.com/gsi/client),保留舊的
+  // signInWithPopup 當手動備援,被擋下來會自動再退回 signInWithRedirect,
+  // 不會完全卡死、至少多一條路可以試。
+  const handleFallbackLogin = () => {
+    setAuthState((s) => ({ ...s, error: null, attempting: '嘗試使用彈出視窗登入(備用方式)…' }));
     let popupPromise;
     try {
       popupPromise = signInWithPopup(auth, googleProvider);
     } catch (syncError) {
-      console.error('Google 登入失敗(彈出視窗,呼叫時直接丟出例外)', syncError);
       setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入時發生例外(彈出視窗)', syncError) }));
       return;
     }
     popupPromise
-      .then(() => {
-        setAuthState((s) => ({ ...s, attempting: null }));
-      })
+      .then(() => setAuthState((s) => ({ ...s, attempting: null })))
       .catch((e) => {
-        // 使用者自己把彈出視窗關掉不算錯誤,不用顯示訊息,讓他自己再按一次就好。
         if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
           setAuthState((s) => ({ ...s, attempting: null }));
           return;
         }
         const fallbackCodes = ['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'];
         if (fallbackCodes.includes(e.code)) {
-          console.warn('彈出視窗登入不可用,改用導向登入', e.code);
           setAuthState((s) => ({ ...s, attempting: '彈出視窗被擋,改用導向登入…' }));
           try {
             signInWithRedirect(auth, googleProvider);
           } catch (syncError2) {
-            console.error('Google 登入失敗(導向備援,呼叫時直接丟出例外)', syncError2);
             setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入時發生例外(導向備援)', syncError2) }));
           }
           return;
         }
-        console.error('Google 登入失敗(彈出視窗)', e);
         setAuthState((s) => ({ ...s, attempting: null, error: describeError('登入失敗(彈出視窗)', e) }));
       });
   };
@@ -2778,11 +2816,12 @@ export default function PortfolioTracker({ isLight }) {
         {authState.error && (
           <p className="text-sm text-rose-500 mb-4 break-words">{authState.error}</p>
         )}
+        <div ref={googleButtonRef} className="flex justify-center mb-4" />
         <button
-          onClick={handleLogin}
-          className="w-full px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+          onClick={handleFallbackLogin}
+          className={`text-xs underline ${isLight ? 'text-slate-400 hover:text-slate-600' : 'text-slate-500 hover:text-slate-300'}`}
         >
-          使用 Google 登入
+          上面按鈕沒反應?點這裡改用備用登入方式
         </button>
       </div>
     );

@@ -16,6 +16,11 @@
     <meta name="apple-mobile-web-app-title" content="台股持股" />
 
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Identity Services:用於「我的持股」頁面的 Google 登入按鈕,
+         跟 Firebase 本身的 signInWithPopup/signInWithRedirect 是不同機制,
+         由 Google 官方直接處理,不依賴跨網域(本站 vs firebaseapp.com)的
+         瀏覽器儲存空間,手機瀏覽器相容性比較好。 -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
       // 字體放大：在不超出欄位/容器寬度的前提下盡量放大具名的 Tailwind 字級，
       // 高度(行高)可視需要一併加大；任意值的 text-[Npx] 類別改在 src/App.js 內直接調整數值。
