@@ -668,6 +668,9 @@ const CSV_HEADER_ALIASES = {
   type: ['類型', '買賣', '買賣別', 'type'],
   shares: ['股數', '股數(股)', '數量', 'shares', 'quantity'],
   price: ['價格', '成交價', '價格(元)', 'price'],
+  // 股利(現金股利)需要的「拿到的金額」欄位,買賣不需要(金額由股數×價格自動算,
+  // 有這欄也不會拿來用,避免跟手續費/證交稅估算的結果對不上)。
+  amount: ['金額', '金額(元)', '總金額', '股利金額', 'amount'],
 };
 
 const CSV_TYPE_MAP = {
@@ -679,6 +682,12 @@ const CSV_TYPE_MAP = {
   賣出: TX_TYPES.SELL,
   sell: TX_TYPES.SELL,
   s: TX_TYPES.SELL,
+  股利: TX_TYPES.CASH_DIVIDEND,
+  現金股利: TX_TYPES.CASH_DIVIDEND,
+  cashdividend: TX_TYPES.CASH_DIVIDEND,
+  dividend: TX_TYPES.CASH_DIVIDEND,
+  股票股利: TX_TYPES.STOCK_DIVIDEND,
+  stockdividend: TX_TYPES.STOCK_DIVIDEND,
 };
 
 const CSV_REQUIRED_COLUMNS = ['date', 'symbol', 'type', 'shares', 'price'];
@@ -706,6 +715,7 @@ function parseImportRows(csvText) {
     const typeRaw = get('type');
     const sharesRaw = get('shares').replace(/,/g, '');
     const priceRaw = get('price').replace(/,/g, '');
+    const amountRaw = get('amount').replace(/,/g, '');
     const name = get('name');
 
     const errors = [];
@@ -713,11 +723,27 @@ function parseImportRows(csvText) {
     if (!date) errors.push('日期格式需為YYYY-MM-DD');
     if (!symbolRaw) errors.push('缺少代號');
     const type = CSV_TYPE_MAP[typeRaw.trim().toLowerCase()];
-    if (!type) errors.push(`不支援的類型「${typeRaw}」(目前僅支援買/賣)`);
-    const shares = parseFloat(sharesRaw);
-    if (!shares || shares <= 0) errors.push('股數需為正數');
-    const price = parseFloat(priceRaw);
-    if (!price || price <= 0) errors.push('價格需為正數');
+    if (!type) errors.push(`不支援的類型「${typeRaw}」(目前支援買/賣/股利/股票股利)`);
+
+    let shares = parseFloat(sharesRaw) || 0;
+    let price = parseFloat(priceRaw) || 0;
+    let amount = parseFloat(amountRaw) || 0;
+
+    // 現金股利:不看股數/價格,改看「金額」欄位(拿到的現金股利總額)。
+    // 股票股利:只看股數(配發的股數),價格/金額不需要,固定當0。
+    // 買/賣:維持原本的股數+價格都要是正數。
+    if (type === TX_TYPES.CASH_DIVIDEND) {
+      shares = 0;
+      price = 0;
+      if (!amount) errors.push('股利需要「金額」欄位(需為正數)');
+    } else if (type === TX_TYPES.STOCK_DIVIDEND) {
+      price = 0;
+      amount = 0;
+      if (!shares || shares <= 0) errors.push('股票股利的股數需為正數');
+    } else {
+      if (!shares || shares <= 0) errors.push('股數需為正數');
+      if (!price || price <= 0) errors.push('價格需為正數');
+    }
 
     return {
       rowIndex: idx,
@@ -725,8 +751,9 @@ function parseImportRows(csvText) {
       symbol: symbolRaw,
       name,
       type,
-      shares: shares || 0,
-      price: price || 0,
+      shares,
+      price,
+      amount,
       errors,
       valid: errors.length === 0 && missingColumns.length === 0,
     };
@@ -781,6 +808,14 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
     ];
     return selected.map((r) => {
       const isEtf = isLikelyETF(r.symbol);
+      // 股利(現金/股票)沒有手續費、證交稅,也不用算當沖——現金股利金額直接用
+      // CSV 裡解析出來的 r.amount,股票股利沒有現金流動,amount固定是0。
+      if (r.type === TX_TYPES.CASH_DIVIDEND) {
+        return { ...r, fee: 0, tax: 0, isDayTrade: false, isEtf, amount: r.amount };
+      }
+      if (r.type === TX_TYPES.STOCK_DIVIDEND) {
+        return { ...r, fee: 0, tax: 0, isDayTrade: false, isEtf, amount: 0 };
+      }
       const fee = estimateFee(group, r.price, r.shares, isEtf);
       const isDayTrade = r.type === TX_TYPES.SELL && isDayTradeSell(dayTradeLookup, r.symbol, r.date, null);
       const tax =
@@ -839,7 +874,7 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
           {!parsed && (
             <>
               <div className={`text-xs rounded-lg px-3 py-2 ${isLight ? 'bg-slate-100' : 'bg-slate-800/60'}`}>
-                目前只支援「買/賣」兩種類型,表頭需包含日期、代號、類型、股數、價格(常見欄位別名可自動辨識),日期格式需為YYYY-MM-DD。手續費/證交稅沒有欄位的話,會依下面選的群組設定跟代號(00開頭視為ETF)自動估算,邏輯跟手動新增交易一致。
+                支援「買/賣/股利/股票股利」四種類型,表頭需包含日期、代號、類型、股數、價格(常見欄位別名可自動辨識),日期格式需為YYYY-MM-DD。股利(現金股利)那一列股數/價格可以留空,但要有「金額」欄位填實際拿到的現金;股票股利只需要股數。手續費/證交稅沒有欄位的話,會依下面選的群組設定跟代號(00開頭視為ETF)自動估算,邏輯跟手動新增交易一致。
               </div>
 
               <div>
@@ -891,7 +926,9 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
                   rows={8}
-                  placeholder={'日期,代號,名稱,類型,股數,價格\n2026-09-29,6182,合晶,買,2000,117.5'}
+                  placeholder={
+                    '日期,代號,名稱,類型,股數,價格,金額\n2026-09-29,6182,合晶,買,2000,117.5,\n2026-07-15,009805,新光電力,股利,0,,7000'
+                  }
                   className={`w-full rounded-xl border px-3 py-2 text-xs font-mono outline-none ${
                     isLight ? 'border-slate-300 bg-white' : 'border-slate-600 bg-slate-800/40'
                   }`}
@@ -980,17 +1017,23 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
                         <div className="flex-1 font-mono">
                           {r.date || '－'}　{r.symbol || '－'}
                           {r.name ? ` ${r.name}` : ''}　{r.type ? TX_TYPE_LABELS[r.type] : '－'}
-                          {r.shares ? formatMoney(r.shares) : '－'}股　{r.price || '－'}
+                          {r.type === TX_TYPES.CASH_DIVIDEND
+                            ? `金額${r.amount ? formatMoney(r.amount) : '－'}`
+                            : `${r.shares ? formatMoney(r.shares) : '－'}股　${r.price || '－'}`}
                         </div>
                         {r.isDuplicate && <span className="text-amber-600 font-bold shrink-0">疑似重複</span>}
                       </div>
                       {!r.valid && <div className="mt-1 text-red-500 pl-6">{r.errors.join('、')}</div>}
-                      {r.valid && checkedRows[r.rowIndex] && c && (
-                        <div className="mt-1 pl-6 opacity-60">
-                          估計手續費{formatMoney(c.fee)}元・估計證交稅{formatMoney(c.tax)}元
-                          {c.isDayTrade ? '(當沖減半)' : ''}
-                        </div>
-                      )}
+                      {r.valid &&
+                        checkedRows[r.rowIndex] &&
+                        c &&
+                        r.type !== TX_TYPES.CASH_DIVIDEND &&
+                        r.type !== TX_TYPES.STOCK_DIVIDEND && (
+                          <div className="mt-1 pl-6 opacity-60">
+                            估計手續費{formatMoney(c.fee)}元・估計證交稅{formatMoney(c.tax)}元
+                            {c.isDayTrade ? '(當沖減半)' : ''}
+                          </div>
+                        )}
                     </div>
                   );
                 })}
