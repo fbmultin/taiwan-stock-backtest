@@ -98,7 +98,7 @@ const TAIPEI_TIMEZONE = 'Asia/Taipei';
 const MARKET_DATA_READY_HOUR = 15;
 const MARKET_DATA_READY_MINUTE = 30;
 
-const getTaipeiDateTimeParts = (date) => {
+export const getTaipeiDateTimeParts = (date) => {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: TAIPEI_TIMEZONE,
     year: 'numeric',

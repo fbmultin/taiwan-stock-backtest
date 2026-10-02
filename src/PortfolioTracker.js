@@ -16,6 +16,7 @@ import {
   Folder,
   Upload,
   LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import {
   onAuthStateChanged,
@@ -29,6 +30,7 @@ import {
 import { auth, googleProvider } from './firebase';
 import TW_STOCK_NAMES from './data/twStockNames';
 import { fetchStockPriceData, fetchStockDisplayName } from './dataCache';
+import { isNonTradingDay, getTaipeiDateTimeParts } from './tradingCalendar';
 import {
   TX_TYPES,
   TX_TYPE_LABELS,
@@ -1570,6 +1572,8 @@ function HoldingsListView({
   onOpenMoveSymbols,
   userEmail,
   onSignOut,
+  onRefreshPrices,
+  refreshingPrices,
 }) {
   const displayedHoldings = holdings;
   return (
@@ -1595,6 +1599,14 @@ function HoldingsListView({
           <ChevronDown className="w-4 h-4 opacity-60" />
         </button>
         <div className="flex items-center">
+          <button
+            onClick={onRefreshPrices}
+            disabled={refreshingPrices}
+            className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'} disabled:opacity-50`}
+            title="重新抓取最新股價/市值"
+          >
+            <RefreshCw className={`w-5 h-5 opacity-70 ${refreshingPrices ? 'animate-spin' : ''}`} />
+          </button>
           <button
             onClick={onOpenImport}
             className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
@@ -2451,28 +2463,87 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const symbols = useMemo(() => Object.keys(txBySymbol), [txBySymbol]);
   const symbolsKey = symbols.join(',');
 
+  const stockNamesRef = useRef(stockNames);
+  stockNamesRef.current = stockNames;
+
+  // 抓單一代號的現價,force=true 時無條件重新即時抓一次(略過「快取是否已經
+  // 跟上」的判斷),給下面「手動刷新」按鈕跟「收盤後自動刷新」共用。
+  const fetchPriceForSymbol = async (symbol, { force = false } = {}) => {
+    setPrices((p) => ({ ...p, [symbol]: { ...(p[symbol] || {}), loading: true } }));
+    try {
+      const result = await fetchStockPriceData(symbol, { force });
+      const d = (result && result.data) || [];
+      const last = d[d.length - 1];
+      const prev = d[d.length - 2];
+      setPrices((p) => ({
+        ...p,
+        [symbol]: { price: last ? last.price : 0, prevClose: prev ? prev.price : null, loading: false },
+      }));
+      if (!stockNamesRef.current[symbol]) {
+        const nm = await fetchStockDisplayName(symbol);
+        if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
+      }
+    } catch (e) {
+      setPrices((p) => ({ ...p, [symbol]: { price: 0, prevClose: null, loading: false, error: true } }));
+    }
+  };
+
   useEffect(() => {
-    symbols.forEach(async (symbol) => {
+    symbols.forEach((symbol) => {
       if (pendingRef.current.has(symbol)) return;
       pendingRef.current.add(symbol);
-      setPrices((p) => ({ ...p, [symbol]: { ...(p[symbol] || {}), loading: true } }));
-      try {
-        const result = await fetchStockPriceData(symbol);
-        const d = result.data || [];
-        const last = d[d.length - 1];
-        const prev = d[d.length - 2];
-        setPrices((p) => ({
-          ...p,
-          [symbol]: { price: last ? last.price : 0, prevClose: prev ? prev.price : null, loading: false },
-        }));
-        if (!stockNames[symbol]) {
-          const nm = await fetchStockDisplayName(symbol);
-          if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
-        }
-      } catch (e) {
-        setPrices((p) => ({ ...p, [symbol]: { price: 0, prevClose: null, loading: false, error: true } }));
-      }
+      fetchPriceForSymbol(symbol);
     });
+  }, [symbolsKey]);
+
+  const [refreshingPrices, setRefreshingPrices] = useState(false);
+
+  // 手動刷新:不管快取判斷,全部標的都強制重新抓一次最新價格。
+  const handleRefreshPrices = async () => {
+    if (refreshingPrices || symbols.length === 0) return;
+    setRefreshingPrices(true);
+    try {
+      await Promise.all(symbols.map((symbol) => fetchPriceForSymbol(symbol, { force: true })));
+    } finally {
+      setRefreshingPrices(false);
+    }
+  };
+
+  // 自動刷新:台股收盤(13:30)後留5分鐘緩衝,交易日下午1:35起、使用者有打開
+  // 「我的持股」頁面的話,每分鐘檢查一次,當天只會自動觸發一次(用
+  // localStorage 記錄今天是否已經刷新過,重新整理頁面或隔天都不受影響)。
+  // 不是伺服器排程,所以只在頁面有打開的情況下才會生效;沒開著的話,下次
+  // 打開時(只要已經過了1:35)會立刻補刷新一次,不用特地等到下一個1:35。
+  useEffect(() => {
+    if (symbols.length === 0) return undefined;
+    const AUTO_REFRESH_HOUR = 13;
+    const AUTO_REFRESH_MINUTE = 35;
+    const AUTO_REFRESH_STORAGE_KEY = 'portfolio_price_auto_refresh_date';
+
+    const checkAndMaybeRefresh = () => {
+      const tw = getTaipeiDateTimeParts(new Date());
+      const refDate = new Date(Date.UTC(tw.year, tw.month, tw.day));
+      if (isNonTradingDay(refDate)) return;
+      const isAfterThreshold =
+        tw.hour > AUTO_REFRESH_HOUR || (tw.hour === AUTO_REFRESH_HOUR && tw.minute >= AUTO_REFRESH_MINUTE);
+      if (!isAfterThreshold) return;
+      const todayStr = `${tw.year}-${String(tw.month + 1).padStart(2, '0')}-${String(tw.day).padStart(2, '0')}`;
+      let lastDone = null;
+      try {
+        lastDone = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY);
+      } catch (e) {
+        // localStorage 不可用時安靜放棄記錄,頂多每次打開都重刷一次,不影響正確性。
+      }
+      if (lastDone === todayStr) return;
+      try {
+        localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, todayStr);
+      } catch (e) {}
+      symbols.forEach((symbol) => fetchPriceForSymbol(symbol, { force: true }));
+    };
+
+    checkAndMaybeRefresh();
+    const timer = setInterval(checkAndMaybeRefresh, 60000);
+    return () => clearInterval(timer);
   }, [symbolsKey]);
 
   const allSymbolHoldings = useMemo(
@@ -2626,6 +2697,8 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           userEmail={userEmail}
           onSignOut={onSignOut}
           onOpenMoveSymbols={() => setMovingSymbols(Array.from(selectedSymbols))}
+          onRefreshPrices={handleRefreshPrices}
+          refreshingPrices={refreshingPrices}
         />
       )}
 

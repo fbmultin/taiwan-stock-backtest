@@ -606,7 +606,17 @@ const priceCacheMissingHighLow = (data) => {
 // 只有在即時抓取三個來源都失敗時(例如離線、或當天資料源都還沒更新),才會
 // 退回使用現有的舊快取繼續計算,並標記 stale:true,讓呼叫端可以在結果頁
 // 提示使用者「資料只更新到某天」,而不是又靜默用了過期資料。
-export const fetchStockPriceData = async (symbol) => {
+// force:true 給「我的持股」頁面的手動/自動刷新按鈕用——平常這個函式的
+// 「需要抓到哪一天」一律是 getLastCompletedTradingDay()(下午3:30後才算
+// 今天的資料到位,否則算前一天),這是為了ETF回測比較/定期定額策略最佳化
+// 兩個分頁的歷史資料穩定性(避免抓到資料源當天還沒正式收錄的尾盤價),不能
+// 直接改掉。但「我的持股」要看的是現在最新的市值,使用者收盤後(例如下午
+// 1:35)就想看到今天的收盤價,不想等到3:30。force模式下一律：
+//   1. 無條件跳過「快取是否已經跟上」的檢查,一定會重新即時抓一次。
+//   2. 抓取終點用「今天」而不是 getLastCompletedTradingDay(),才有機會真的
+//      抓到資料源當天剛收錄的收盤價(抓不到的話,FinMind/TWSE/Yahoo 本來就
+//      只會回傳實際存在的交易日資料,不會因為終點設成今天而出錯)。
+export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
   const cached = loadPriceCache(symbol);
   const cacheUsable =
     cached && cached.data && cached.data.length > 0 && !priceCacheMissingHighLow(cached.data);
@@ -615,7 +625,7 @@ export const fetchStockPriceData = async (symbol) => {
   const cacheLastDateStr = cacheUsable
     ? cached.data[cached.data.length - 1].date
     : null;
-  const cacheIsFresh = cacheUsable && cacheLastDateStr >= latestNeededDateStr;
+  const cacheIsFresh = !force && cacheUsable && cacheLastDateStr >= latestNeededDateStr;
 
   if (cacheIsFresh) {
     return {
@@ -632,7 +642,7 @@ export const fetchStockPriceData = async (symbol) => {
   }
 
   const startDate = getFetchAnchorStartDate();
-  const endDate = lastCompletedTradingDay;
+  const endDate = force ? new Date() : lastCompletedTradingDay;
   const result = await attemptLiveFetch(symbol, startDate, endDate);
   if (result && result.data.length > 0) {
     const newLastDateStr = result.data[result.data.length - 1].date;
