@@ -1807,7 +1807,11 @@ function HoldingsListView({
         />
       </div>
 
-      <div className="px-4 mt-5 flex items-center justify-between">
+      {/* 這個區塊(標題列+持股卡片)的左右留白從 px-4 收窄到 px-3,
+          騰出來的寬度讓卡片內部欄位(尤其股名)能排得下更多字,
+          跟上方總覽/績效數據區塊的 px-4 略有一點點落差,但差距很小(4px)
+          幾乎看不出來,換來的卡片內部空間比較划算。 */}
+      <div className="px-3 mt-5 flex items-center justify-between">
         <div className="font-bold">
           持股紀錄{' '}
           <span className={`text-xs font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -1844,7 +1848,7 @@ function HoldingsListView({
         </div>
       </div>
 
-      <div className="px-4 mt-2 space-y-2">
+      <div className="px-3 mt-2 space-y-2">
         {displayedHoldings.length === 0 && (
           <div className={`text-center py-10 text-sm ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
             這個群組還沒有任何持股,點右下角「＋」新增第一筆交易。
@@ -1913,7 +1917,7 @@ function HoldingsListView({
             <div
               key={h.symbol}
               onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
-              className={`w-full flex items-center gap-2 rounded-xl px-3 py-3.5 cursor-pointer ${
+              className={`w-full flex items-center gap-2 rounded-xl px-2.5 py-4 cursor-pointer ${
                 isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
               }`}
             >
@@ -1930,32 +1934,39 @@ function HoldingsListView({
                   {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
                 </div>
               )}
-              {/* 數字行(現價/市值)從原本沒特別設定、吃預設字級的狀態放大到 text-lg,
-                  名稱也從 text-sm 放大到 text-base,其餘輔助數字(均價/股數/損益%)
-                  從 text-[11px] 放大到 text-xs——整體視覺份量拉近 Adam 參考截圖那種
-                  數字更粗更大的「密集感」,同時用 py-3.5(原本 py-3)多留一點呼吸空間,
-                  避免字放大後看起來擠。 */}
-              <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-left">
+              {/* Adam 反映:股名會被切到只剩「...」,想確認欄位至少容得下8個字,
+                  現價也要容得下4位數。這裡改用 grid-template-columns:
+                  minmax(0,1fr) auto auto——後兩欄(均價/現價、市值)用 auto,
+                  寬度照每一列實際內容自動撐開,數字再長也不會被裁切;股名欄
+                  (第一欄)則吃掉其餘所有空間,數字愈短股名就愈寬。另外把
+                  卡片左右留白 px-3→px-2.5、欄距 gap-2→gap-1.5,多擠出來的
+                  寬度也都讓給股名。股名本身從單行省略點(truncate)改成
+                  line-clamp-2,就算欄位還是不夠寬,也會換行完整顯示而不是
+                  被截斷成「...」。 */}
+              <div
+                className="flex-1 min-w-0 grid gap-1.5 text-left"
+                style={{ gridTemplateColumns: 'minmax(0,1fr) auto auto' }}
+              >
                 <div className="min-w-0">
                   <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
-                  <div className="font-bold text-base truncate">{h.name}</div>
+                  <div className="font-bold text-base leading-snug line-clamp-2 break-words">{h.name}</div>
                   <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {formatMoney(h.summary.shares)}股
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <div className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {h.summary.pureAvgPrice.toFixed(2)}
                   </div>
-                  <div className={`font-mono font-bold text-lg ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                  <div className={`font-mono font-bold text-lg whitespace-nowrap ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
                   </div>
                   <div className={`text-xs font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {formatPct(h.summary.todayPnlPct)}
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="font-mono font-bold text-lg">{formatMoney(h.summary.marketValue)}</div>
+                <div className="text-right shrink-0">
+                  <div className="font-mono font-bold text-lg whitespace-nowrap">{formatMoney(h.summary.marketValue)}</div>
                   <div className={`text-xs font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatSigned(h.summary.totalPnl)}
                   </div>
