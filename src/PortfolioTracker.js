@@ -1913,7 +1913,7 @@ function HoldingsListView({
             <div
               key={h.symbol}
               onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
-              className={`w-full flex items-center gap-2 rounded-xl px-3 py-3 cursor-pointer ${
+              className={`w-full flex items-center gap-2 rounded-xl px-3 py-3.5 cursor-pointer ${
                 isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
               }`}
             >
@@ -1930,31 +1930,36 @@ function HoldingsListView({
                   {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
                 </div>
               )}
+              {/* 數字行(現價/市值)從原本沒特別設定、吃預設字級的狀態放大到 text-lg,
+                  名稱也從 text-sm 放大到 text-base,其餘輔助數字(均價/股數/損益%)
+                  從 text-[11px] 放大到 text-xs——整體視覺份量拉近 Adam 參考截圖那種
+                  數字更粗更大的「密集感」,同時用 py-3.5(原本 py-3)多留一點呼吸空間,
+                  避免字放大後看起來擠。 */}
               <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-left">
                 <div className="min-w-0">
-                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
-                  <div className="font-bold text-sm truncate">{h.name}</div>
-                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                  <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
+                  <div className="font-bold text-base truncate">{h.name}</div>
+                  <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {formatMoney(h.summary.shares)}股
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                  <div className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {h.summary.pureAvgPrice.toFixed(2)}
                   </div>
-                  <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                  <div className={`font-mono font-bold text-lg ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
                   </div>
-                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                  <div className={`text-xs font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {formatPct(h.summary.todayPnlPct)}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-mono font-bold">{formatMoney(h.summary.marketValue)}</div>
-                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  <div className="font-mono font-bold text-lg">{formatMoney(h.summary.marketValue)}</div>
+                  <div className={`text-xs font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatSigned(h.summary.totalPnl)}
                   </div>
-                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  <div className={`text-xs font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatPct(h.summary.totalPnlPct)}
                   </div>
                 </div>
