@@ -29,7 +29,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 import TW_STOCK_NAMES from './data/twStockNames';
-import { fetchStockPriceData, fetchStockDisplayName } from './dataCache';
+import { fetchStockPriceData, fetchStockDisplayName, loadPriceCache } from './dataCache';
 import { isNonTradingDay, getTaipeiDateTimeParts } from './tradingCalendar';
 import {
   TX_TYPES,
@@ -2489,7 +2489,26 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
 function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [data, setData] = useState(() => loadPortfolioData());
   const [stockNames, setStockNames] = useState(() => ({ ...TW_STOCK_NAMES }));
-  const [prices, setPrices] = useState({});
+  // 開頁當下先同步從 localStorage 的股價快取把每一檔已經抓過的代號「秒開」
+  // 出上次抓到的價格,不要等異步的即時抓取跑完才有東西可以顯示。原本這裡是
+  // 空物件起手,畫面要等第一次 fetchPriceForSymbol 的結果回來才有價格,中間
+  // 這段空窗期 currentPrice 預設為0,導致市值/損益欄位會先閃一下「0」跟一個
+  // 嚇人的鉅額虧損數字,如果這次背景重新抓取剛好失敗(例如多檔同時發動把
+  // 代理伺服器擠爆逾時),使用者看到的就會一直停在這個錯誤的0,不會自動
+  // 恢復——明明 localStorage 裡其實已經有正確的舊資料,卻完全沒被拿來墊檔。
+  const [prices, setPrices] = useState(() => {
+    const initial = {};
+    const seenSymbols = new Set((loadPortfolioData().transactions || []).map((tx) => tx.symbol));
+    seenSymbols.forEach((symbol) => {
+      const cached = loadPriceCache(symbol);
+      const d = cached && cached.data;
+      if (!d || d.length === 0) return;
+      const last = d[d.length - 1];
+      const prev = d[d.length - 2];
+      initial[symbol] = { price: last.price, prevClose: prev ? prev.price : null, loading: true };
+    });
+    return initial;
+  });
   const pendingRef = useRef(new Set());
   const dataRef = useRef(data);
   dataRef.current = data;
@@ -2578,16 +2597,25 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
       const d = (result && result.data) || [];
       const last = d[d.length - 1];
       const prev = d[d.length - 2];
+      // 這次沒抓到任何資料(即時抓取失敗、也沒有快取可以退回)時,不要把
+      // price 蓋成0——那樣會讓市值/損益瞬間變成一個假的鉅額虧損,而且一旦
+      // 卡在失敗就不會自動恢復。保留目前畫面上原本的值(通常是開頁時從
+      // localStorage 快取墊檔的那個價格),只標記 error,下次重新整理或
+      // 手動刷新成功時自然會換成新值。真的完全沒有任何舊資料可用的全新
+      // 代號,才會維持沒有 price 欄位、由畫面顯示「…」或「-」。
       setPrices((p) => ({
         ...p,
-        [symbol]: { price: last ? last.price : 0, prevClose: prev ? prev.price : null, loading: false },
+        [symbol]: last
+          ? { price: last.price, prevClose: prev ? prev.price : null, loading: false, error: false }
+          : { ...(p[symbol] || {}), loading: false, error: true },
       }));
       if (!stockNamesRef.current[symbol]) {
         const nm = await fetchStockDisplayName(symbol);
         if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
       }
     } catch (e) {
-      setPrices((p) => ({ ...p, [symbol]: { price: 0, prevClose: null, loading: false, error: true } }));
+      // 同樣道理:例外狀況也不蓋成0,保留原本畫面上的值。
+      setPrices((p) => ({ ...p, [symbol]: { ...(p[symbol] || {}), loading: false, error: true } }));
     }
   };
 

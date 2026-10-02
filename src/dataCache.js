@@ -654,8 +654,15 @@ const priceCacheMissingHighLow = (data) => {
 //      只會回傳實際存在的交易日資料,不會因為終點設成今天而出錯)。
 export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
   const cached = loadPriceCache(symbol);
+  // cacheUsable:夠完整(high/low缺值比例在門檻內)才能拿來判斷「快取是否已經
+  // 跟上最新交易日」、或當成 force 模式合併的底稿——這兩種用途都要求資料品質。
+  // cacheHasAnyData 則單純只看「有沒有抓到過收盤價」,門檻低很多,只在最後
+  // 關頭(即時抓取三個來源全部失敗)當退路用:即使是 high/low 缺值比例偏高
+  // 的舊快取(常見於成交量稀薄的債券ETF),好歹收盤價還是真實抓到過的,
+  // 拿來墊檔也比直接讓呼叫端收到 null、被畫面當成0處理好太多。
   const cacheUsable =
     cached && cached.data && cached.data.length > 0 && !priceCacheMissingHighLow(cached.data);
+  const cacheHasAnyData = cached && cached.data && cached.data.length > 0;
   const lastCompletedTradingDay = getLastCompletedTradingDay();
   const latestNeededDateStr = lastCompletedTradingDay.toISOString().split('T')[0];
   const cacheLastDateStr = cacheUsable
@@ -707,9 +714,12 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
     }
   }
 
-  if (cacheUsable) {
+  if (cacheHasAnyData) {
     // 即時抓取沒有拿到更新的資料(三個來源都失敗,或抓到的反而更舊),
     // 退回使用現有快取繼續計算,並標記 stale,讓呼叫端知道這不是最新資料。
+    // 這裡刻意放寬成 cacheHasAnyData(不要求 cacheUsable 那種 high/low 完整度),
+    // 因為這是「真的沒有更好選擇」的最後一道防線,只要有抓到過收盤價,
+    // 都比讓呼叫端拿到 null、畫面上把市值/損益算成0要好。
     return {
       symbol,
       data: cached.data,
