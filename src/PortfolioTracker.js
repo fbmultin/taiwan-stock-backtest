@@ -160,6 +160,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   const [amountOverride, setAmountOverride] = useState(
     initial && initial.type === TX_TYPES.CASH_DIVIDEND && initial.amount ? String(initial.amount) : ''
   );
+  const [note, setNote] = useState((initial && initial.note) || '');
   const [groupId, setGroupId] = useState(() => {
     if (initial && initial.groupId) return initial.groupId;
     if (data.activeGroupId !== ALL_GROUP_ID) return data.activeGroupId;
@@ -225,6 +226,54 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     };
   }, [symbol, type, isEdit]);
 
+  // 以下「股利參考資訊」只在新增股利交易時才會用到,買/賣/股票股利、以及
+  // 編輯既有交易都完全不受影響——這是 Adam 明確要求的範圍限制。
+  // amountTouchedRef/noteTouchedRef:使用者一旦自己手動改過金額或備註,之後
+  // 不管怎麼切換群組、重新查到配息資料,都不要再用自動算出來的值蓋掉。
+  const [divRefLoading, setDivRefLoading] = useState(false);
+  const [divRef, setDivRef] = useState(null); // { date, amount } | null,amount 是「每股」配息金額
+  const amountTouchedRef = useRef(isEdit);
+  const noteTouchedRef = useRef(isEdit);
+
+  // 新增股利交易時,額外查一次這檔股票的配息紀錄(跟ETF回測比較共用同一份
+  // dataCache,通常已經有快取、幾乎不用等)。只是要「最近一次配息日期/金額」
+  // 當參考,不是要畫面上顯示完整股價,所以不影響前面那個買/賣用的報價 effect。
+  useEffect(() => {
+    if (isEdit) return;
+    if (type !== TX_TYPES.CASH_DIVIDEND) return;
+    const sym = symbol.trim().toUpperCase();
+    if (sym.length < 4) {
+      setDivRef(null);
+      return;
+    }
+    let cancelled = false;
+    setDivRefLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await fetchStockPriceData(sym);
+        if (cancelled) return;
+        const divDates = (result && result.divDates) || [];
+        const dividendsMap = (result && result.dividendsMap) || {};
+        const latestTs = divDates.length > 0 ? divDates[divDates.length - 1] : null;
+        const info = latestTs != null ? dividendsMap[latestTs] : null;
+        if (info && info.amount) {
+          setDivRef({ date: new Date(latestTs).toISOString().split('T')[0], amount: info.amount });
+        } else {
+          setDivRef(null);
+        }
+      } catch (e) {
+        setDivRef(null);
+      } finally {
+        if (!cancelled) setDivRefLoading(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setDivRefLoading(false);
+    };
+  }, [symbol, type, isEdit]);
+
   const group = data.groups.find((g) => g.id === groupId) || data.groups[0];
   const priceNum = parseFloat(price) || 0;
   const sharesNum = parseFloat(shares) || 0;
@@ -238,6 +287,32 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     );
     return computeSymbolSummary(txs).shares;
   }, [symbolUpper, data.transactions, isEdit, initial]);
+
+  // 新增股利交易用:跟上面 remainingShares 不同,這裡要的是「這個群組裡」的
+  // 庫存股數(同一檔股票可能分散在不同群組各自持有),切換股利表單上的群組
+  // 選擇器時,這個數字要跟著變,才能依照 Adam 的要求重新估算這個群組該拿到
+  // 的股利金額,而不是整個帳戶(所有群組加總)的庫存。
+  const groupShares = useMemo(() => {
+    if (!symbolUpper || !groupId) return 0;
+    const txs = data.transactions.filter(
+      (t) => t.symbol === symbolUpper && t.groupId === groupId && !(isEdit && initial && t.id === initial.id)
+    );
+    return computeSymbolSummary(txs).shares;
+  }, [symbolUpper, groupId, data.transactions, isEdit, initial]);
+
+  // 股利金額/備註自動帶入:等「這個群組的庫存股數」跟「查到的配息參考資訊」
+  // 都到位,且使用者還沒手動改過金額/備註,才會用兩者相乘算出估計金額跟
+  // 明細文字。切換群組(groupShares變)或重新查到配息資訊(divRef變)都會
+  // 重新算一次,直到使用者自己動手改過金額或備註為止。
+  useEffect(() => {
+    if (isEdit) return;
+    if (type !== TX_TYPES.CASH_DIVIDEND) return;
+    if (!divRef || groupShares <= 0) return;
+    const estimate = Math.round(groupShares * divRef.amount);
+    if (!amountTouchedRef.current) setAmountOverride(String(estimate));
+    if (!noteTouchedRef.current) setNote(`${formatMoney(groupShares)}股 × ${divRef.amount}元/股`);
+  }, [divRef, groupShares, type, isEdit]);
+
   const isBuySell = type === TX_TYPES.BUY || type === TX_TYPES.SELL;
   const activeFeeDiscountPct = isEtf ? etfFeeDiscountPct : stockFeeDiscountPct;
   const autoFee = isBuySell
@@ -279,6 +354,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
       fee: isBuySell ? fee : 0,
       tax,
       groupId,
+      note,
     });
   };
 
@@ -334,16 +410,51 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
           </FieldBox>
 
           {type === TX_TYPES.CASH_DIVIDEND ? (
-            <FieldBox label="金額" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
-              <input
-                type="number"
-                value={amountOverride}
-                onChange={(e) => setAmountOverride(e.target.value)}
-                placeholder="0"
-                className={inputBase}
-              />
-              <span className="text-xs opacity-60">NTD</span>
-            </FieldBox>
+            <>
+              {symbolUpper.length >= 4 && (
+                <div
+                  className={`text-xs rounded-xl px-3 py-2 leading-relaxed ${
+                    isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800/60 text-slate-300'
+                  }`}
+                >
+                  {divRefLoading ? (
+                    '查詢最近一次配息中…'
+                  ) : divRef ? (
+                    <>最近一次配息:{divRef.date}，每股 {divRef.amount} 元(僅供參考,實際請以實收為準)</>
+                  ) : (
+                    '查無這檔過去的配息紀錄,金額請自行輸入'
+                  )}
+                  <br />
+                  {group?.name || '這個群組'}目前庫存 {formatMoney(groupShares)} 股
+                </div>
+              )}
+              <FieldBox label="金額" icon={<span className="opacity-60 font-mono">$</span>} isLight={isLight}>
+                <input
+                  type="number"
+                  value={amountOverride}
+                  onChange={(e) => {
+                    setAmountOverride(e.target.value);
+                    amountTouchedRef.current = true;
+                  }}
+                  placeholder="0"
+                  className={inputBase}
+                />
+                <span className="text-xs opacity-60">NTD</span>
+              </FieldBox>
+              <FieldBox label="備註" icon={<span className="opacity-60">✎</span>} isLight={isLight}>
+                <input
+                  value={note}
+                  onChange={(e) => {
+                    setNote(e.target.value);
+                    noteTouchedRef.current = true;
+                  }}
+                  placeholder="備註(選填)"
+                  className={`flex-1 min-w-0 bg-transparent outline-none text-sm ${
+                    isLight ? 'text-slate-900 placeholder-slate-400' : 'text-white placeholder-slate-500'
+                  }`}
+                />
+              </FieldBox>
+            </>
           ) : (
             <div className="flex items-start gap-2">
               {type !== TX_TYPES.STOCK_DIVIDEND && (
