@@ -1681,6 +1681,8 @@ function HoldingsListView({
   totalSummary,
   onOpenDetail,
   onOpenSwitcher,
+  onSelectGroup,
+  onNewGroup,
   onOpenSettings,
   onOpenSummary,
   onOpenTodayTx,
@@ -1698,6 +1700,12 @@ function HoldingsListView({
   refreshingPrices,
 }) {
   const displayedHoldings = holdings;
+  // 浮動「切換群組」色塊鈕:點開主鈕,原地往上展開每個群組各一顆的色塊小圓鈕
+  // (用群組自己的顏色),點哪顆就切到哪個群組;「全部」跟「+新增群組」也各佔
+  // 一顆,收合在同一個位置。主鈕放在跟其他頁面「回上一層」鈕相同的 bottom-56
+  // right-4 位置——首頁本來就沒有返回鈕,這個位置是空的,讓同一個視覺角落在
+  // 每個頁面都有一致的浮動鈕可以按。
+  const [groupDialOpen, setGroupDialOpen] = useState(false);
   return (
     <div className="pb-24">
       <div className="flex items-center justify-between px-4 pt-4">
@@ -1972,6 +1980,66 @@ function HoldingsListView({
           <Folder className="w-4 h-4" />
           移動群組({selectedSymbols.size})
         </button>
+      )}
+
+      {!selectMode && (
+        <>
+          {groupDialOpen && (
+            <div className="fixed inset-0 z-20" onClick={() => setGroupDialOpen(false)} />
+          )}
+          <div className="fixed bottom-56 right-4 z-30 flex flex-col items-center gap-2.5">
+            {groupDialOpen && (
+              <>
+                <button
+                  onClick={() => {
+                    onNewGroup();
+                    setGroupDialOpen(false);
+                  }}
+                  className="w-11 h-11 rounded-full shadow-lg flex items-center justify-center bg-amber-500 text-white"
+                  title="新增群組"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => {
+                    onSelectGroup(ALL_GROUP_ID);
+                    setGroupDialOpen(false);
+                  }}
+                  className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center bg-gradient-to-br from-slate-400 to-slate-600 text-white text-[11px] font-bold ${
+                    data.activeGroupId === ALL_GROUP_ID ? 'ring-2 ring-white' : ''
+                  }`}
+                  title="全部(群組總覽)"
+                >
+                  全部
+                </button>
+                {data.groups.map((g) => (
+                  <button
+                    key={g.id}
+                    onClick={() => {
+                      onSelectGroup(g.id);
+                      setGroupDialOpen(false);
+                    }}
+                    style={{ background: g.color }}
+                    className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center text-white text-[11px] font-bold ${
+                      g.id === data.activeGroupId ? 'ring-2 ring-white' : ''
+                    }`}
+                    title={g.name}
+                  >
+                    {g.name.slice(0, 2)}
+                  </button>
+                ))}
+              </>
+            )}
+            <button
+              onClick={() => setGroupDialOpen((v) => !v)}
+              style={{ background: activeGroup ? activeGroup.color : '#64748b' }}
+              className="w-12 h-12 rounded-full shadow-xl flex items-center justify-center text-white"
+              title="切換群組"
+            >
+              <Folder className="w-5 h-5" />
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -2997,6 +3065,8 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
             setView('detail');
           }}
           onOpenSwitcher={() => setShowSwitcher(true)}
+          onSelectGroup={handleSelectGroup}
+          onNewGroup={handleNewGroup}
           onOpenSettings={handleOpenGroupSettings}
           onOpenSummary={() => setView('summary')}
           onOpenTodayTx={() => setView('todayTx')}
