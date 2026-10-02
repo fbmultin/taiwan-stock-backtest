@@ -1562,6 +1562,7 @@ function HoldingsListView({
   onOpenSwitcher,
   onOpenSettings,
   onOpenSummary,
+  onOpenTodayTx,
   onAddTx,
   onOpenImport,
   activeGroup,
@@ -1641,12 +1642,20 @@ function HoldingsListView({
 
       <div className="px-4 mt-5 flex items-center justify-between">
         <div className="font-bold">績效數據</div>
-        <button
-          onClick={onOpenSummary}
-          className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
-        >
-          查看全部 &gt;
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onOpenTodayTx}
+            className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+          >
+            今日交易 &gt;
+          </button>
+          <button
+            onClick={onOpenSummary}
+            className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+          >
+            查看全部 &gt;
+          </button>
+        </div>
       </div>
       {/* 同樣是版面調整:「今日損益」位置不變,下方括號多加「今日已實現損益」;
           原本「總損益」的位置、格式不變,改放「未實現損益」。 */}
@@ -2381,6 +2390,100 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
   );
 }
 
+// ============== 今日交易明細(首頁「績效數據」旁「今日交易」)==============
+// 跟上面「查看全部」一樣是從首頁點進來的獨立頁面,但列的不是損益總覽,而是
+// 「今天」這個日期(交易當天的日期欄位,不是現在幾點)所有個股的每一筆交易
+// 明細,方便收盤後快速核對今天到底按了哪些買賣/股利紀錄,不用一檔一檔點進
+// 持股明細去找。items 跟著首頁的群組篩選(txBySymbol 已經依目前群組過濾過),
+// 切換群組時看到的「今日交易」自然也只會是這個群組裡的。
+function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenDetail }) {
+  const typeColor = (t) =>
+    t === TX_TYPES.BUY
+      ? isLight
+        ? 'text-red-600'
+        : 'text-red-400'
+      : t === TX_TYPES.SELL
+      ? isLight
+        ? 'text-emerald-600'
+        : 'text-emerald-400'
+      : isLight
+      ? 'text-amber-600'
+      : 'text-amber-400';
+
+  const symbolCount = new Set(items.map((tx) => tx.symbol)).size;
+
+  return (
+    <div className="pb-24">
+      <div className="flex items-center gap-2 px-4 pt-4">
+        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1 text-center -ml-7">
+          <div className="font-bold">今日交易明細</div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-2 text-center">
+        <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{todayStr}</div>
+        <div className="text-sm font-bold mt-1">
+          共{items.length}筆交易{items.length > 0 ? `｜${symbolCount}檔個股` : ''}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className={`px-4 pt-10 text-center text-sm ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
+          今天還沒有任何交易紀錄
+        </div>
+      ) : (
+        <div className="px-4 mt-4 space-y-2">
+          {items.map((tx) => (
+            <div
+              key={tx.id}
+              onClick={() => onOpenDetail(tx.symbol)}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer ${
+                isLight ? 'bg-slate-100' : 'bg-slate-800/60'
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm truncate">
+                  {stockNames[tx.symbol] || tx.symbol}
+                  <span className={`ml-1.5 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {tx.symbol}
+                  </span>
+                </div>
+                <div className={`text-xs font-bold ${typeColor(tx.type)}`}>{TX_TYPE_LABELS[tx.type]}</div>
+                {tx.type !== TX_TYPES.CASH_DIVIDEND && (
+                  <div className={`font-mono text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {tx.price.toFixed(2)}
+                  </div>
+                )}
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-mono font-bold text-sm">{formatSigned(tx.amount)}</div>
+                {tx.type !== TX_TYPES.CASH_DIVIDEND && (
+                  <div className={`font-mono text-xs ${typeColor(tx.type)}`}>
+                    {tx.type === TX_TYPES.SELL ? '-' : '+'}
+                    {formatMoney(tx.shares)}股
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={onBack}
+        className={`fixed bottom-6 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-white text-slate-700 border border-slate-200' : 'bg-slate-800 text-white border border-slate-600'
+        }`}
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
+    </div>
+  );
+}
+
 // ============== 主元件 ==============
 
 function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
@@ -2618,6 +2721,21 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 
   const activeGroup = data.groups.find((g) => g.id === data.activeGroupId) || null;
 
+  // ---- 今日交易明細(首頁「績效數據」旁「今日交易」) ----
+  // 「今天」比對的是交易自己的日期欄位(YYYY-MM-DD),跟 computeSymbolSummary
+  // 算「今日損益」用的 todayDate 預設值一致,不是看現在幾點。txBySymbol 本身
+  // 已經依目前選到的群組篩選過,所以這裡列出來的也自然只會是這個群組的。
+  const todayDateStr = new Date().toISOString().split('T')[0];
+  const todayTransactions = useMemo(() => {
+    const list = [];
+    Object.entries(txBySymbol).forEach(([symbol, txs]) => {
+      txs.forEach((tx) => {
+        if (tx.date === todayDateStr) list.push({ ...tx, symbol });
+      });
+    });
+    return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [txBySymbol, todayDateStr]);
+
   // ---- 群組操作 ----
   const handleSelectGroup = (groupId) => setData((d) => ({ ...d, activeGroupId: groupId }));
   const handleNewGroup = () => setGroupEditor({ group: null, isNew: true });
@@ -2732,6 +2850,7 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onOpenSwitcher={() => setShowSwitcher(true)}
           onOpenSettings={handleOpenGroupSettings}
           onOpenSummary={() => setView('summary')}
+          onOpenTodayTx={() => setView('todayTx')}
           onAddTx={() => openAddTx(null)}
           onOpenImport={() => setShowImportCsv(true)}
           activeGroup={activeGroup}
@@ -2753,6 +2872,20 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           summary={totalSummary}
           title={activeGroup ? activeGroup.name : '全部'}
           onBack={() => setView('list')}
+        />
+      )}
+
+      {view === 'todayTx' && (
+        <TodayTransactionsView
+          isLight={isLight}
+          items={todayTransactions}
+          stockNames={stockNames}
+          todayStr={todayDateStr}
+          onBack={() => setView('list')}
+          onOpenDetail={(symbol) => {
+            setDetailSymbol(symbol);
+            setView('detail');
+          }}
         />
       )}
 
