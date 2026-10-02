@@ -15,7 +15,15 @@ import {
   ArrowLeft,
   Folder,
   Upload,
+  LogOut,
 } from 'lucide-react';
+import {
+  onAuthStateChanged,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+} from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
 import TW_STOCK_NAMES from './data/twStockNames';
 import { fetchStockPriceData, fetchStockDisplayName } from './dataCache';
 import {
@@ -25,6 +33,9 @@ import {
   DEFAULT_GROUP_COLORS,
   loadPortfolioData,
   savePortfolioData,
+  fetchRemoteDataOnce,
+  subscribeRemoteData,
+  saveRemoteData,
   createGroup,
   updateGroup,
   deleteGroup,
@@ -1499,6 +1510,8 @@ function HoldingsListView({
   onToggleSelectMode,
   onToggleSelectSymbol,
   onOpenMoveSymbols,
+  userEmail,
+  onSignOut,
 }) {
   // 「隱藏已清倉」:跟首頁的「顯示已出場部位」各自獨立的額外開關,只要清單裡
   // 有已出場部位(hiddenCount > 0,不限框選模式)就一定會顯示,方便使用者在
@@ -1528,13 +1541,28 @@ function HoldingsListView({
           <span className="font-bold text-sm">{activeGroup ? activeGroup.name : '全部'}</span>
           <ChevronDown className="w-4 h-4 opacity-60" />
         </button>
-        <button
-          onClick={onOpenImport}
-          className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
-          title="CSV 匯入交易"
-        >
-          <Upload className="w-5 h-5 opacity-70" />
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={onOpenImport}
+            className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
+            title="CSV 匯入交易"
+          >
+            <Upload className="w-5 h-5 opacity-70" />
+          </button>
+          {userEmail && (
+            <button
+              onClick={() => {
+                if (window.confirm(`登出 ${userEmail}?\n資料已經同步在雲端,登出不會刪除任何資料。`)) {
+                  onSignOut();
+                }
+              }}
+              className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
+              title={`已登入:${userEmail}(點擊登出)`}
+            >
+              <LogOut className="w-5 h-5 opacity-70" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="px-4 pt-3 text-center">
@@ -2227,11 +2255,13 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 
 // ============== 主元件 ==============
 
-export default function PortfolioTracker({ isLight }) {
+function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [data, setData] = useState(() => loadPortfolioData());
   const [stockNames, setStockNames] = useState(() => ({ ...TW_STOCK_NAMES }));
   const [prices, setPrices] = useState({});
   const pendingRef = useRef(new Set());
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   const [view, setView] = useState('list');
   const [detailSymbol, setDetailSymbol] = useState(null);
@@ -2256,8 +2286,43 @@ export default function PortfolioTracker({ isLight }) {
   const [movingSymbols, setMovingSymbols] = useState(null); // string[] | null
 
   useEffect(() => {
-    savePortfolioData(data);
-  }, [data]);
+    savePortfolioData(data); // 本機快取:離線、或下面雲端同步還沒跑完時也能馬上讀寫
+    saveRemoteData(uid, data); // 已登入時才會真的寫出去(內建 debounce)
+  }, [data, uid]);
+
+  // 登入狀態改變時,跟雲端對一次資料:
+  // - 雲端已經有資料 -> 用雲端那份蓋過本機(雲端是跨裝置的正本)
+  // - 雲端還沒有資料(這個帳號第一次登入) -> 把本機現有資料當成起點上傳
+  // 之後透過 onSnapshot 持續訂閱,另一台裝置改了資料也會即時同步過來。
+  useEffect(() => {
+    if (!uid) return undefined;
+    let cancelled = false;
+    let unsubscribe = () => {};
+
+    (async () => {
+      try {
+        const remote = await fetchRemoteDataOnce(uid);
+        if (cancelled) return;
+        if (remote) {
+          setData((prev) => (JSON.stringify(prev) === JSON.stringify(remote) ? prev : remote));
+        } else {
+          saveRemoteData(uid, dataRef.current, { immediate: true });
+        }
+      } catch (e) {
+        console.error('讀取雲端資料失敗,先繼續使用本機資料', e);
+      }
+
+      unsubscribe = subscribeRemoteData(uid, (remote) => {
+        if (!remote) return;
+        setData((prev) => (JSON.stringify(prev) === JSON.stringify(remote) ? prev : remote));
+      }, (e) => console.error('雲端同步訂閱中斷', e));
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [uid]);
 
   // 切換「持股列表 / 個股詳情」畫面時捲回最上方。
   // 如果使用者在列表往下滑很多之後才點進某一檔,detail 畫面會沿用同一個捲動位置,
@@ -2442,6 +2507,8 @@ export default function PortfolioTracker({ isLight }) {
           selectedSymbols={selectedSymbols}
           onToggleSelectMode={handleToggleSymbolSelectMode}
           onToggleSelectSymbol={handleToggleSelectSymbol}
+          userEmail={userEmail}
+          onSignOut={onSignOut}
           onOpenMoveSymbols={() => setMovingSymbols(Array.from(selectedSymbols))}
         />
       )}
@@ -2589,5 +2656,64 @@ export default function PortfolioTracker({ isLight }) {
         />
       )}
     </div>
+  );
+}
+
+// ============== 登入門檻 ==============
+//
+// 「我的持股」存的是個人交易紀錄,需要登入才能使用、也才能跨裝置同步;
+// App.js 裡其他分頁(回測比較、定期定額)不需要登入,所以登入判斷只包在
+// 這一層,不影響其他功能。用 signInWithRedirect 而不是彈出視窗版本的
+// signInWithPopup,是因為這個 App 支援「加到主畫面」當獨立 PWA 開啟,
+// 獨立模式下彈出視窗登入常常會被卡住或失敗,改成導向頁面比較穩定。
+export default function PortfolioTracker({ isLight }) {
+  const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null });
+
+  useEffect(() => {
+    getRedirectResult(auth).catch((e) => {
+      console.error('Google 登入失敗', e);
+      setAuthState((s) => ({ ...s, error: '登入失敗,請再試一次。' }));
+    });
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthState({ status: user ? 'in' : 'out', user, error: null });
+    });
+    return unsubscribe;
+  }, []);
+
+  if (authState.status === 'loading') {
+    return (
+      <div className={`py-20 text-center text-sm ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
+        讀取登入狀態中…
+      </div>
+    );
+  }
+
+  if (authState.status === 'out') {
+    return (
+      <div className="max-w-sm mx-auto px-6 py-20 text-center">
+        <h2 className={`text-xl font-bold mb-3 ${isLight ? 'text-slate-800' : 'text-slate-100'}`}>
+          登入後使用「我的持股」
+        </h2>
+        <p className={`text-sm mb-6 leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+          登入後,持股紀錄會自動備份到雲端,手機、電腦登入同一個帳號就能看到同一份資料。
+        </p>
+        {authState.error && <p className="text-sm text-rose-500 mb-4">{authState.error}</p>}
+        <button
+          onClick={() => signInWithRedirect(auth, googleProvider)}
+          className="w-full px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+        >
+          使用 Google 登入
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <PortfolioTrackerInner
+      isLight={isLight}
+      uid={authState.user.uid}
+      userEmail={authState.user.email}
+      onSignOut={() => signOut(auth)}
+    />
   );
 }

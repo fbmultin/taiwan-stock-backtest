@@ -1,11 +1,57 @@
 // 「我的持股」功能的資料層與試算引擎。
 //
-// 目前先用 localStorage 做本機儲存(瀏覽器/手機各自獨立一份資料)。
-// 之後如果要做跨裝置同步,只需要把 loadPortfolioData / savePortfolioData
-// 換成打後端 API 的版本,其他呼叫端(PortfolioTracker.js)完全不用改,
-// 因為這兩個函式就是整個模組對外唯一的讀寫入口。
+// 本機一律先用 localStorage 當快取(離線、或還沒登入時也能馬上讀寫)。
+// 登入 Google 帳號後,額外加上 Firestore 雲端同步:雲端那份資料是跨裝置的
+// 「正本」,本機 localStorage 只是加速開啟、離線備援用的影子副本。
+
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db } from './firebase';
 
 const STORAGE_KEY = 'portfolio_tracker_v1';
+
+// 雲端資料存放位置:每個登入的使用者(uid)各自一份文件,
+// 存在 portfolios/{uid} 底下,彼此完全隔離。
+const REMOTE_COLLECTION = 'portfolios';
+
+// Firestore 不接受欄位值是 undefined,用 JSON 來回轉一次順便把這種值清掉
+// (跟原本存 localStorage 時用的 JSON.stringify 邏輯一致,行為不會變)。
+function sanitizeForFirestore(data) {
+  return JSON.parse(JSON.stringify(data));
+}
+
+// 一次性讀取雲端現有資料;還沒有資料(帳號第一次登入)回傳 null。
+export async function fetchRemoteDataOnce(uid) {
+  if (!uid) return null;
+  const snap = await getDoc(doc(db, REMOTE_COLLECTION, uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+// 訂閱雲端資料變化(例如在另一台裝置上改的),回傳取消訂閱函式。
+export function subscribeRemoteData(uid, onData, onError) {
+  if (!uid) return () => {};
+  return onSnapshot(
+    doc(db, REMOTE_COLLECTION, uid),
+    (snap) => onData(snap.exists() ? snap.data() : null),
+    onError
+  );
+}
+
+let saveTimer = null;
+// 把資料寫回雲端;預設加一點 debounce,避免連續操作(例如快速點+/-調整股數)
+// 時每一下都各自觸發一次網路寫入。immediate:true 用在「帳號第一次登入、
+// 要把本機既有資料當成起點上傳」這種只會發生一次、不想等待的情境。
+export function saveRemoteData(uid, data, { immediate = false } = {}) {
+  if (!uid) return;
+  clearTimeout(saveTimer);
+  const payload = sanitizeForFirestore(data);
+  const run = () => {
+    setDoc(doc(db, REMOTE_COLLECTION, uid), payload).catch((e) => {
+      console.error('雲端同步失敗(本機資料不受影響,下次有網路時會再試)', e);
+    });
+  };
+  if (immediate) run();
+  else saveTimer = setTimeout(run, 800);
+}
 
 export const TX_TYPES = {
   BUY: 'buy',
