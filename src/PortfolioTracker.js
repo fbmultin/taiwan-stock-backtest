@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import {
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut,
@@ -2663,27 +2664,45 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 //
 // 「我的持股」存的是個人交易紀錄,需要登入才能使用、也才能跨裝置同步;
 // App.js 裡其他分頁(回測比較、定期定額)不需要登入,所以登入判斷只包在
-// 這一層,不影響其他功能。用 signInWithRedirect 而不是彈出視窗版本的
-// signInWithPopup,是因為這個 App 支援「加到主畫面」當獨立 PWA 開啟,
-// 獨立模式下彈出視窗登入常常會被卡住或失敗,改成導向頁面比較穩定。
+// 這一層,不影響其他功能。
+//
+// 登入方式:主要用 signInWithPopup(彈出視窗),登入全程留在同一個頁面,
+// 不會整頁導去 Google 再導回來,所以沒有「導回來後要從瀏覽器儲存空間找回
+// 之前登入狀態」這一步,也就不會有那一步失敗的風險。
+//
+// 原本用的是 signInWithRedirect(整頁導向),當初的考量是這個 App 支援
+// 「加到主畫面」當獨立 PWA 開啟、彈出視窗在獨立模式下可能被擋。但實測發現
+// signInWithRedirect 在手機瀏覽器上(Brave、Chrome 都一樣)會卡在無限循環:
+// Google 登入頁面本身正常跑完,導回 App 後 getRedirectResult 卻讀不到剛剛
+// 的登入(變成 null),等於整個流程「中途失憶」。這通常是手機瀏覽器對
+// 導回來的那個網址做了儲存空間隔離或清除所導致,不是我們程式碼本身的錯,
+// 但實際上就是用不了,所以改回更簡單、全程不離開頁面的彈出視窗登入。
+// 如果彈出視窗被瀏覽器擋下來(auth/popup-blocked)或目前環境不支援彈出視窗
+// (例如某些「加到主畫面」獨立模式下),才自動退回用 signInWithRedirect,
+// 保留原本的保險。
 export default function PortfolioTracker({ isLight }) {
   const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null });
 
   useEffect(() => {
+    // 這裡保留 getRedirectResult,是給上面「彈出視窗失敗後改用導向」這條
+    // 備援路徑用的——如果真的走到 signInWithRedirect,導回來後要靠這裡
+    // 把結果(或錯誤)撈出來。
+    //
     // 注意:下面 onAuthStateChanged 的回呼在「使用者狀態還是沒登入」時,
     // 故意保留原本的 error(用 s.error,不是寫死 null)——因為 Firebase
-    // 內部在處理完 signInWithRedirect 的過程中,onAuthStateChanged 常常會
-    // 連續觸發好幾次(先是 null,之後才是登入成功的使用者,或者整個流程
-    // 失敗時最後還是 null);如果這裡每次都把 error 蓋成 null,下面
-    // getRedirectResult 的 catch 設好的錯誤訊息,常常會被這個之後才跑到的
-    // null 回呼立刻洗掉,畫面上就完全看不到任何錯誤線索,只會看到「又跳回
-    // 登入畫面」,等於無法診斷。只有登入「成功」時才清空 error。
+    // 內部在處理登入的過程中,onAuthStateChanged 常常會連續觸發好幾次
+    // (先是 null,之後才是登入成功的使用者,或者整個流程失敗時最後還是
+    // null);如果這裡每次都把 error 蓋成 null,下面 catch 設好的錯誤訊息,
+    // 常常會被這個之後才跑到的 null 回呼立刻洗掉,畫面上就完全看不到任何
+    // 錯誤線索。只有登入「成功」時才清空 error。
     getRedirectResult(auth)
       .then((result) => {
-        console.log('getRedirectResult 完成', result ? '取得使用者' : '沒有待處理的登入(result 是 null)');
+        if (result) {
+          console.log('getRedirectResult 完成:取得使用者(備援的導向登入成功)');
+        }
       })
       .catch((e) => {
-        console.error('Google 登入失敗', e);
+        console.error('Google 登入失敗(導向備援)', e);
         setAuthState((s) => ({ ...s, error: `登入失敗:${e.code || '未知錯誤'}${e.message ? '(' + e.message + ')' : ''}` }));
       });
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -2691,6 +2710,30 @@ export default function PortfolioTracker({ isLight }) {
     });
     return unsubscribe;
   }, []);
+
+  const handleLogin = () => {
+    setAuthState((s) => ({ ...s, error: null }));
+    signInWithPopup(auth, googleProvider).catch((e) => {
+      const fallbackCodes = [
+        'auth/popup-blocked',
+        'auth/operation-not-supported-in-this-environment',
+        'auth/popup-closed-by-user',
+        'auth/cancelled-popup-request',
+      ];
+      // 使用者自己把彈出視窗關掉(popup-closed-by-user / cancelled-popup-request)
+      // 不算錯誤,不用顯示訊息,也不用退回導向登入,讓他自己再按一次就好。
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      if (fallbackCodes.includes(e.code)) {
+        console.warn('彈出視窗登入不可用,改用導向登入', e.code);
+        signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      console.error('Google 登入失敗(彈出視窗)', e);
+      setAuthState((s) => ({ ...s, error: `登入失敗:${e.code || '未知錯誤'}${e.message ? '(' + e.message + ')' : ''}` }));
+    });
+  };
 
   if (authState.status === 'loading') {
     return (
@@ -2713,10 +2756,7 @@ export default function PortfolioTracker({ isLight }) {
           <p className="text-sm text-rose-500 mb-4 break-words">{authState.error}</p>
         )}
         <button
-          onClick={() => {
-            setAuthState((s) => ({ ...s, error: null }));
-            signInWithRedirect(auth, googleProvider);
-          }}
+          onClick={handleLogin}
           className="w-full px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
         >
           使用 Google 登入
