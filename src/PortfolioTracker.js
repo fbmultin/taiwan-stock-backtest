@@ -2670,12 +2670,24 @@ export default function PortfolioTracker({ isLight }) {
   const [authState, setAuthState] = useState({ status: 'loading', user: null, error: null });
 
   useEffect(() => {
-    getRedirectResult(auth).catch((e) => {
-      console.error('Google 登入失敗', e);
-      setAuthState((s) => ({ ...s, error: '登入失敗,請再試一次。' }));
-    });
+    // 注意:下面 onAuthStateChanged 的回呼在「使用者狀態還是沒登入」時,
+    // 故意保留原本的 error(用 s.error,不是寫死 null)——因為 Firebase
+    // 內部在處理完 signInWithRedirect 的過程中,onAuthStateChanged 常常會
+    // 連續觸發好幾次(先是 null,之後才是登入成功的使用者,或者整個流程
+    // 失敗時最後還是 null);如果這裡每次都把 error 蓋成 null,下面
+    // getRedirectResult 的 catch 設好的錯誤訊息,常常會被這個之後才跑到的
+    // null 回呼立刻洗掉,畫面上就完全看不到任何錯誤線索,只會看到「又跳回
+    // 登入畫面」,等於無法診斷。只有登入「成功」時才清空 error。
+    getRedirectResult(auth)
+      .then((result) => {
+        console.log('getRedirectResult 完成', result ? '取得使用者' : '沒有待處理的登入(result 是 null)');
+      })
+      .catch((e) => {
+        console.error('Google 登入失敗', e);
+        setAuthState((s) => ({ ...s, error: `登入失敗:${e.code || '未知錯誤'}${e.message ? '(' + e.message + ')' : ''}` }));
+      });
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setAuthState({ status: user ? 'in' : 'out', user, error: null });
+      setAuthState((s) => ({ status: user ? 'in' : 'out', user, error: user ? null : s.error }));
     });
     return unsubscribe;
   }, []);
@@ -2697,9 +2709,14 @@ export default function PortfolioTracker({ isLight }) {
         <p className={`text-sm mb-6 leading-relaxed ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
           登入後,持股紀錄會自動備份到雲端,手機、電腦登入同一個帳號就能看到同一份資料。
         </p>
-        {authState.error && <p className="text-sm text-rose-500 mb-4">{authState.error}</p>}
+        {authState.error && (
+          <p className="text-sm text-rose-500 mb-4 break-words">{authState.error}</p>
+        )}
         <button
-          onClick={() => signInWithRedirect(auth, googleProvider)}
+          onClick={() => {
+            setAuthState((s) => ({ ...s, error: null }));
+            signInWithRedirect(auth, googleProvider);
+          }}
           className="w-full px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
         >
           使用 Google 登入
