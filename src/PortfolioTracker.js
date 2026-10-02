@@ -238,6 +238,14 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
   // 新增股利交易時,額外查一次這檔股票的配息紀錄(跟ETF回測比較共用同一份
   // dataCache,通常已經有快取、幾乎不用等)。只是要「最近一次配息日期/金額」
   // 當參考,不是要畫面上顯示完整股價,所以不影響前面那個買/賣用的報價 effect。
+  // 這裡故意用 force:true:使用者會打開這個表單,通常就是剛好配到息、想記錄
+  // 這筆交易,正是最需要「這一刻」資料夠新的時候。非force模式下,只要股價快取
+  // 本身還沒跟不上最新交易日(cacheIsFresh),就會直接吃快取、完全不會去檢查
+  // 快取裡的配息紀錄是不是也跟上了最新一次配息——配息公告不像股價每天變動,
+  // 股價快取可能已經是「新的」,但裡面存的配息資訊卻是好幾天前抓的舊資料,
+  // 導致這裡顯示的「最近一次配息」參考資訊其實沒有真正重新確認過。force:true
+  // 會跳過那個檢查、一定重新查一次——搭配 dataCache.js 裡的輕量增量抓取,
+  // 已經有快取時只會抓最近幾天,不會整個重抓20年,成本很低。
   useEffect(() => {
     if (isEdit) return;
     if (type !== TX_TYPES.CASH_DIVIDEND) return;
@@ -250,7 +258,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     setDivRefLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const result = await fetchStockPriceData(sym);
+        const result = await fetchStockPriceData(sym, { force: true });
         if (cancelled) return;
         const divDates = (result && result.divDates) || [];
         const dividendsMap = (result && result.dividendsMap) || {};
@@ -2349,7 +2357,7 @@ function StockDetailView({
 
       <button
         onClick={onBack}
-        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+        className={`fixed bottom-56 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
           isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
@@ -2491,7 +2499,7 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 
       <button
         onClick={onBack}
-        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+        className={`fixed bottom-56 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
           isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
@@ -2585,7 +2593,7 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
 
       <button
         onClick={onBack}
-        className={`fixed bottom-44 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+        className={`fixed bottom-56 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
           isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
         }`}
       >
