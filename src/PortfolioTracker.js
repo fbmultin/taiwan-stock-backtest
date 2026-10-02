@@ -1695,58 +1695,120 @@ function HoldingsListView({
             這個群組還沒有任何持股,點右下角「＋」新增第一筆交易。
           </div>
         )}
-        {displayedHoldings.map((h) => (
-          <div
-            key={h.symbol}
-            onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
-            className={`w-full flex items-center gap-2 rounded-xl px-3 py-3 cursor-pointer ${
-              isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
-            }`}
-          >
-            {selectMode && (
+        {displayedHoldings.map((h) => {
+          const isClosed = h.summary.shares === 0;
+
+          // 已清倉(庫存0股)的標的:現價/市值這些欄位都沒有意義(不會再變動),
+          // 改比照「交易紀錄」裡已框選分類的收合卡片呈現方式——左邊名稱+交易
+          // 期間/筆數,右邊直接秀已實現損益,而不是硬套用一般持股那組現價/
+          // 市值欄位全部顯示0或「-」。外層卡片的 class(rounded-xl px-3 py-3)
+          // 跟一般持股保持一致,格子大小才不會跑掉。
+          if (isClosed) {
+            const sortedTxs = [...(h.txs || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+            const txCount = sortedTxs.length;
+            const dateRange = txCount
+              ? sortedTxs[0].date === sortedTxs[txCount - 1].date
+                ? sortedTxs[0].date
+                : `${sortedTxs[0].date} ~ ${sortedTxs[txCount - 1].date}`
+              : '-';
+            return (
               <div
-                className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
-                  selectedSymbols.has(h.symbol)
-                    ? 'bg-amber-500 border-amber-500'
-                    : isLight
-                    ? 'border-slate-400'
-                    : 'border-slate-500'
+                key={h.symbol}
+                onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
+                className={`w-full flex items-center gap-2 rounded-xl px-3 py-3 cursor-pointer ${
+                  isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
                 }`}
               >
-                {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
-              </div>
-            )}
-            <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-left">
-              <div className="min-w-0">
-                <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
-                <div className="font-bold text-sm truncate">{h.name}</div>
-                <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {formatMoney(h.summary.shares)}股
+                {selectMode && (
+                  <div
+                    className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                      selectedSymbols.has(h.symbol)
+                        ? 'bg-amber-500 border-amber-500'
+                        : isLight
+                        ? 'border-slate-400'
+                        : 'border-slate-500'
+                    }`}
+                  >
+                    {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                )}
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isLight ? 'bg-slate-400' : 'bg-slate-500'}`} />
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="font-bold text-sm truncate">
+                    {h.name}
+                    <span className={`ml-1.5 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                      {h.symbol}
+                    </span>
+                  </div>
+                  <div className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    已清倉｜{dateRange}｜共{txCount}筆
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className={`font-mono font-bold text-sm ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                    {formatSigned(h.summary.totalPnl)}
+                  </div>
+                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    已實現損益｜{formatPct(h.summary.totalPnlPct)}
+                  </div>
                 </div>
               </div>
-              <div className="text-right">
-                <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {h.summary.pureAvgPrice.toFixed(2)}
+            );
+          }
+
+          return (
+            <div
+              key={h.symbol}
+              onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
+              className={`w-full flex items-center gap-2 rounded-xl px-3 py-3 cursor-pointer ${
+                isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
+              }`}
+            >
+              {selectMode && (
+                <div
+                  className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                    selectedSymbols.has(h.symbol)
+                      ? 'bg-amber-500 border-amber-500'
+                      : isLight
+                      ? 'border-slate-400'
+                      : 'border-slate-500'
+                  }`}
+                >
+                  {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
                 </div>
-                <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
-                  {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
+              )}
+              <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 text-left">
+                <div className="min-w-0">
+                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
+                  <div className="font-bold text-sm truncate">{h.name}</div>
+                  <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {formatMoney(h.summary.shares)}股
+                  </div>
                 </div>
-                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
-                  {formatPct(h.summary.todayPnlPct)}
+                <div className="text-right">
+                  <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {h.summary.pureAvgPrice.toFixed(2)}
+                  </div>
+                  <div className={`font-mono font-bold ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                    {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
+                  </div>
+                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
+                    {formatPct(h.summary.todayPnlPct)}
+                  </div>
                 </div>
-              </div>
-              <div className="text-right">
-                <div className="font-mono font-bold">{formatMoney(h.summary.marketValue)}</div>
-                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
-                  {formatSigned(h.summary.totalPnl)}
-                </div>
-                <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
-                  {formatPct(h.summary.totalPnlPct)}
+                <div className="text-right">
+                  <div className="font-mono font-bold">{formatMoney(h.summary.marketValue)}</div>
+                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                    {formatSigned(h.summary.totalPnl)}
+                  </div>
+                  <div className={`text-[11px] font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                    {formatPct(h.summary.totalPnlPct)}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {!selectMode && (
@@ -2415,7 +2477,7 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           prevClose: priceInfo.prevClose,
           groups: data.groups,
         });
-        return { symbol, name: stockNames[symbol] || symbol, summary, loading: priceInfo.loading };
+        return { symbol, name: stockNames[symbol] || symbol, summary, loading: priceInfo.loading, txs };
       }),
     [symbols, txBySymbol, prices, stockNames, data.groups]
   );
