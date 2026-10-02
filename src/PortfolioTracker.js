@@ -1917,7 +1917,7 @@ function HoldingsListView({
             <div
               key={h.symbol}
               onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
-              className={`w-full flex items-center gap-2 rounded-xl px-2.5 py-4 cursor-pointer ${
+              className={`w-full flex items-center gap-2 rounded-xl px-2.5 py-2.5 cursor-pointer ${
                 isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
               }`}
             >
@@ -1966,11 +1966,16 @@ function HoldingsListView({
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="font-mono font-bold text-lg whitespace-nowrap">{formatMoney(h.summary.marketValue)}</div>
-                  <div className={`text-xs font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  {/* Adam 反映:最右邊欄位該放大的是「總損益／%」,不是市值——
+                      市值降為小字當背景資訊,總損益跟總損益%兩行才是這欄的主角,
+                      跟左邊「均價/現價/今日%」那欄的現價一樣用 text-lg 當主視覺。 */}
+                  <div className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {formatMoney(h.summary.marketValue)}
+                  </div>
+                  <div className={`font-mono font-bold text-lg whitespace-nowrap ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatSigned(h.summary.totalPnl)}
                   </div>
-                  <div className={`text-xs font-mono ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
+                  <div className={`font-mono font-bold text-base whitespace-nowrap ${pnlColorClass(h.summary.totalPnl, isLight)}`}>
                     {formatPct(h.summary.totalPnlPct)}
                   </div>
                 </div>
