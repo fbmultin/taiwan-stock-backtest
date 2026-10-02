@@ -1917,7 +1917,7 @@ function HoldingsListView({
             <div
               key={h.symbol}
               onClick={() => (selectMode ? onToggleSelectSymbol(h.symbol) : onOpenDetail(h.symbol))}
-              className={`w-full flex items-center gap-2 rounded-xl px-2.5 py-2.5 cursor-pointer ${
+              className={`w-full flex items-center gap-2 rounded-xl px-2.5 py-2 cursor-pointer ${
                 isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-slate-800/60 hover:bg-slate-800'
               }`}
             >
@@ -1934,18 +1934,17 @@ function HoldingsListView({
                   {selectedSymbols.has(h.symbol) && <Check className="w-3.5 h-3.5 text-white" />}
                 </div>
               )}
-              {/* Adam 反映:股名會被切到只剩「...」,想確認欄位至少容得下8個字,
-                  現價也要容得下4位數。這裡改用 grid-template-columns:
-                  minmax(0,1fr) auto auto——後兩欄(均價/現價、市值)用 auto,
-                  寬度照每一列實際內容自動撐開,數字再長也不會被裁切;股名欄
-                  (第一欄)則吃掉其餘所有空間,數字愈短股名就愈寬。另外把
-                  卡片左右留白 px-3→px-2.5、欄距 gap-2→gap-1.5,多擠出來的
-                  寬度也都讓給股名。股名本身從單行省略點(truncate)改成
-                  line-clamp-2,就算欄位還是不夠寬,也會換行完整顯示而不是
-                  被截斷成「...」。 */}
+              {/* Adam 反映:上一版後兩欄用 auto 寬度會依每一列自己的內容撐開,
+                  導致不同標的的欄位邊界對不齊(他覺得 00945B 那列的比例最好看)。
+                  改回「每欄固定寬度」,所有列共用同一組欄寬,數字再怎麼變都是
+                  同一個邊界對齊,看起來才像同一個表格。均價/現價那欄固定 92px
+                  (容得下 4 位數價格如 9999.99),市值/總損益那欄固定 128px
+                  (容得下總損益帶正負號的 7 位數金額);股名欄(第一欄)吃掉
+                  剩下的所有空間,搭配 line-clamp-2,欄位不夠寬時換行而不是被
+                  省略號截斷。 */}
               <div
                 className="flex-1 min-w-0 grid gap-1.5 text-left"
-                style={{ gridTemplateColumns: 'minmax(0,1fr) auto auto' }}
+                style={{ gridTemplateColumns: 'minmax(0,1fr) 92px 128px' }}
               >
                 <div className="min-w-0">
                   <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
