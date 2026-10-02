@@ -2498,16 +2498,61 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 
   const [refreshingPrices, setRefreshingPrices] = useState(false);
 
-  // 手動刷新:不管快取判斷,全部標的都強制重新抓一次最新價格。
-  const handleRefreshPrices = async () => {
+  // 手動/自動刷新共用:先把「目前所有持股」的最新價格都抓回來、全部確定
+  // 抓完(不管成功或失敗)之後,才一次套用到畫面上——不是像上面單檔初次
+  // 載入那樣,一檔抓完就馬上更新畫面。原因是實測發現持股檔數多的時候,
+  // 半途網路不穩或某個來源逾時,會讓畫面在刷新途中看到「部分已經換成新
+  // 數字、部分還是舊的、甚至短暫出現抓取失敗的0」這種新舊夾雜、對不起來
+  // 的狀態,使用者會覺得「數字變得不準」。改成全部收集完、確定每一檔的
+  // 結果後,一次性地用單一個 setPrices 套用:抓成功的才覆蓋,抓失敗/逾時
+  // 的那幾檔完全不動,直接維持刷新前的舊數字,不會被清空或歸零。
+  const refreshAllPrices = async () => {
     if (refreshingPrices || symbols.length === 0) return;
     setRefreshingPrices(true);
     try {
-      await Promise.all(symbols.map((symbol) => fetchPriceForSymbol(symbol, { force: true })));
+      const results = await Promise.all(
+        symbols.map(async (symbol) => {
+          try {
+            const result = await fetchStockPriceData(symbol, { force: true });
+            const d = (result && result.data) || [];
+            const last = d[d.length - 1];
+            if (!last) return null; // 沒抓到新資料,稍後略過、不動這一檔原本的數字
+            const prev = d[d.length - 2];
+            return { symbol, price: last.price, prevClose: prev ? prev.price : null };
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+      setPrices((p) => {
+        const next = { ...p };
+        results.forEach((r) => {
+          if (!r) return;
+          next[r.symbol] = { ...(next[r.symbol] || {}), price: r.price, prevClose: r.prevClose, loading: false, error: false };
+        });
+        return next;
+      });
+      // 股票名稱缺的話順便補,不影響上面價格的「全部確定完成才套用」邏輯。
+      symbols.forEach((symbol) => {
+        if (stockNamesRef.current[symbol]) return;
+        fetchStockDisplayName(symbol).then((nm) => {
+          if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
+        });
+      });
     } finally {
       setRefreshingPrices(false);
     }
   };
+
+  // 手動刷新按鈕點擊時呼叫。
+  const handleRefreshPrices = () => refreshAllPrices();
+
+  // 自動刷新那個 useEffect 只依賴 symbolsKey 建立計時器,不會每次 render 都
+  // 重建,所以要用 ref 存最新版本的 refreshAllPrices(每次 render 都會拿到
+  // 當下最新的 symbols/refreshingPrices),避免計時器內部呼叫到建立當下、
+  // 可能已經過期的舊版本函式。
+  const refreshAllPricesRef = useRef(refreshAllPrices);
+  refreshAllPricesRef.current = refreshAllPrices;
 
   // 自動刷新:台股收盤(13:30)後留5分鐘緩衝,交易日下午1:35起、使用者有打開
   // 「我的持股」頁面的話,每分鐘檢查一次,當天只會自動觸發一次(用
@@ -2538,7 +2583,7 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
       try {
         localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, todayStr);
       } catch (e) {}
-      symbols.forEach((symbol) => fetchPriceForSymbol(symbol, { force: true }));
+      refreshAllPricesRef.current();
     };
 
     checkAndMaybeRefresh();

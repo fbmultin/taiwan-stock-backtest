@@ -576,6 +576,34 @@ const getFetchAnchorStartDate = () => {
   return start;
 };
 
+// 「我的持股」強制刷新(force:true)用的輕量抓取範圍:只回抓這麼多天,
+// 不是像正常更新快取那樣整個 FETCH_HISTORY_YEARS 年歷史都重抓一次。
+// 原本 force 模式沒有這層,每次按刷新/每次自動刷新都對所有持股代號各自
+// 重新發動一次完整20年歷史的 FinMind→TWSE→Yahoo 三層備援抓取,實際上線後
+// 發現這樣又慢又容易把資料源/CORS代理搞到逾時卡住(尤其持股檔數多的時候
+// 全部平行發動),而且偶爾某個來源在高併發下回傳到不完整的資料,蓋過快取
+// 裡原本正確的數字,導致「按了刷新之後數字反而不準」。改成只抓最近這幾天
+// (台股這幾天內一定看得到最新收盤價),再跟既有快取合併(見下面
+// mergeRecentPriceData),大幅縮小抓取範圍跟出錯機會。
+const FORCE_REFRESH_LOOKBACK_DAYS = 10;
+
+const getForceRefreshStartDate = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - FORCE_REFRESH_LOOKBACK_DAYS);
+  return d;
+};
+
+// 把 force 模式新抓回來的「最近幾天」資料,合併進既有的完整歷史快取裡:
+// 用日期當 key,新資料覆蓋掉舊資料裡同一天的值(收盤價以剛抓到的為準),
+// 其餘沒抓到的舊日期全部保留,最後依日期排序回傳。這樣既能拿到最新收盤價,
+// 又不會把20年的歷史資料整個丟掉重抓。
+const mergeRecentPriceData = (oldData, newData) => {
+  const byDate = new Map();
+  (oldData || []).forEach((d) => byDate.set(d.date, d));
+  (newData || []).forEach((d) => byDate.set(d.date, d));
+  return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+};
+
 // 舊版程式抓的快取只有收盤價,沒有當天最高/最低價(K線穿越均線判斷需要這兩個
 // 欄位)。用這個判斷「這份快取是不是舊格式」,原本是只要有任何一天缺 high 或
 // low 就視為不完整、整檔重新即時抓取以補齊。
@@ -611,9 +639,17 @@ const priceCacheMissingHighLow = (data) => {
 // 今天的資料到位,否則算前一天),這是為了ETF回測比較/定期定額策略最佳化
 // 兩個分頁的歷史資料穩定性(避免抓到資料源當天還沒正式收錄的尾盤價),不能
 // 直接改掉。但「我的持股」要看的是現在最新的市值,使用者收盤後(例如下午
-// 1:35)就想看到今天的收盤價,不想等到3:30。force模式下一律：
+// 1:35)就想看到今天的收盤價,不想等到3:30。force模式下:
 //   1. 無條件跳過「快取是否已經跟上」的檢查,一定會重新即時抓一次。
-//   2. 抓取終點用「今天」而不是 getLastCompletedTradingDay(),才有機會真的
+//   2. 已經有能用的歷史快取時,只抓最近 FORCE_REFRESH_LOOKBACK_DAYS 天
+//      (見 getForceRefreshStartDate),抓到後用 mergeRecentPriceData 合併回
+//      既有快取,不是整個20年歷史重新抓一次——這段本來是直接沿用
+//      getFetchAnchorStartDate()(20年前)當起點,實測發現持股檔數一多、
+//      每次按刷新都對每一檔重新發動一次完整20年歷史的三層備援抓取,很容易
+//      把資料源/CORS代理搞到逾時卡住,偶爾高併發下某個來源還會回傳不完整
+//      資料蓋掉快取裡原本正確的數字,才改成只抓最近幾天這種輕量作法。
+//      完全沒有快取(第一次抓這檔)時沒有舊資料可以合併,還是走完整歷史錨點。
+//   3. 抓取終點用「今天」而不是 getLastCompletedTradingDay(),才有機會真的
 //      抓到資料源當天剛收錄的收盤價(抓不到的話,FinMind/TWSE/Yahoo 本來就
 //      只會回傳實際存在的交易日資料,不會因為終點設成今天而出錯)。
 export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
@@ -641,10 +677,28 @@ export const fetchStockPriceData = async (symbol, { force = false } = {}) => {
     };
   }
 
-  const startDate = getFetchAnchorStartDate();
+  const forceIncremental = force && cacheUsable;
+  const startDate = forceIncremental ? getForceRefreshStartDate() : getFetchAnchorStartDate();
   const endDate = force ? new Date() : lastCompletedTradingDay;
   const result = await attemptLiveFetch(symbol, startDate, endDate);
   if (result && result.data.length > 0) {
+    if (forceIncremental) {
+      // 輕量刷新:新抓到的最近幾天資料跟既有完整歷史合併,不是整個蓋掉。
+      const mergedData = mergeRecentPriceData(cached.data, result.data);
+      const mergedResult = {
+        ...result,
+        data: mergedData,
+        divDates: Array.from(new Set([...(cached.divDates || []), ...(result.divDates || [])])),
+        dividendsMap: { ...(cached.dividendsMap || {}), ...(result.dividendsMap || {}) },
+      };
+      const mergedLastDateStr = mergedData[mergedData.length - 1].date;
+      // 合併後日期沒有變新、筆數也沒變多,代表這次沒抓到真正新的資料
+      // (例如還沒到資料源收錄的時間),直接維持原本快取,避免白白寫入。
+      if (mergedLastDateStr > cacheLastDateStr || mergedData.length !== cached.data.length) {
+        savePriceCache(symbol, mergedResult);
+      }
+      return { ...mergedResult, fromCache: false };
+    }
     const newLastDateStr = result.data[result.data.length - 1].date;
     // 避免資料源這次剛好抓到比現有快取還舊/還少的異常結果,反而把好的快取蓋掉。
     if (!cacheUsable || newLastDateStr > cacheLastDateStr) {
