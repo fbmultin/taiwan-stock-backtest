@@ -4,6 +4,7 @@ import TW_STOCK_SPLITS from './data/twStockSplits';
 import TW_ETF_FEES from './data/twEtfFees';
 import DcaOptimizer from './DcaOptimizer';
 import PortfolioTracker from './PortfolioTracker';
+import PullbackRadar from './PullbackRadar';
 import QuickApplyBar from './QuickApplyBar';
 import { PRESETS } from './presets';
 import {
@@ -942,7 +943,7 @@ const App = () => {
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = localStorage.getItem('activeTab');
-      return saved === 'dca' || saved === 'portfolio' ? saved : 'backtest';
+      return saved === 'dca' || saved === 'portfolio' || saved === 'pullback' ? saved : 'backtest';
     } catch {
       return 'backtest';
     }
@@ -3246,6 +3247,18 @@ const App = () => {
           >
             我的持股
           </button>
+          <button
+            onClick={() => setActiveTab('pullback')}
+            className={`px-3 sm:px-4 py-2.5 text-sm sm:text-base font-medium border-b-2 transition-colors ${
+              activeTab === 'pullback'
+                ? 'border-emerald-400 text-emerald-400'
+                : isLight
+                ? 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            回檔雷達
+          </button>
         </div>
         <button
           onClick={toggleTheme}
@@ -3276,6 +3289,14 @@ const App = () => {
         <div className={containerClass}>
           <div className="max-w-3xl mx-auto">
             <PortfolioTracker isLight={isLight} />
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'pullback' && (
+        <div className={containerClass}>
+          <div className="max-w-3xl mx-auto">
+            <PullbackRadar isLight={isLight} />
           </div>
         </div>
       )}
