@@ -1,0 +1,4 @@
+# 逐路徑原始輸出太大,不進 repo。完整封存檔另交使用者(檔名與 SHA-256 見 out/raw_results.sha256);
+# 所有種子固定,執行 runall.sh 可逐筆重現。
+out/*.jsonl
+out/step0_rerun_report.html

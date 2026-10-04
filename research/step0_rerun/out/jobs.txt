@@ -1,0 +1,61 @@
+gate A 1 0 4000 out/gate_A_L1.jsonl
+gate 0051 1 0 4000 out/gate_0051_L1.jsonl
+gate 0055 1 0 4000 out/gate_0055_L1.jsonl
+gate 006201 1 0 4000 out/gate_006201_L1.jsonl
+shift 0051 0 2000 out/shift_0051.jsonl
+shift 0055 0 2000 out/shift_0055.jsonl
+shift 0052 0 2000 out/shift_0052.jsonl
+shift 0053 0 2000 out/shift_0053.jsonl
+shift 0057 0 2000 out/shift_0057.jsonl
+shift 006201 0 2000 out/shift_006201.jsonl
+shift 006203 0 2000 out/shift_006203.jsonl
+shift 006204 0 2000 out/shift_006204.jsonl
+gate A 5 0 4000 out/gate_A_L5.jsonl
+gate A 10 0 4000 out/gate_A_L10.jsonl
+gate A 20 0 4000 out/gate_A_L20.jsonl
+gate A 60 0 4000 out/gate_A_L60.jsonl
+gate A 250 0 4000 out/gate_A_L250.jsonl
+gate 0051 5 0 4000 out/gate_0051_L5.jsonl
+gate 0051 10 0 4000 out/gate_0051_L10.jsonl
+gate 0051 20 0 4000 out/gate_0051_L20.jsonl
+gate 0051 60 0 4000 out/gate_0051_L60.jsonl
+gate 0051 250 0 4000 out/gate_0051_L250.jsonl
+gate 0055 5 0 4000 out/gate_0055_L5.jsonl
+gate 0055 10 0 4000 out/gate_0055_L10.jsonl
+gate 0055 20 0 4000 out/gate_0055_L20.jsonl
+gate 0055 60 0 4000 out/gate_0055_L60.jsonl
+gate 0055 250 0 4000 out/gate_0055_L250.jsonl
+gate 006201 5 0 4000 out/gate_006201_L5.jsonl
+gate 006201 10 0 4000 out/gate_006201_L10.jsonl
+gate 006201 20 0 4000 out/gate_006201_L20.jsonl
+gate 006201 60 0 4000 out/gate_006201_L60.jsonl
+gate 006201 250 0 4000 out/gate_006201_L250.jsonl
+power A 5 0 500 out/power_A_d5.jsonl
+power A 10 0 500 out/power_A_d10.jsonl
+power A 15 0 500 out/power_A_d15.jsonl
+power A 20 0 500 out/power_A_d20.jsonl
+power A 30 0 500 out/power_A_d30.jsonl
+power A 40 0 500 out/power_A_d40.jsonl
+power 0051 5 0 500 out/power_0051_d5.jsonl
+power 0051 10 0 500 out/power_0051_d10.jsonl
+power 0051 15 0 500 out/power_0051_d15.jsonl
+power 0051 20 0 500 out/power_0051_d20.jsonl
+power 0051 30 0 500 out/power_0051_d30.jsonl
+power 0051 40 0 500 out/power_0051_d40.jsonl
+power 0055 5 0 500 out/power_0055_d5.jsonl
+power 0055 10 0 500 out/power_0055_d10.jsonl
+power 0055 15 0 500 out/power_0055_d15.jsonl
+power 0055 20 0 500 out/power_0055_d20.jsonl
+power 0055 30 0 500 out/power_0055_d30.jsonl
+power 0055 40 0 500 out/power_0055_d40.jsonl
+power 006201 5 0 500 out/power_006201_d5.jsonl
+power 006201 10 0 500 out/power_006201_d10.jsonl
+power 006201 15 0 500 out/power_006201_d15.jsonl
+power 006201 20 0 500 out/power_006201_d20.jsonl
+power 006201 30 0 500 out/power_006201_d30.jsonl
+power 006201 40 0 500 out/power_006201_d40.jsonl
+bcmp 0 500 out/bcmp_A_L20.jsonl
+COV A
+COV 0051
+COV 0055
+COV 006201
