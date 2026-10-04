@@ -370,6 +370,16 @@ const RANKING_PERIODS = [
   { key: '3y', label: '近3年', months: 36 },
   { key: '4y', label: '近4年', months: 48 },
   { key: '5y', label: '近5年', months: 60 },
+  { key: '6y', label: '近6年', months: 72 },
+  { key: '7y', label: '近7年', months: 84 },
+  { key: '8y', label: '近8年', months: 96 },
+  { key: '9y', label: '近9年', months: 108 },
+  { key: '10y', label: '近10年', months: 120 },
+  { key: '11y', label: '近11年', months: 132 },
+  { key: '12y', label: '近12年', months: 144 },
+  { key: '13y', label: '近13年', months: 156 },
+  { key: '14y', label: '近14年', months: 168 },
+  { key: '15y', label: '近15年', months: 180 },
   { key: '5d', label: '近05日', days: 5 },
   { key: '10d', label: '近10日', days: 10 },
   { key: '20d', label: '近20日', days: 20 },
@@ -399,6 +409,23 @@ const computeRankingPeriodRange = (period) => {
   while (isNonTradingDay(rangeStart)) rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
   return { rangeStart, rangeEnd };
 };
+
+// 判斷一個排名區間要不要顯示年化(CAGR)。短天期(5日/10日/20日)這三組刻意不年化——
+// 年化換算對這麼短的區間沒有統計意義,算出來的數字會被放大到離譜(例如5個交易日
+// 賺1%,年化換算後可能變成+1000%以上這種不合理的大數字),反而容易讓人誤會,
+// 一般財經App也不會對這麼短的區間做年化。「今年」(ytd)、「近1季」等區間雖然
+// 也不滿一年,但至少有幾個月的跨度,年化後還有參考意義,所以照樣顯示。
+const shouldAnnualizeRankingPeriod = (period) => !period.days;
+
+// 把某個區間的報酬率(pct,百分比數字)換算成年化報酬率(CAGR):
+// (1 + 報酬率)^(1/年數) - 1。years 用這個區間實際的起訖日期算(rangeEnd - rangeStart),
+// 不是用 period.months 這個名目長度,因為每個排名區間的起訖日都已經避開非交易日
+// 調整過,用實際日期算比較準。pct <= -100(本金全虧光甚至更多)或 years <= 0 時
+// 回傳 null,畫面上改顯示「—」。
+const computeRankingCagr = (pct, years) =>
+  typeof pct === 'number' && Number.isFinite(pct) && years > 0 && pct > -100
+    ? (Math.pow(1 + pct / 100, 1 / years) - 1) * 100
+    : null;
 
 // 排名表用的單一標的、單一區間報酬率:採簡單一次性買進、含息(不含加碼),
 // 算法跟主要回測「關閉定期定額加碼」時的 periodDividends/totalReturnPct 公式相同。
@@ -1358,6 +1385,7 @@ const App = () => {
 
       const rows = successfulData.map((stock) => {
         const returns = {};
+        const cagrs = {};
         RANKING_PERIODS.forEach((period) => {
           const { rangeStart, rangeEnd } = computeRankingPeriodRange(period);
           returns[period.key] = computeStockReturnForRange(
@@ -1365,8 +1393,14 @@ const App = () => {
             rangeStart,
             rangeEnd
           );
+          cagrs[period.key] = shouldAnnualizeRankingPeriod(period)
+            ? computeRankingCagr(
+                returns[period.key],
+                (rangeEnd - rangeStart) / (1000 * 60 * 60 * 24 * 365)
+              )
+            : null;
         });
-        return { symbol: stock.symbol, stockName: stock.stockName, returns };
+        return { symbol: stock.symbol, stockName: stock.stockName, returns, cagrs };
       });
       const ranksByRow = buildRanks(rows);
       setRankingData({
@@ -1390,6 +1424,7 @@ const App = () => {
         const topUpRows = successfulData.map((stock) => {
           const returns = {};
           const netProfits = {};
+          const cagrs = {};
           RANKING_PERIODS.forEach((period) => {
             const { rangeStart, rangeEnd } = computeRankingPeriodRange(period);
             const result = computeStockReturnForRangeWithTopUp(
@@ -1411,12 +1446,19 @@ const App = () => {
             );
             returns[period.key] = result ? result.pct : null;
             netProfits[period.key] = result ? result.netProfit : null;
+            cagrs[period.key] = shouldAnnualizeRankingPeriod(period)
+              ? computeRankingCagr(
+                  returns[period.key],
+                  (rangeEnd - rangeStart) / (1000 * 60 * 60 * 24 * 365)
+                )
+              : null;
           });
           return {
             symbol: stock.symbol,
             stockName: stock.stockName,
             returns,
             netProfits,
+            cagrs,
           };
         });
         const topUpRanksByRow = buildRanks(topUpRows);
@@ -1526,6 +1568,7 @@ const App = () => {
                 {data.rows.map((row) => {
                   const rank = row.ranks[p.key];
                   const retPct = row.returns[p.key];
+                  const cagr = row.cagrs ? row.cagrs[p.key] : null;
                   const netProfit = row.netProfits ? row.netProfits[p.key] : null;
                   const isMaxNetProfit =
                     highlightMaxNetProfit &&
@@ -1563,6 +1606,17 @@ const App = () => {
                               {retPct.toFixed(1)}%
                             </span>
                           )}
+                        {/* 這一格的區間報酬率下面,再補一行括弧年化(CAGR),跟「個別標的
+                            績效」卡片同一個邏輯——排名表橫跨從近05日到近15年這麼多種長短
+                            不一的區間,沒有年化的話,近1年跟近15年的報酬率數字直接放在一起
+                            比較並不公平。短天期(5/10/20日)那三組不顯示,見
+                            shouldAnnualizeRankingPeriod 註解。 */}
+                        {typeof cagr === 'number' && Number.isFinite(cagr) && (
+                          <span className={`text-[9px] ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
+                            (年化{cagr > 0 ? '+' : ''}
+                            {cagr.toFixed(1)}%)
+                          </span>
+                        )}
                         {typeof netProfit === 'number' &&
                           Number.isFinite(netProfit) && (
                             <span
