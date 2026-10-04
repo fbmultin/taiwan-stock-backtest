@@ -370,16 +370,19 @@ const RANKING_PERIODS = [
   { key: '3y', label: '近3年', months: 36 },
   { key: '4y', label: '近4年', months: 48 },
   { key: '5y', label: '近5年', months: 60 },
-  { key: '6y', label: '近6年', months: 72 },
-  { key: '7y', label: '近7年', months: 84 },
-  { key: '8y', label: '近8年', months: 96 },
-  { key: '9y', label: '近9年', months: 108 },
-  { key: '10y', label: '近10年', months: 120 },
-  { key: '11y', label: '近11年', months: 132 },
-  { key: '12y', label: '近12年', months: 144 },
-  { key: '13y', label: '近13年', months: 156 },
-  { key: '14y', label: '近14年', months: 168 },
-  { key: '15y', label: '近15年', months: 180 },
+  // 近6年~近15年:大多數標的(尤其是近幾年才掛牌的主動式ETF)根本沒有這麼長的
+  // 資料,平常攤開一排全是「—」反而佔版面、沒資訊量,所以標上 longTerm,畫面上
+  // 預設收合、要手動展開才會算進表格裡(見 showLongTermRankingPeriods)。
+  { key: '6y', label: '近6年', months: 72, longTerm: true },
+  { key: '7y', label: '近7年', months: 84, longTerm: true },
+  { key: '8y', label: '近8年', months: 96, longTerm: true },
+  { key: '9y', label: '近9年', months: 108, longTerm: true },
+  { key: '10y', label: '近10年', months: 120, longTerm: true },
+  { key: '11y', label: '近11年', months: 132, longTerm: true },
+  { key: '12y', label: '近12年', months: 144, longTerm: true },
+  { key: '13y', label: '近13年', months: 156, longTerm: true },
+  { key: '14y', label: '近14年', months: 168, longTerm: true },
+  { key: '15y', label: '近15年', months: 180, longTerm: true },
   { key: '5d', label: '近05日', days: 5 },
   { key: '10d', label: '近10日', days: 10 },
   { key: '20d', label: '近20日', days: 20 },
@@ -1224,6 +1227,12 @@ const App = () => {
   // 排名表(含加碼):只在目前有勾選任一加碼開關時才會一併計算,套用當下的
   // 加碼策略設定(每月固定日期加碼/K線穿越均線加碼)。
   const [rankingDataTopUp, setRankingDataTopUp] = useState(null);
+  // 排名表裡「近6年~近15年」這組長天期區間預設收合——實務上大多數標的
+  // (尤其是近幾年才掛牌的主動式ETF)根本沒有超過6年的資料,平常攤開一排全是
+  // 「—」反而佔版面、沒有資訊量,所以改成要手動展開才顯示,純本金、含加碼
+  // 兩份排名表共用同一個展開狀態(沒必要分開控制)。
+  const [showLongTermRankingPeriods, setShowLongTermRankingPeriods] =
+    useState(false);
 
   const handleApplyPreset = (presetStocks) => {
     const newInputs = [...presetStocks];
@@ -1520,6 +1529,39 @@ const App = () => {
         </thead>
         <tbody>
           {RANKING_PERIODS.map((p, i) => {
+            // 近6年~近15年預設收合:只在第一個長天期區間(近6年)的位置畫一行可以
+            // 點擊展開/收合的按鈕列,取代原本會一次攤開10列、大多數標的卻全是「—」
+            // 的長天期區間。isFirstLongTerm 用「這個是長天期、上一個不是」判斷
+            // 起點,不管目前是展開或收合都要畫這一行按鈕,只是展開時按鈕列下面
+            // 會接著畫出實際的10列資料。
+            const isFirstLongTerm =
+              Boolean(p.longTerm) && !RANKING_PERIODS[i - 1]?.longTerm;
+            const toggleRow = isFirstLongTerm ? (
+              <tr key="long-term-toggle">
+                <td
+                  colSpan={data.rows.length + 1}
+                  className={`px-2 py-1.5 border text-center cursor-pointer select-none ${
+                    isLight
+                      ? 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                  }`}
+                  onClick={() =>
+                    setShowLongTermRankingPeriods((v) => !v)
+                  }
+                >
+                  {showLongTermRankingPeriods
+                    ? '▾ 收合 近6年~近15年'
+                    : '▸ 展開 近6年~近15年(大多數標的沒有這麼長的歷史資料,預設收合)'}
+                </td>
+              </tr>
+            ) : null;
+
+            // 收合狀態下,長天期區間(近6年~近15年)完全不畫資料列,只在第一個
+            // (isFirstLongTerm)畫出上面那行展開按鈕,其餘9列直接跳過(回傳 null)。
+            if (p.longTerm && !showLongTermRankingPeriods) {
+              return toggleRow;
+            }
+
             const periodMaxNetProfit = highlightMaxNetProfit
               ? data.rows.reduce((max, row) => {
                   const v = row.netProfits ? row.netProfits[p.key] : null;
@@ -1531,7 +1573,7 @@ const App = () => {
             // 短天期區間(5日/10日/20日)跟上面依時間長短排列的區間不是同一套時間順序,
             // 在這一列的上緣加一條較粗的虛線分隔,提醒使用者這裡開始是另一組短天期區間。
             const isFirstShortPeriod = Boolean(p.days) && !RANKING_PERIODS[i - 1]?.days;
-            return (
+            const dataRow = (
               <tr
                 key={p.key}
                 className={`${
@@ -1637,6 +1679,12 @@ const App = () => {
                   );
                 })}
               </tr>
+            );
+            return (
+              <React.Fragment key={p.key}>
+                {toggleRow}
+                {dataRow}
+              </React.Fragment>
             );
           })}
         </tbody>
