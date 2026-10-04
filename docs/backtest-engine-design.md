@@ -303,6 +303,8 @@ S = {1..K};  R_total = ∅
 為什麼：Politis 與 White（2004）提出自動估計最佳區塊長度的方法，後由 Patton、Politis、White（2009）修正公式；需要用修正版。
 翻錯：L 太短 → 假陽性（同第 7 點）；L 太長 → 檢定力下降。在實作自動選擇之前，**必須同時報告 L ∈ {10, 20, 60, 250} 的結果**，結論若隨 L 劇烈變動，視為不穩定。
 
+**補充（2026-10-04）**：Python 端可用 `arch.bootstrap.optimal_block_length` 對 `d` 算出區塊長度的**參考值**（回傳欄位名稱與適用的自助法類型動工時再確認），作為 L 敏感度檢查（8.4）的對照。這只是參考值，**不能取代**在 JavaScript 端實作 Politis–White 自動選擇法；在實作完成之前，第 9 點的「同時報告多個 L」仍然有效。
+
 ---
 
 ## 7. 效能實測
@@ -443,10 +445,15 @@ S = {1..K};  R_total = ∅
 - 查詢列（ETF 代號、窗口切換）、今日狀態、門檻掃描圖、檢定結果、我的持股提醒、收合的進階設定。
 - 新分頁的導覽入口是對舊檔案的唯一必要修改（一小段）。
 
-### 10.5 Step 4：用匯出的 0050 CSV 對照 Python
-- 使用者從 app 匯出 0050 還原價 CSV。
-- 以 Python 獨立重算：`d` 的構造 → `arch`（預先標準化）SPA/StepM，與 app 的結果端到端對照。
-- 因為 5.5 說明的驗證範圍限制，這一步同時驗證 `d` 構造與 n≈5200、K=108 的情況。
+### 10.5 Step 4：端到端對照（改為三方對照）
+1. 使用者從 app 匯出 0050 還原價 CSV。
+2. 以 Python 獨立重算：`d` 的構造 → `arch`（預先標準化，做法見附錄 B）→ SPA/StepM。
+3. **新增：第三方對照**。用 canli 的 JS 核心（**僅本機模式**）對**同一張 `d`** 跑一次。
+   - 比較項目：統計量 `T`、各規則的 `t_k`、StepM 選出的集合；p 值只要求在蒙地卡羅誤差內相符（B=20000 時約 ±0.003）。
+   - 比較前先確認**正負號約定**與**變異數估計方式**（解析式或重抽樣），兩者不同會造成小幅差異（第六章第 2 點）。
+   - 它的輸入格式是「每個變異數一欄的報酬矩陣，另可選基準序列」；如何對應我們的 `d`（例如基準給 0）動工時確認。
+4. 三方（我們的實作、`arch`、canli）一致，才算通過；任何不一致都要找出原因，**不可以直接取其中一個**。
+5. 此步驟同時驗證 `d` 的構造，以及 n≈5200、K≈108 的規模（5.5 說明目前只驗證到 n=1200、K=20）。
 
 ### 10.6 Step 5：穩健性檢查（8.4）與調整門檻（第九章暫定值）
 
@@ -472,6 +479,41 @@ S = {1..K};  R_total = ∅
 | Bailey, Borwein, López de Prado & Zhu (2015/2017). The Probability of Backtest Overfitting. *J. Computational Finance* | 指出 hold-out 在投資回測上往往不可靠；提出 PBO 與 CSCV |
 | Harvey, Liu & Zhu (2016). …and the Cross-Section of Expected Returns. *Review of Financial Studies* 29(1), 5–68 | 多重檢定下顯著性門檻應更嚴格（t > 3.0），針對橫斷面因子研究 |
 | `arch` 8.0.0 `arch.bootstrap.multiple_comparison` | SPA/StepM 參考實作（已讀原始碼並實測） |
+
+---
+
+## 12. 現成開源工具與對照計畫
+
+> 調查日期：2026-10-04。只做了幾輪網路搜尋（中文搜尋結果幾乎全是新聞），因此結論只能是「**沒找到**做同一件事的現成專案」，**不等於不存在**。下表的功能描述全部來自專案自己的文件，**我們沒有自己執行或驗證過**，除非另有註明。
+
+### 12.1 結論
+- 沒有找到同時涵蓋「回檔門檻掃描、顯著性檢定、持股提醒、瀏覽器內計算」的現成專案。
+- 找到幾個可當**獨立對照**的統計檢定實作；**決定：不替換現有原型，也不把它們當執行期依賴**，只用於對照驗證。
+
+### 12.2 統計檢定相關
+
+| 專案 | 內容（取自其文件） | 授權 | 用途 |
+|---|---|---|---|
+| `canli-validation-mcp`（npm；原始碼在 github.com/arhancanli/canlicapital 的 `mcp/` 目錄） | 含 Hansen SPA、White RC、Romano–Wolf StepM，JavaScript 實作；設 `CANLI_LOCAL=1` 時在本機計算、不連網；文件稱「在三組固定種子案例上，p 值與 `arch` 8.0 及 Hansen 公式的 numpy 轉寫在蒙地卡羅誤差內相符，StepM 集合與 `arch` 相同」，測試檔為 `js/snooping-core.test.js` | MIT（依其 README） | 第三方對照（JS 對 JS） |
+| `sharpebench-stats`（Rust；另有 npm 套件 `@general-liquidity/sharpebench` 與 Python 套件 `sharpebench`） | 含 White RC、Hansen SPA（liberal / consistent）、Romano–Wolf step-down；亂數需明確給種子，結果可重現 | **未查到**（動工前必須確認） | 備用對照 |
+| `arch`（Python） | `SPA`、`StepM`、`StationaryBootstrap`、`optimal_block_length` | NCSA（**待確認**） | 已用於第五章驗證；另可算區塊長度參考值 |
+
+**限制與注意：**
+- canli 與 sharpebench 都是**新專案、使用者很少**；「與 `arch` 相符」是作者自己的說法，**我們尚未驗證**。
+- canli 另有雲端 API 版本（會傳送數字到其伺服器並產生收據）。**我們不使用雲端版**，資料不離開瀏覽器；對照時只用本機模式。
+- 採用或複製任何外部程式碼前，必須先**確認授權並閱讀原始碼**。
+- canli 的 JS 核心檔實際路徑**待確認**（只知道測試檔名稱）。
+- **安裝前的額外防線**：`canli-validation-mcp` 是全新、使用者極少的套件；即使只打算用本機模式，`npm install` 本身就會執行該套件的程式碼。動工前必須先看過原始碼、確認沒有可疑的 postinstall 腳本或對外連線行為，不能只憑其 README 自稱「本機計算、不連網」就安裝。若無法確認安全，就放棄這個對照、只用 `arch` 與自行推導當依據。
+
+### 12.3 Python 回測框架（僅供參考，不採用）
+vectorbt（Apache 2.0 加 Commons Clause，非一般寬鬆授權）、backtesting.py、bt、ml4t-backtest（MIT）、qtrade（MIT，含滾動式樣本外驗證）。
+**不採用的理由**：它們是為模擬下單設計；我們的績效差矩陣 `d`（3.4）只是簡單向量運算，附加價值小，且都不能在瀏覽器執行。
+若 Step 4 需要獨立確認 `pos` 的時序（3.3），可暫時借用其中之一，**不納入專案依賴**。
+
+### 12.4 來源
+- arch 時間序列自助法文件：bashtage.github.io/arch/bootstrap/timeseries-bootstraps.html
+- canli-validation-mcp：mcpservers.org 上的專案說明頁，及 github.com/arhancanli/canlicapital
+- sharpebench-stats：docs.rs/crate/sharpebench-stats；Python 套件：pypi.org/project/sharpebench
 
 ---
 
