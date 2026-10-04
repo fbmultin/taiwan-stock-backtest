@@ -2712,6 +2712,23 @@ const App = () => {
               ? ((finalMarketValue - totalInvested) / totalInvested) * 100
               : ((finalPrice - initialPrice) / initialPrice) * 100;
 
+          // 年化報酬率(CAGR):把 totalReturnPct 這個「整段期間」的累積報酬,
+          // 換算成「每年固定成長率」的形式,方便不同回測年限的標的互相比較
+          // (例如比較一個回測3年、一個回測10年的總報酬意義不大,年化後才公平)。
+          // 公式: (1 + 總報酬率)^(1/投資年數) - 1。
+          // periodYears 用實際起訖日期算,不是用使用者選的年限參數,因為實際抓到的
+          // 資料範圍可能因為標的上市時間、資料缺漏等原因比設定的年限短。
+          // totalReturnPct <= -100 代表本金全部虧光甚至更多(理論上不該發生,但負的
+          // 底數開次方根會是 NaN,防呆一下),這種情況跟 periodYears 不合理時都顯示 null,
+          // 畫面上會改顯示「—」。
+          const periodYears =
+            (effectiveEndDate - new Date(startData.date)) /
+            (1000 * 60 * 60 * 24 * 365);
+          const cagr =
+            periodYears > 0 && totalReturnPct > -100
+              ? (Math.pow(1 + totalReturnPct / 100, 1 / periodYears) - 1) * 100
+              : null;
+
           const dividendYield = (periodDividends / initialPrice) * 100;
 
           let annualizedDividendYield = 0;
@@ -2856,6 +2873,7 @@ const App = () => {
             recentExDivClosePrice,
             totalReturnPct,
             priceReturnPct,
+            cagr,
             dividendYield,
             annualizedDividendYield,
             trendData,
@@ -4955,6 +4973,22 @@ const App = () => {
                               >
                                 {item.totalReturnPct > 0 ? '+' : ''}
                                 {item.totalReturnPct.toFixed(2)}%
+                              </div>
+                              {/* 總報酬是整段回測期間的「累積」報酬,期間長短不同的標的直接比較
+                                  總報酬並不公平(回測10年跟回測3年,總報酬數字天生就不能比),
+                                  所以在總報酬下方用括弧補一個年化後的 CAGR,換算成「每年固定
+                                  成長率」才能跨不同回測年限互相比較。 */}
+                              <div
+                                className={`text-[13px] font-mono ${textClass.sub}`}
+                                title="年化報酬率(CAGR):把整段回測期間的總報酬,換算成「每年固定成長率」的形式,方便跟回測年限不同的其他標的互相比較"
+                              >
+                                (年化{' '}
+                                {item.cagr !== null
+                                  ? `${item.cagr > 0 ? '+' : ''}${item.cagr.toFixed(
+                                      2
+                                    )}%`
+                                  : '—'}
+                                )
                               </div>
                               <div
                                 className={`text-[14px] font-mono ${
