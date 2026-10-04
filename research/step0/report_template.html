@@ -1,0 +1,129 @@
+<title>Step 0 假陽性驗證</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 版面:單欄實驗報告,結論在最上,圖表依「通過標準 → 細節 → 檢定力 → 序列相關」往下 */
+:root{
+  --bg:#f3f5f7; --paper:#ffffff; --ink:#18212b; --muted:#5b6876; --line:#d9dee4;
+  --accent:#1f5f8b; --ok:#2e7d4f; --ok-bg:#e4f2ea; --warn:#a46a00; --warn-bg:#fbf0d9; --no:#b03a2e; --no-bg:#f8e3e0;
+  --s1:#18212b; --s2:#1f77b4; --s3:#d9822b; --s4:#2ca58d; --s5:#9b59b6;
+  --p1:#9ec5e0; --p2:#3d8fc6; --p3:#123f63;
+  --danger:rgba(176,58,46,.07);
+  --f-display:"Noto Serif TC","Songti TC",serif; --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; --f-data:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161c; --paper:#182029; --ink:#e4e9ee; --muted:#98a5b3; --line:#2b3642;
+  --accent:#6fb0dd; --ok:#6fcf97; --ok-bg:#16301f; --warn:#e7b04a; --warn-bg:#352a12; --no:#ef8a7e; --no-bg:#3a1c19;
+  --s1:#e4e9ee; --s2:#5aa9e6; --s3:#f0a35e; --s4:#4fd1b0; --s5:#c39be0;
+  --p1:#2f5a7a; --p2:#5aa9e6; --p3:#bfe0f7; --danger:rgba(239,138,126,.10); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11161c; --paper:#182029; --ink:#e4e9ee; --muted:#98a5b3; --line:#2b3642;
+  --accent:#6fb0dd; --ok:#6fcf97; --ok-bg:#16301f; --warn:#e7b04a; --warn-bg:#352a12; --no:#ef8a7e; --no-bg:#3a1c19;
+  --s1:#e4e9ee; --s2:#5aa9e6; --s3:#f0a35e; --s4:#4fd1b0; --s5:#c39be0;
+  --p1:#2f5a7a; --p2:#5aa9e6; --p3:#bfe0f7; --danger:rgba(239,138,126,.10); color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.75}
+.wrap{max-width:880px;margin:0 auto;padding-inline:16px;padding-block:28px 64px;display:grid;gap:28px}
+header .eyebrow{font-family:var(--f-data);font-size:13px;letter-spacing:.08em;color:var(--accent)}
+h1{font-family:var(--f-display);font-weight:800;font-size:clamp(28px,5vw,40px);line-height:1.25;margin:4px 0 8px;text-wrap:balance}
+h2{font-family:var(--f-display);font-weight:600;font-size:23px;margin:0 0 8px;text-wrap:balance}
+h3{font-size:17px;margin:12px 0 4px}
+p{margin:0 0 10px;max-width:68ch}
+.lede{color:var(--muted)}
+section{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:20px clamp(16px,3vw,28px);min-width:0}
+.verdict{border-radius:6px;padding:16px 20px}
+.verdict b{font-size:19px;display:block;margin-bottom:4px}
+.verdict.ok{background:var(--ok-bg);color:var(--ok)} .verdict.warn{background:var(--warn-bg);color:var(--warn)} .verdict.no{background:var(--no-bg);color:var(--no)}
+.verdict p{color:var(--ink);margin:0}
+.strip{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px}
+@media (max-width:520px){.strip{grid-template-columns:repeat(3,1fr)}}
+.lcell{border:1px solid var(--line);border-radius:4px;padding:6px 8px;text-align:center;font-family:var(--f-data);font-size:13px}
+.lcell b{display:block;font-family:var(--f-body);font-size:15px}
+.lcell.ok b{color:var(--ok)} .lcell.no b{color:var(--no)}
+.chart{margin:12px 0 0}
+.chart figcaption{font-weight:700;font-size:15px;margin-bottom:4px}
+.chart svg{width:100%;min-width:480px;height:auto;display:block}
+.chart.small svg{min-width:0}
+.hists{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.scroll{overflow-x:auto}
+.grid{stroke:var(--line);stroke-width:1} .axis{stroke:var(--muted);stroke-width:1}
+.tick{fill:var(--muted);font-family:var(--f-data);font-size:11px}
+.limit{stroke:var(--no);stroke-width:1.5;stroke-dasharray:6 4} .lim-t{fill:var(--no);font-size:12px;font-weight:700}
+.nominal{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3} .nom-t{fill:var(--muted);font-size:11px}
+.danger{fill:var(--danger)} .bar{fill:var(--accent);opacity:.75} .band{fill:var(--s2);opacity:.15}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.legend i.dash{background:repeating-linear-gradient(90deg,var(--s1) 0 5px,transparent 5px 9px)}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:500}
+td.num{font-family:var(--f-data);text-align:right} td small{display:block;color:var(--muted);font-size:11px}
+td.bad{color:var(--no);font-weight:500} td.muted{color:var(--muted)}
+tr.hl td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.pill{font-size:12px;padding:1px 8px;border-radius:10px} .pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.no{background:var(--no-bg);color:var(--no)}
+.note{font-size:13px;color:var(--muted)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{color:var(--muted);font-size:14px} dd{margin:0}
+@media (max-width:520px){dl{grid-template-columns:1fr} dd{margin-bottom:6px}}
+code{font-family:var(--f-data);font-size:.9em}
+ul{margin:0 0 10px;padding-left:1.2em;max-width:68ch}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">回檔雷達 · 設計文件 §10.1 · STEP 0</div>
+  <h1>SPA/StepM 在 B′ 上的假陽性率驗證</h1>
+  <p class="lede">問題:把「沒有任何擇時能力」的資料丟進檢定,它會不會冒出「有效」?名目錯誤率是 5%,事先寫死的通過門檻是 <b>≤ 6%</b>。</p>
+</header>
+
+<section>
+  <h2>結論</h2>
+  {{VERDICT}}
+  <div class="strip">{{PASS_STRIP}}</div>
+  <p class="note" style="margin-top:8px">「通過」= 五組虛無資料下,SPA consistent 與 StepM 的拒絕率都 ≤ 6%(判讀方式已於跑模擬前寫入設計文件 10.1.1)。</p>
+  {{INTERP}}
+</section>
+
+<section>
+  <h2>虛無假設下的拒絕率</h2>
+  <p>每個點是一組「沒有擇時資訊」的資料重複 2000 次後,檢定說「有效」的比例。粗黑線是 GARCH 模擬,其他是四檔 ETF 的真實報酬配上循環位移後的持股序列。紅色區域就是不及格。</p>
+  <div class="legend">{{LEGEND}}</div>
+  {{CHART_PC}}
+  {{CHART_STEPM}}
+</section>
+
+<section>
+  <h2>完整數字</h2>
+  <p class="note">L=20 那幾列加了底色。lower / upper 只列出參考,不參與判定。小字是 Wilson 95% 信賴區間。</p>
+  {{NULL_TABLE}}
+</section>
+
+<section>
+  <h2>p 值分布</h2>
+  <p>虛無成立時,p 值應該大致均勻落在 0 到 1(虛線是均勻時每格的期望高度)。最左邊那格偏高,就是假陽性偏多。</p>
+  <div class="hists">{{HISTS}}</div>
+</section>
+
+<section>
+  <h2>檢定力</h2>
+  <p>在 GARCH 路徑上,只要規則「回檔 10%、持有 126 天、252 日窗口」持股,當天報酬就多加一點(年化 5%、10%、20%)。看檢定抓不抓得到。這部分沒有通過門檻,只是讓你知道選 L 的代價。</p>
+  {{POWER_CHART}}
+  {{POWER_TABLE}}
+</section>
+
+<section>
+  <h2>d 的序列相關</h2>
+  <p>設計文件 8.1 的推論是「d 幾乎沒有序列相關,所以 L 不用很長」。下面直接量真實資料的 d。</p>
+  {{ACF_CHART}}
+  {{LB_TABLE}}
+  {{ACF_INTERP}}
+</section>
+
+<section>
+  <h2>這次怎麼跑的</h2>
+  <dl>
+    <dt>規則</dt><dd>回檔 3%–20%(1% 一格)× 持有 63/126/252 天 × 回看 60/252 日 = 108 條;去重後進場 &lt; 5 次的規則剔除</dd>
+    <dt>GARCH 虛無</dt><dd>GJR-GARCH(1,1)、t 分配(自由度約 3.7),參數用 0050 含息日報酬估計,波動水準對齊樣本;n=5200,2000 條路徑</dd>
+    <dt>位移虛無</dt><dd>0050(2003 起)、0056、006208、00692 的真實含息報酬;持股矩陣整體循環位移 252 天以上,各 2000 次</dd>
+    <dt>檢定設定</dt><dd>平穩自助法 B=1000、α=0.05、L ∈ {1, 5, 10, 20, 60, 250};現金固定年化 1%</dd>
+    <dt>程式</dt><dd><code>research/step0/</code>(branch <code>research/step0</code>),核心檢定直接用設計文件附錄 A 的原型</dd>
+  </dl>
+</section>
+</div>

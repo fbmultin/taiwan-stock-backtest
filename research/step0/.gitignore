@@ -1,0 +1,5 @@
+# 逐次模擬輸出與 d 矩陣太大,不進 repo;所有種子固定,用 runall.sh / dump_d.js 可重現
+out/*.jsonl
+out/d/
+out/*.done
+out/run.log
