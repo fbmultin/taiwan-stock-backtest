@@ -5,7 +5,8 @@
        0050 用 total_ret_fixed(修正版);0051、0055、006201 用 total_ret(沒有分割,不受影響);
        另把有誤的 0050 total_ret 也跑一次(0050_bad),只為記錄差異。
   2. 同一條序列交給 app 的純函式(run_app.js,直接載入 main 分支的 src/pullbackStats.js)。
-  3. 這支程式依設計文件 3.2、14.2.2、14.2.4、14.5 的文字定義「從頭重寫」一次,不參考 app 的程式寫法
+  3. 這支程式依設計文件 3.2、14.2.2、14.2.4、14.5 的文字定義「從頭重寫」一次(門檻比較含 1e-9 容許誤差:
+     報酬 > 1e-9 才算上漲、回檔 ≤ −x + 1e-9 算跌到、回檔 ≥ −x/2 − 1e-9 算回到 −x/2 以內),不參考 app 的程式寫法
      (例如滾動最大值這裡用最直接的逐窗掃描,app 用單調佇列),再逐項比對:
        回檔序列、窗口最高價、事件(含去重)、事件群、基準、各格統計、今日狀態。
      容許誤差 1e-9(浮點)。
@@ -21,6 +22,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, '..', 'step0_rerun', 'data')
 OUT = os.path.join(HERE, 'out')
 TOL = 1e-9
+# 門檻比較的浮點容許誤差(設計文件 14.5「上漲」的判定;與 app 的 pullbackStats.EPS 同值、同規則)
+EPS = 1e-9
 
 WINDOWS = [60, 252]
 THRESHOLDS = [5, 7, 10, 15, 20]
@@ -67,9 +70,9 @@ def events(dd, xpct, N):
     for s in range(N, len(dd)):
         if dd[s] is None or dd[s - 1] is None:
             continue
-        if not can_count and dd[s] > -x / 2:
+        if not can_count and dd[s] >= -x / 2 - EPS:  # 回到 −x/2 以內(含邊界)
             can_count = True
-        if can_count and dd[s] <= -x and dd[s - 1] > -x:
+        if can_count and dd[s] <= -x + EPS and dd[s - 1] > -x + EPS:  # 剛好 −x 算跌到
             out.append(s)
             can_count = False
     return out
@@ -85,7 +88,7 @@ def clusters(ev, h):
 
 
 def win(v):
-    return sum(1 for a in v if a > 0) / len(v) if v else None
+    return sum(1 for a in v if a > EPS) / len(v) if v else None  # 報酬 > 1e-9 才算上漲
 
 
 def med(v):
@@ -127,8 +130,8 @@ def state(P, N):
     if dd[t] is None:
         return None
     d = dd[t]
-    reached = [x for x in THRESHOLDS if d <= -x / 100]
-    nxt = next((x for x in THRESHOLDS if d > -x / 100), None)
+    reached = [x for x in THRESHOLDS if d <= -x / 100 + EPS]
+    nxt = next((x for x in THRESHOLDS if d > -x / 100 + EPS), None)
     return {'drawdown': d, 'high': hi[t], 'price': P[t], 'deepestReached': reached[-1] if reached else None,
             'nextThreshold': nxt, 'distanceToNext': None if nxt is None else (1 - nxt / 100) * hi[t] / P[t] - 1}
 
@@ -236,15 +239,18 @@ def main():
         }
     # 管線序列(原始價 + 除息)vs 快照序列(累乘 total_ret_fixed):日報酬一致到 1e-8,
     # 但快照只存 10 位有效數字;真實報酬剛好為 0 的期間(前後收盤價相同、沒有除息),
-    # 兩邊的浮點雜訊正負號可能不同,勝率(報酬 > 0)就會差一天。這裡把這種情況列出來。
+    # 兩邊的浮點雜訊正負號可能不同。改成「報酬 > 1e-9 才算上漲」之後,這些期間兩邊都算持平;
+    # 這裡列出 |報酬| ≤ 1e-9 的期間(near_zero),並確認上漲判定已不再不同(sign_flips 應為空)。
     Pp = app['appPipeline']['0050']['adj']; Ps = series['0050']['adj']; d0050 = series['0050']['dates']
-    flips, cell_gaps = [], []
+    flips, cell_gaps, near_zero = [], [], []
     for N in WINDOWS:
         tp, ts_ = table(Pp, N), table(Ps, N)
         for h in HOLDS:
             for t in range(N, len(Pp) - h):
                 a, b = Pp[t + h] / Pp[t] - 1, Ps[t + h] / Ps[t] - 1
-                if (a > 0) != (b > 0):
+                if abs(a) <= EPS or abs(b) <= EPS:
+                    near_zero.append({'N': N, 'h': h, 'from': d0050[t], 'to': d0050[t + h], 'pipeline': a, 'snapshot': b})
+                if (a > EPS) != (b > EPS):
                     flips.append({'N': N, 'h': h, 'from': d0050[t], 'to': d0050[t + h], 'pipeline': a, 'snapshot': b})
             bp, bs = tp['baselines'][h], ts_['baselines'][h]
             if bp['winRate'] != bs['winRate']:
@@ -255,7 +261,7 @@ def main():
                     cell_gaps.append({'N': N, 'h': cp['h'], 'x': cp['xPct'], 'what': k, 'pipeline': cp[k], 'snapshot': cs[k]})
             if cp['median'] is not None and abs(cp['median'] - cs['median']) > 1e-8:
                 cell_gaps.append({'N': N, 'h': cp['h'], 'x': cp['xPct'], 'what': 'median', 'pipeline': cp['median'], 'snapshot': cs['median']})
-    summary['pipeline_vs_snapshot_0050'] = {'sign_flips': flips, 'stat_gaps': cell_gaps}
+    summary['pipeline_vs_snapshot_0050'] = {'near_zero': near_zero, 'sign_flips': flips, 'stat_gaps': cell_gaps}
     json.dump(summary, open(os.path.join(OUT, 'summary.json'), 'w'), ensure_ascii=False, indent=1)
     write_report(summary)
     total = sum(v[k]['differences'] for v in summary['series'].values() for k in v if k.startswith('N='))
@@ -305,12 +311,12 @@ def write_report(S):
         L.append('')
     V = S['pipeline_vs_snapshot_0050']
     L += ['## 4. 0050:app 資料管線的序列 vs 快照累乘的序列', '',
-          '兩者日報酬一致到 1e-8;但快照的 `total_ret` 只存 10 位有效數字。真實報酬剛好為 0 的期間(前後收盤價相同、期間沒有除息),'
-          '兩邊只剩浮點雜訊(約 1e-16 或 1e-11),正負號可能相反,勝率(報酬 > 0)就差一天。', '',
+          '兩者日報酬一致到 1e-8;但快照的 `total_ret` 只存 10 位有效數字。真實報酬剛好為 0 的期間(前後收盤價相同、期間沒有配息),'
+          '兩邊只剩浮點雜訊(約 1e-16 或 1e-11),正負號可能相反。依 14.5「報酬 > 1e-9 才算上漲」,這些期間兩邊都算持平。', '',
           '| 窗口 | 持有期 | 起 | 迄 | 管線報酬 | 快照報酬 |', '|---|---|---|---|---|---|']
-    for f in V['sign_flips']:
+    for f in V['near_zero']:
         L.append(f"| {f['N']} | {f['h']} | {f['from']} | {f['to']} | {f['pipeline']:.1e} | {f['snapshot']:.1e} |")
-    L += ['', '因此不同的統計量:', '']
+    L += ['', f"上漲判定不同的期間:{len(V['sign_flips'])} 個;因此不同的統計量:", '']
     for g in V['stat_gaps']:
         L.append(f"- 窗口 {g['N']}、持有 {g['h']}" + (f"、−{g['x']}%" if 'x' in g else '') + f":{g['what']} 管線 {g['pipeline']} vs 快照 {g['snapshot']}")
     if not V['stat_gaps']:
