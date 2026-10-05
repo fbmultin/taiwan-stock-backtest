@@ -18,6 +18,21 @@ export const MIN_NEFF = 5; // N_eff < 5 不顯示中位數與勝率(14.2.4、14.
 export const MIN_EXTRA_DAYS = 63; // 總日數 < 窗口 + 63 → 整個表「資料不足」(14.5)
 export const DEFAULT_STOP_PCT = 10; // 停利回落% 預設值(股魚公開範例,14.2.1)
 
+// ── 浮點比較的容許誤差(14.5「上漲」的判定)──
+// 價格在數學上剛好相等的情況其實很常見:台股價格落在跳動單位上,例如窗口最高 56.8、
+// 今天 53.96,數學上剛好是 −5%,但 53.96 / 56.8 − 1 在電腦裡是 −0.04999999999999993,
+// 直接用 ≤ −0.05 比較會判成「還沒跌到」;反過來 95 / 100 − 1 = −0.050000000000000044 又會判成跌到。
+// 同樣地,前後同價、期間沒有配息的報酬只剩 ±1e-16 左右的雜訊,不該被算成上漲。
+// 所以所有「門檻比較」都先容許 1e-9 的誤差:真實資料裡差這麼小的只會是浮點雜訊
+// (含息還原價累乘的誤差約 1e-16 到 1e-11),不可能是真的差異。
+export const EPS = 1e-9;
+// 上漲:報酬 > 1e-9;|報酬| ≤ 1e-9 視為持平(勝率與基準勝率都用這個)
+export const isUp = (r) => r > EPS;
+// 已跌到 −x:回檔 ≤ −x(剛好等於 −x 也算跌到,含 1e-9 誤差)
+export const isAtOrBelow = (d, x) => d <= -x + EPS;
+// 回到 −x/2 以內:回檔 ≥ −x/2(「以內」含邊界,剛好等於 −x/2 也算回到,含 1e-9 誤差)
+export const isBackWithin = (d, half) => d >= -half - EPS;
+
 // ── 回檔序列 ──
 // H_t = 最近 N 天(含當天)的最高價,DD_t = P_t / H_t − 1。
 // 前 N−1 天沒有完整窗口,回傳 null——不能用「目前為止的最高價」代替,
@@ -43,7 +58,7 @@ export function computeDrawdown(prices, N) {
 // ── 事件(首次跌破 −x,含去重)──
 // 事件日 s:DD_s ≤ −x 且前一天 DD_{s−1} > −x(兩天都要有完整窗口,所以 s ≥ N)。
 // 去重(14.2.2 基準):計入一次事件之後進入「未重新武裝」狀態,
-// 要等到某天 DD > −x/2(回到 −x/2 以內)才會重新武裝、下一次跌破才再計入。
+// 要等到某天 DD ≥ −x/2(回到 −x/2 以內,含邊界)才會重新武裝、下一次跌破才再計入。
 // 為什麼要去重:同一波下跌常在門檻附近上下震盪,不去重會把同一段行情算成好幾次。
 export function detectEvents(dd, xPct, N) {
   const x = xPct / 100;
@@ -51,8 +66,8 @@ export function detectEvents(dd, xPct, N) {
   let armed = true;
   for (let s = N; s < dd.length; s++) {
     if (dd[s] === null || dd[s - 1] === null) continue;
-    if (!armed && dd[s] > -x / 2) armed = true;
-    if (armed && dd[s] <= -x && dd[s - 1] > -x) {
+    if (!armed && isBackWithin(dd[s], x / 2)) armed = true;
+    if (armed && isAtOrBelow(dd[s], x) && !isAtOrBelow(dd[s - 1], x)) {
       events.push(s);
       armed = false;
     }
@@ -85,7 +100,7 @@ export function median(values) {
 
 export function winRate(values) {
   if (!values.length) return null;
-  return values.filter((v) => v > 0).length / values.length;
+  return values.filter(isUp).length / values.length;
 }
 
 // 進場 = 事件日收盤;後續報酬 = P_{s+h} / P_s − 1。後續不足 h 天的不計(回傳 null)。
@@ -153,9 +168,9 @@ export function currentState(prices, N) {
   const t = prices.length - 1;
   if (t < 0 || dd[t] === null) return null;
   const d = dd[t];
-  const reached = THRESHOLDS.filter((x) => d <= -x / 100);
+  const reached = THRESHOLDS.filter((x) => isAtOrBelow(d, x / 100));
   const deepestReached = reached.length ? reached[reached.length - 1] : null;
-  const next = THRESHOLDS.find((x) => d > -x / 100) ?? null;
+  const next = THRESHOLDS.find((x) => !isAtOrBelow(d, x / 100)) ?? null;
   const distanceToNext = next === null ? null : ((1 - next / 100) * high[t]) / prices[t] - 1;
   return { drawdown: d, high: high[t], price: prices[t], deepestReached, nextThreshold: next, distanceToNext };
 }
@@ -205,7 +220,7 @@ export function stopStatus(dates, adjPrices, startDate, stopPct) {
   const stop = stopPct / 100;
   return {
     fallFromHigh: fall,
-    belowStop: fall <= -stop,
+    belowStop: isAtOrBelow(fall, stop), // 剛好回落到停利設定也算已低於(含 1e-9 誤差)
     distanceToStop: ((1 - stop) * maxP) / p - 1,
     highDate: dates[adjPrices.indexOf(maxP, i0)],
   };

@@ -12,7 +12,10 @@ import {
   holdingEpisode,
   stopStatus,
   MIN_NEFF,
+  EPS,
+  isUp,
 } from './pullbackStats';
+import { totalReturnIndex } from './pullbackData';
 
 const close = (a, b) => expect(a).toBeCloseTo(b, 10);
 
@@ -239,5 +242,61 @@ describe('stopStatus', () => {
     const b = stopStatus(dates, adj, '2024-01-05', 10);
     close(a.fallFromHigh, 105 / 130 - 1);
     close(b.fallFromHigh, 105 / 110 - 1);
+  });
+});
+
+describe('浮點容許誤差(EPS = 1e-9)', () => {
+  test('上漲的判定:報酬 > 1e-9 才算;|報酬| ≤ 1e-9 視為持平;剛好貼近門檻', () => {
+    expect(EPS).toBe(1e-9);
+    // 0、±浮點雜訊、剛好 ±1e-9 → 都不算上漲;1.5e-9、2e-9 → 上漲
+    const v = [0, 2.2e-16, -2.2e-16, 1e-9, -1e-9, 1.5e-9, 2e-9];
+    expect(v.map(isUp)).toEqual([false, false, false, false, false, true, true]);
+    close(winRate(v), 2 / 7);
+  });
+
+  test('價格完全不變的期間:還原價的浮點雜訊不會被算成上漲(勝率與基準勝率)', () => {
+    // 27.6875 → … → 27.6875,期間沒有配息;真實報酬是 0,但累乘後剩 +2.2e-16 的雜訊
+    const adj = totalReturnIndex([27.6875, 28.1, 27.3, 27.6875], [0, 0, 0, 0]);
+    const r = adj[3] / adj[0] - 1;
+    expect(r).not.toBe(0); // 前提:確實有雜訊
+    expect(Math.abs(r)).toBeLessThan(1e-12);
+    expect(winRate([r])).toBe(0);
+    // 基準勝率:N=0、h=3,只有 t=0 一天可算
+    expect(baselineStats(adj, 0, 3)).toMatchObject({ n: 1, winRate: 0 });
+  });
+
+  test('前後同價但期間有配息:含息報酬為正 → 算上漲', () => {
+    // 10 → 10.2 → 除息 0.5 元後收 9.8 → 10;含息報酬 = (10.2/10)·((9.8+0.5)/10.2)·(10/9.8) − 1 ≈ +5.1%
+    const adj = totalReturnIndex([10, 10.2, 9.8, 10], [0, 0, 0.5, 0]);
+    const r = adj[3] / adj[0] - 1;
+    close(r, 10.3 / 9.8 - 1);
+    expect(isUp(r)).toBe(true);
+    expect(baselineStats(adj, 0, 3).winRate).toBe(1);
+  });
+
+  test('回檔剛好等於 −x(價格落在跳動單位上):一律算跌到,不受浮點誤差左右', () => {
+    // 53.96 / 56.8 − 1 在電腦裡是 −0.04999999999999993(比 −5% 淺一點點)
+    // 44.84 / 47.2 − 1 同樣;95 / 100 − 1 則是 −0.050000000000000044(比 −5% 深一點點)
+    for (const [H, P] of [[56.8, 53.96], [47.2, 44.84], [100, 95]]) {
+      const { dd } = computeDrawdown([H, H, P], 2);
+      expect(detectEvents(dd, 5, 2)).toEqual([2]);
+      expect(currentState([H, H, P], 2).deepestReached).toBe(5);
+    }
+  });
+
+  test('回檔剛好回到 −x/2:算「回到 −x/2 以內」,可再次計入', () => {
+    // −5% 檔位:跌到 −5% → 回到剛好 −2.5%(55.38/56.8−1 = −0.02499999999999991;
+    // 32.37/33.2−1 = −0.025000000000000133,兩種方向的雜訊都要判成回到)→ 再跌到 −5% → 第二個事件
+    for (const [H, half, low] of [[56.8, 55.38, 53.96], [33.2, 32.37, 31.54]]) {
+      const p = [H, H, H, H, H, low, half, low]; // 窗口 5 日,最高價一直是 H
+      const { dd } = computeDrawdown(p, 5);
+      expect(detectEvents(dd, 5, 5)).toEqual([5, 7]);
+    }
+  });
+
+  test('停利:剛好回落到停利設定也算「已低於停利設定」', () => {
+    // 最高 56.8,現價 51.12 = 56.8 × 0.9;51.12/56.8 − 1 在電腦裡比 −10% 淺一點點
+    const s = stopStatus(['2024-01-02', '2024-01-03'], [56.8, 51.12], '2024-01-02', 10);
+    expect(s.belowStop).toBe(true);
   });
 });
