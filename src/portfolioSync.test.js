@@ -52,3 +52,22 @@ test('同步紀錄存取', () => {
   localStorage.setItem(SYNC_META_KEY, '{bad');
   expect(loadSyncMeta(localStorage)).toBeNull();
 });
+
+describe('備份與還原', () => {
+  const { makeBackupFile, parseBackupFile, summarizeBackup, maybeSaveAutoBackup, loadAutoBackup } = require('./portfolioSync');
+  test('備份檔來回轉換;也接受直接是持股資料的 JSON', () => {
+    const d = data([tx('a'), tx('b', 'g1', { date: '2026-10-06', symbol: '3026' })]);
+    expect(parseBackupFile(makeBackupFile(d))).toEqual(d);
+    expect(parseBackupFile(JSON.stringify(d))).toEqual(d);
+    expect(summarizeBackup(d)).toEqual({ txCount: 2, groupCount: 1, symbolCount: 2, lastDate: '2026-10-06' });
+    expect(() => parseBackupFile('{oops')).toThrow('不是有效的 JSON');
+    expect(() => parseBackupFile('{"a":1}')).toThrow('找不到持股資料');
+  });
+  test('自動備份:每天一份,空白資料不會蓋掉前一份好的備份', () => {
+    localStorage.clear();
+    expect(maybeSaveAutoBackup(localStorage, data([tx('a')]), '2026-10-05')).toBe(true);
+    expect(maybeSaveAutoBackup(localStorage, data([tx('a'), tx('b')]), '2026-10-05')).toBe(false);
+    expect(maybeSaveAutoBackup(localStorage, data([]), '2026-10-06')).toBe(false);
+    expect(loadAutoBackup(localStorage).data.transactions.map((t) => t.id)).toEqual(['a']);
+  });
+});

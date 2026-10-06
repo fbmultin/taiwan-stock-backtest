@@ -106,3 +106,69 @@ export function mergeForSync({ local, remote, meta, uid }) {
   };
   return { data, needsUpload: addedTx.length > 0 || addedGroups.length > 0, addedTxCount: addedTx.length };
 }
+
+// ---------- 備份與還原 ----------
+//
+// 2026-10 事故之後加的安全網:同步出錯時,資料至少還有一份可以手動還原。
+//   1. 「下載備份檔」:整份資料存成 JSON 檔,存在使用者自己的電腦/手機裡。
+//   2. 「自動備份」:這台裝置每天第一次開啟、而且有交易時,在 localStorage 另存一份
+//      (portfolio_auto_backup_v1)。同步把資料清空時,這份不會被動到。
+//   3. 「從備份還原」:讀進備份檔或自動備份,取代目前資料並同步到雲端。
+
+export const AUTO_BACKUP_KEY = 'portfolio_auto_backup_v1';
+export const BACKUP_FORMAT = 'taiwan-stock-backtest/portfolio-backup';
+
+export function makeBackupFile(data) {
+  return JSON.stringify({ format: BACKUP_FORMAT, version: 1, exportedAt: new Date().toISOString(), data }, null, 1);
+}
+
+// 接受兩種格式:本 App 下載的備份檔,或直接是持股資料本身(例如從瀏覽器資料庫救回來的那份)。
+// 不是有效的持股資料就丟出錯誤,讓畫面顯示原因。
+export function parseBackupFile(text) {
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch (e) {
+    throw new Error('檔案不是有效的 JSON');
+  }
+  const data = obj && obj.format === BACKUP_FORMAT ? obj.data : obj;
+  if (!data || !Array.isArray(data.transactions) || !Array.isArray(data.groups)) {
+    throw new Error('檔案裡找不到持股資料(交易紀錄/群組)');
+  }
+  return data;
+}
+
+export function summarizeBackup(data) {
+  const tx = (data && data.transactions) || [];
+  const dates = tx.map((t) => t.date).filter(Boolean).sort();
+  return {
+    txCount: tx.length,
+    groupCount: ((data && data.groups) || []).length,
+    symbolCount: new Set(tx.map((t) => t.symbol)).size,
+    lastDate: dates.length ? dates[dates.length - 1] : null,
+  };
+}
+
+export function loadAutoBackup(storage) {
+  try {
+    const raw = storage && storage.getItem(AUTO_BACKUP_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return v && v.data && Array.isArray(v.data.transactions) ? v : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 每天最多存一次;沒有交易的空白資料不存(不能讓空白蓋掉前一份好的備份)
+export function maybeSaveAutoBackup(storage, data, today) {
+  const tx = (data && data.transactions) || [];
+  if (tx.length === 0) return false;
+  const prev = loadAutoBackup(storage);
+  if (prev && prev.date === today) return false;
+  try {
+    storage.setItem(AUTO_BACKUP_KEY, JSON.stringify({ date: today, savedAt: new Date().toISOString(), data }));
+    return true;
+  } catch (e) {
+    return false; // 空間不足:放棄,不影響使用
+  }
+}

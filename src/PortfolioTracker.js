@@ -19,8 +19,18 @@ import {
   RefreshCw,
   Cloud,
   CloudOff,
+  Archive,
 } from 'lucide-react';
-import { mergeForSync, loadSyncMeta, saveSyncMeta } from './portfolioSync';
+import {
+  mergeForSync,
+  loadSyncMeta,
+  saveSyncMeta,
+  makeBackupFile,
+  parseBackupFile,
+  summarizeBackup,
+  loadAutoBackup,
+  maybeSaveAutoBackup,
+} from './portfolioSync';
 import {
   onAuthStateChanged,
   signInWithCredential,
@@ -1232,6 +1242,104 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
   );
 }
 
+// ============== 備份與還原 ==============
+// 為什麼要有:2026-10 同步出錯把雲端與各裝置的資料都清空過一次,最後是從瀏覽器的資料庫
+// 檔案裡把舊資料挖回來的。有了「下載備份檔」與「從備份還原」,之後就不用靠運氣。
+export function BackupSheet({ isLight, data, onClose, onRestore }) {
+  const [pending, setPending] = useState(null); // { data, summary, source }
+  const [error, setError] = useState('');
+  const auto = useMemo(() => loadAutoBackup(window.localStorage), []);
+  const current = summarizeBackup(data);
+
+  const download = () => {
+    const blob = new Blob([makeBackupFile(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `持股備份-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const pickFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = parseBackupFile(String(reader.result || ''));
+        setPending({ data: d, summary: summarizeBackup(d), source: file.name });
+        setError('');
+      } catch (err) {
+        setPending(null);
+        setError(err.message);
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+  const row = `w-full flex items-center gap-3 px-5 py-3.5 text-left ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-700'}`;
+  return (
+    <div className="fixed inset-0 z-[75] flex items-end justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div
+        data-testid="backup-sheet"
+        className={`relative w-full sm:max-w-md rounded-t-2xl pb-6 pt-2 ${isLight ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+      >
+        <div className="w-10 h-1 rounded-full bg-slate-500/40 mx-auto my-2" />
+        <div className="px-5 pb-2 font-bold">備份與還原</div>
+        <div className="px-5 pb-2 text-xs opacity-60">
+          目前:{current.txCount} 筆交易、{current.groupCount} 個群組
+        </div>
+        <button onClick={download} className={row}>
+          <Archive className="w-4 h-4" />
+          <span>下載備份檔(JSON)</span>
+        </button>
+        <label className={`${row} cursor-pointer`}>
+          <Upload className="w-4 h-4" />
+          <span>從備份檔還原…</span>
+          <input type="file" accept=".json,application/json" className="hidden" onChange={pickFile} data-testid="backup-file" />
+        </label>
+        {auto && (
+          <button
+            onClick={() => setPending({ data: auto.data, summary: summarizeBackup(auto.data), source: `這台裝置 ${auto.date} 的自動備份` })}
+            className={row}
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>還原這台裝置的自動備份({auto.date},{summarizeBackup(auto.data).txCount} 筆)</span>
+          </button>
+        )}
+        {error && <div className="px-5 py-2 text-sm text-red-500">{error}</div>}
+        {pending && (
+          <div className={`mx-4 mt-2 rounded-xl px-3 py-3 text-sm ${isLight ? 'bg-amber-50' : 'bg-amber-900/40'}`}>
+            <div className="font-bold mb-1">{pending.source}</div>
+            <div>
+              {pending.summary.txCount} 筆交易、{pending.summary.symbolCount} 檔、{pending.summary.groupCount} 個群組
+              {pending.summary.lastDate ? `,最後交易日 ${pending.summary.lastDate}` : ''}
+            </div>
+            <div className="text-xs opacity-70 mt-1">還原會取代目前的資料,並同步到雲端與其他裝置。</div>
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => {
+                  onRestore(pending.data);
+                  onClose();
+                }}
+                className="flex-1 py-2 rounded-lg bg-amber-500 text-white font-bold"
+              >
+                確定還原
+              </button>
+              <button onClick={() => setPending(null)} className="flex-1 py-2 rounded-lg border border-slate-400/50">
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============== 交易操作選單(編輯/移動/刪除) ==============
 
 function TxActionSheet({ isLight, tx, onClose, onEdit, onMove, onDelete }) {
@@ -1742,6 +1850,7 @@ function HoldingsListView({
   sync = { status: 'off' },
   onRetrySync = () => {},
   onDismissRestored = () => {},
+  onOpenBackup = () => {},
 }) {
   const displayedHoldings = holdings;
   const syncLoading = sync.status === 'loading';
@@ -1788,6 +1897,14 @@ function HoldingsListView({
             title="CSV 匯入交易"
           >
             <Upload className="w-5 h-5 opacity-70" />
+          </button>
+          <button
+            onClick={onOpenBackup}
+            className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
+            title="備份與還原"
+            aria-label="備份與還原"
+          >
+            <Archive className="w-5 h-5 opacity-70" />
           </button>
           {userEmail && (
             <button
@@ -2852,6 +2969,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [groupEditor, setGroupEditor] = useState(null); // { group, isNew } | null
   const [showAddTx, setShowAddTx] = useState(false);
   const [showImportCsv, setShowImportCsv] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
   const [addTxSymbol, setAddTxSymbol] = useState(null);
   const [editingTx, setEditingTx] = useState(null);
   const [actionTx, setActionTx] = useState(null);
@@ -2891,6 +3009,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 
   useEffect(() => {
     savePortfolioData(data); // 本機快取:離線、或雲端同步還沒跑完時也能馬上讀寫
+    maybeSaveAutoBackup(window.localStorage, data, new Date().toISOString().slice(0, 10)); // 每天一份,空白資料不存
     if (!uid || !syncReadyRef.current) return; // 還沒讀過雲端:先不上傳
     if (JSON.stringify(JSON.parse(JSON.stringify(data))) === remoteJsonRef.current) return; // 跟雲端一樣
     uploadNow(data);
@@ -3319,6 +3438,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           sync={sync}
           onRetrySync={() => setSyncAttempt((n) => n + 1)}
           onDismissRestored={() => setSync((st) => ({ ...st, restoredCount: 0 }))}
+          onOpenBackup={() => setShowBackup(true)}
         />
       )}
 
@@ -3458,6 +3578,14 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
         />
       )}
 
+      {showBackup && (
+        <BackupSheet
+          isLight={isLight}
+          data={data}
+          onClose={() => setShowBackup(false)}
+          onRestore={(backup) => setData(normalizePortfolioData(backup))}
+        />
+      )}
       {showImportCsv && (
         <ImportCsvModal
           isLight={isLight}

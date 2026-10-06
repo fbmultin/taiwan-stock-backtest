@@ -101,3 +101,25 @@ test('舊裝置本機有、雲端被清空:把本機交易補回雲端並提示'
   expect(el.textContent).toContain('1 筆雲端沒有的交易補上傳');
   await unmount();
 });
+
+test('從備份還原:取代目前資料,已同步時上傳到雲端', async () => {
+  store.fetchRemoteDataOnce.mockImplementation(() =>
+    Promise.resolve({ version: 1, groups: [{ id: 'gx', name: '我的持股' }], tags: [], transactions: [], activeGroupId: 'gx' })
+  );
+  const { el, unmount } = await render();
+  await wait(10);
+  await act(async () => { el.querySelector('button[aria-label="備份與還原"]').click(); });
+  const input = el.querySelector('[data-testid="backup-file"]');
+  const file = new File([JSON.stringify(cloud)], 'backup.json', { type: 'application/json' });
+  Object.defineProperty(input, 'files', { value: [file] });
+  await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+  await wait(50);
+  expect(el.querySelector('[data-testid="backup-sheet"]').textContent).toContain('1 筆交易');
+  const ok = Array.from(el.querySelectorAll('button')).find((b) => b.textContent === '確定還原');
+  await act(async () => { ok.click(); });
+  await wait(10);
+  expect(el.textContent).toContain('2330');
+  const last = store.saveRemoteData.mock.calls[store.saveRemoteData.mock.calls.length - 1];
+  expect(last[1].transactions.map((t) => t.id)).toEqual(['t1']);
+  await unmount();
+});
