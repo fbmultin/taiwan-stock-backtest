@@ -123,3 +123,30 @@ test('從備份還原:取代目前資料,已同步時上傳到雲端', async () 
   expect(last[1].transactions.map((t) => t.id)).toEqual(['t1']);
   await unmount();
 });
+
+test('第二次事故重現:電腦已同步,手機舊版程式把空白資料寫上雲端 → 電腦不跟著清空,並把資料補回雲端', async () => {
+  const { stampForUpload } = jest.requireActual('./portfolioSync');
+  const many = Array.from({ length: 30 }, (_, i) => ({ ...cloud.transactions[0], id: `t${i}` }));
+  const full = { ...cloud, transactions: many };
+  localStorage.setItem('portfolio_tracker_v1', JSON.stringify(full));
+  let pushSnapshot;
+  store.subscribeRemoteData.mockImplementation((uid, onData) => {
+    pushSnapshot = onData;
+    return () => {};
+  });
+  store.fetchRemoteDataOnce.mockImplementation(() => Promise.resolve(stampForUpload(full, 'pc')));
+  const { el, unmount } = await render();
+  await wait(10);
+  expect(store.saveRemoteData).not.toHaveBeenCalled(); // 跟雲端一致,不用上傳
+  // 手機舊版程式寫入:沒有 _sync 蓋章的空白資料
+  await act(async () => {
+    pushSnapshot({ version: 1, groups: [{ id: 'gx', name: '我的持股' }], tags: [], transactions: [], activeGroupId: 'gx' }, {});
+  });
+  await wait(1000);
+  expect(el.textContent).toContain('2330'); // 電腦畫面資料還在
+  expect(el.querySelector('[data-testid="sync-blocked"]').textContent).toContain('少了 30 筆');
+  const last = store.saveRemoteData.mock.calls[store.saveRemoteData.mock.calls.length - 1];
+  expect(last[1].transactions).toHaveLength(30); // 補回雲端
+  expect(last[1]._sync.schema).toBe(2);
+  await unmount();
+});

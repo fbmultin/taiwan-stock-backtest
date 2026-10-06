@@ -54,11 +54,32 @@ export function saveSyncMeta(storage, uid, data) {
 //   meta:上次同步紀錄(loadSyncMeta 的結果,可能是 null)
 //   uid:目前登入的帳號
 // 回傳 { data, needsUpload, addedTxCount }
-export function mergeForSync({ local, remote, meta, uid }) {
+// ---------- 第二次事故(2026-10)後加的兩道保險 ----------
+// 情境:電腦從備份還原成功後,手機打開——手機上跑的還是瀏覽器快取裡的「舊版程式」(PWA 要等
+// 新版下載完才會換),舊版照樣把空白資料上傳蓋掉雲端;電腦收到後,三方合併判斷「這些交易
+// 上次同步時雲端都有、現在沒了 → 別台裝置刪的」,於是跟著全刪。
+//   1. 寫入時蓋章(_sync.schema = 2)。沒有章的雲端資料一定是舊版程式寫的,不可信:
+//      它少掉的交易不當成刪除,這台照樣保留並重新上傳(自動把雲端補回來)。
+//   2. 大量刪除保護:就算是新版寫的,一次少掉「5 筆以上而且超過本機三成」的交易,
+//      也不自動刪除,先保留並提示使用者,由使用者決定要不要接受雲端版本。
+export const SYNC_SCHEMA = 2;
+export const isTrustedRemote = (raw) => Boolean(raw && raw._sync && raw._sync.schema >= SYNC_SCHEMA);
+export function stampForUpload(data, deviceId) {
+  return { ...data, _sync: { schema: SYNC_SCHEMA, writer: deviceId || '', at: new Date().toISOString() } };
+}
+export const isMassDeletion = (deleted, localCount) => deleted >= 5 && deleted > localCount * 0.3;
+
+// 上傳前檢查:這次上傳會讓雲端少掉一大批交易嗎?(防止任何程式錯誤把雲端清空)
+export function isSuspiciousShrink(lastRemoteTxCount, nextTxCount) {
+  const lost = (lastRemoteTxCount || 0) - (nextTxCount || 0);
+  return isMassDeletion(lost, lastRemoteTxCount || 0);
+}
+
+export function mergeForSync({ local, remote, meta, uid, trustDeletions = true }) {
   const localTx = (local && local.transactions) || [];
   if (!remote) {
     // 雲端還沒有資料:本機有交易才上傳(不要把一份空白預設資料當成正本推上去)
-    return { data: local, needsUpload: localTx.length > 0, addedTxCount: 0 };
+    return { data: local, needsUpload: localTx.length > 0, addedTxCount: 0, blockedDeletions: 0 };
   }
   const remoteGroups = Array.isArray(remote.groups) ? remote.groups : [];
   const remoteTx = Array.isArray(remote.transactions) ? remote.transactions : [];
@@ -66,11 +87,21 @@ export function mergeForSync({ local, remote, meta, uid }) {
 
   // 同步紀錄屬於別的帳號(在這台裝置換了帳號登入):本機那份是別人的資料,不能併進這個帳號
   if (meta && meta.uid && meta.uid !== uid) {
-    return { data: { ...remote, groups: remoteGroups, transactions: remoteTx, tags: remoteTags }, needsUpload: false, addedTxCount: 0 };
+    return {
+      data: { ...remote, groups: remoteGroups, transactions: remoteTx, tags: remoteTags },
+      needsUpload: false,
+      addedTxCount: 0,
+      blockedDeletions: 0,
+    };
   }
   const syncedTx = new Set((meta && meta.txIds) || []);
   const remoteTxIds = ids(remoteTx);
-  const addedTx = localTx.filter((t) => t && t.id && !remoteTxIds.has(t.id) && !syncedTx.has(t.id));
+  const missing = localTx.filter((t) => t && t.id && !remoteTxIds.has(t.id));
+  // 「上次同步時雲端有、現在沒有」= 看起來是別處刪掉的
+  const deletedElsewhere = missing.filter((t) => syncedTx.has(t.id));
+  // 不可信的雲端(舊版程式寫的),或一次刪太多:不刪,當成這台要補回去的
+  const blockedDeletions = !trustDeletions || isMassDeletion(deletedElsewhere.length, localTx.length) ? deletedElsewhere.length : 0;
+  const addedTx = blockedDeletions > 0 ? missing : missing.filter((t) => !syncedTx.has(t.id));
 
   // 補進來的交易所屬的群組/標籤,雲端沒有就一起帶過去(只帶有用到的,避免每台新裝置
   // 開出來的那個空白預設群組也被塞進雲端)
@@ -104,7 +135,12 @@ export function mergeForSync({ local, remote, meta, uid }) {
     transactions: remoteTx.concat(addedTx),
     activeGroupId,
   };
-  return { data, needsUpload: addedTx.length > 0 || addedGroups.length > 0, addedTxCount: addedTx.length };
+  return {
+    data,
+    needsUpload: addedTx.length > 0 || addedGroups.length > 0,
+    addedTxCount: addedTx.length - blockedDeletions,
+    blockedDeletions,
+  };
 }
 
 // ---------- 備份與還原 ----------
@@ -170,5 +206,19 @@ export function maybeSaveAutoBackup(storage, data, today) {
     return true;
   } catch (e) {
     return false; // 空間不足:放棄,不影響使用
+  }
+}
+
+// 這台裝置的識別碼(寫進 _sync.writer,方便日後追查是哪台裝置寫的)
+export function getDeviceId(storage) {
+  try {
+    let id = storage.getItem('portfolio_device_id');
+    if (!id) {
+      id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      storage.setItem('portfolio_device_id', id);
+    }
+    return id;
+  } catch (e) {
+    return '';
   }
 }

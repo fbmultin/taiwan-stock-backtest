@@ -71,3 +71,35 @@ describe('備份與還原', () => {
     expect(loadAutoBackup(localStorage).data.transactions.map((t) => t.id)).toEqual(['a']);
   });
 });
+
+describe('第二次事故:舊版程式把空白資料寫上雲端', () => {
+  const { isTrustedRemote, stampForUpload, isSuspiciousShrink } = require('./portfolioSync');
+  const many = Array.from({ length: 20 }, (_, i) => tx(`t${i}`));
+  const meta = { uid: 'u', txIds: many.map((t) => t.id) };
+
+  test('沒有新版蓋章的雲端資料不可信:少掉的交易不刪,全部補回', () => {
+    const legacyEmpty = data([], [g('phone')]);
+    expect(isTrustedRemote(legacyEmpty)).toBe(false);
+    const r = mergeForSync({ local: data(many), remote: legacyEmpty, meta, uid: 'u', trustDeletions: false });
+    expect(r.data.transactions).toHaveLength(20);
+    expect(r.needsUpload).toBe(true);
+    expect(r.blockedDeletions).toBe(20);
+  });
+
+  test('就算是新版寫的,一次少掉一大批也不自動刪;少量刪除照常同步', () => {
+    const trusted = stampForUpload(data(many.slice(0, 3)), 'd');
+    expect(isTrustedRemote(trusted)).toBe(true);
+    const big = mergeForSync({ local: data(many), remote: data(many.slice(0, 3)), meta, uid: 'u', trustDeletions: true });
+    expect(big.data.transactions).toHaveLength(20);
+    expect(big.blockedDeletions).toBe(17);
+    const small = mergeForSync({ local: data(many), remote: data(many.slice(0, 18)), meta, uid: 'u', trustDeletions: true });
+    expect(small.data.transactions).toHaveLength(18);
+    expect(small.blockedDeletions).toBe(0);
+  });
+
+  test('上傳前檢查:一次少掉一大批視為可疑;刪一兩筆不算', () => {
+    expect(isSuspiciousShrink(348, 0)).toBe(true);
+    expect(isSuspiciousShrink(348, 347)).toBe(false);
+    expect(isSuspiciousShrink(3, 0)).toBe(false); // 筆數很少時不擋
+  });
+});

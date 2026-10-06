@@ -30,6 +30,10 @@ import {
   summarizeBackup,
   loadAutoBackup,
   maybeSaveAutoBackup,
+  isTrustedRemote,
+  stampForUpload,
+  isSuspiciousShrink,
+  getDeviceId,
 } from './portfolioSync';
 import {
   onAuthStateChanged,
@@ -1851,6 +1855,9 @@ function HoldingsListView({
   onRetrySync = () => {},
   onDismissRestored = () => {},
   onOpenBackup = () => {},
+  onDismissBlocked = () => {},
+  onAcceptRemote = () => {},
+  onForceUpload = () => {},
 }) {
   const displayedHoldings = holdings;
   const syncLoading = sync.status === 'loading';
@@ -1945,11 +1952,35 @@ function HoldingsListView({
           <span className="flex-1">
             {sync.error === 'save'
               ? '變更還沒上傳到雲端(網路不穩?),已先存在這台裝置。'
+              : sync.error === 'shrink'
+              ? `這次變更會讓雲端少掉 ${sync.shrinkCount} 筆交易,為了安全先沒有上傳。確定是你要的,再按「仍要上傳」。`
               : '無法連線雲端,目前顯示這台裝置上的資料;連上之前,變更只會存在這台裝置。'}
           </span>
-          <button onClick={onRetrySync} className="shrink-0 px-2 py-1 rounded-lg font-bold bg-amber-500 text-white">
-            重試
+          <button
+            onClick={sync.error === 'shrink' ? onForceUpload : onRetrySync}
+            className="shrink-0 px-2 py-1 rounded-lg font-bold bg-amber-500 text-white"
+          >
+            {sync.error === 'shrink' ? '仍要上傳' : '重試'}
           </button>
+        </div>
+      )}
+      {sync.blocked && sync.blocked.count > 0 && (
+        <div
+          data-testid="sync-blocked"
+          className={`mx-4 mt-3 rounded-xl px-3 py-2 text-sm ${isLight ? 'bg-amber-50 text-amber-800' : 'bg-amber-900/40 text-amber-200'}`}
+        >
+          <div>
+            雲端資料少了 {sync.blocked.count} 筆交易(可能是其他裝置還在用舊版程式,或同步出錯),
+            已保留這台裝置的資料並重新上傳到雲端。
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button onClick={onDismissBlocked} className="flex-1 py-1.5 rounded-lg bg-amber-500 text-white font-bold">
+              保留這台的資料
+            </button>
+            <button onClick={onAcceptRemote} className="flex-1 py-1.5 rounded-lg border border-amber-500/60">
+              改用雲端版本(刪除這 {sync.blocked.count} 筆)
+            </button>
+          </div>
         </div>
       )}
       {sync.restoredCount > 0 && (
@@ -2994,13 +3025,29 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   // 最後一次「確定跟雲端一致」的內容(JSON),本機資料跟它一樣就不用再上傳
   const remoteJsonRef = useRef(null);
 
+  // 雲端目前有幾筆交易(上傳前檢查「會不會一次少掉一大批」用);
+  // allowShrinkRef:使用者明確要求的大量減少(從備份還原、改用雲端版本、按「仍要上傳」)才放行
+  const lastRemoteTxCountRef = useRef(0);
+  const allowShrinkRef = useRef(false);
+  const deviceIdRef = useRef(null);
+  if (deviceIdRef.current === null) deviceIdRef.current = getDeviceId(window.localStorage);
+
   const markSynced = (savedData) => {
-    remoteJsonRef.current = JSON.stringify(savedData);
-    saveSyncMeta(window.localStorage, uid, savedData);
-    setSync((s) => ({ ...s, status: 'synced', lastSyncedAt: new Date(), error: null }));
+    const clean = normalizePortfolioData(savedData);
+    remoteJsonRef.current = JSON.stringify(clean);
+    lastRemoteTxCountRef.current = clean.transactions.length;
+    allowShrinkRef.current = false;
+    saveSyncMeta(window.localStorage, uid, clean);
+    setSync((s) => ({ ...s, status: 'synced', lastSyncedAt: new Date(), error: null, shrinkCount: 0 }));
   };
   const uploadNow = (d, { immediate = false } = {}) => {
-    saveRemoteData(uid, d, {
+    const nextCount = ((d && d.transactions) || []).length;
+    if (!allowShrinkRef.current && isSuspiciousShrink(lastRemoteTxCountRef.current, nextCount)) {
+      // 一次少掉一大批交易:很可能是程式出錯(例如空白資料),先不上傳,請使用者確認
+      setSync((s) => ({ ...s, status: 'error', error: 'shrink', shrinkCount: lastRemoteTxCountRef.current - nextCount }));
+      return;
+    }
+    saveRemoteData(uid, stampForUpload(d, deviceIdRef.current), {
       immediate,
       onSaved: (payload) => markSynced(payload),
       onError: () => setSync((s) => ({ ...s, status: 'error', error: 'save' })),
@@ -3030,16 +3077,24 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
     // 收到雲端資料(第一次讀取、或之後別台裝置改了)時的共同處理
     const applyRemote = (rawRemote) => {
       const remote = rawRemote ? normalizePortfolioData(rawRemote) : null;
-      const { data: merged, needsUpload, addedTxCount } = mergeForSync({
+      const { data: merged, needsUpload, addedTxCount, blockedDeletions } = mergeForSync({
         local: dataRef.current,
         remote,
         meta: loadSyncMeta(window.localStorage),
         uid,
+        // 沒有新版蓋章的雲端資料(舊版程式寫的)不可信:它少掉的交易不當成刪除
+        trustDeletions: isTrustedRemote(rawRemote),
       });
       if (remote) {
         remoteJsonRef.current = JSON.stringify(remote);
-        // 記下「雲端此刻有哪些交易」;本機補上去的那些等上傳成功後(markSynced)才記
-        saveSyncMeta(window.localStorage, uid, remote);
+        lastRemoteTxCountRef.current = remote.transactions.length;
+        // 記下「雲端此刻有哪些交易」;本機補上去的那些等上傳成功後(markSynced)才記。
+        // 擋下刪除時不更新:那些交易還要當成「已同步過」,使用者選「改用雲端版本」才真的刪
+        if (!blockedDeletions) saveSyncMeta(window.localStorage, uid, remote);
+      }
+      if (blockedDeletions > 0) {
+        setSync((s) => ({ ...s, blocked: { count: blockedDeletions, remote } }));
+        // 補回雲端屬於「把雲端恢復成原本的樣子」,不受大量減少檢查限制(這裡只會變多)
       }
       setData((prev) => (JSON.stringify(prev) === JSON.stringify(merged) ? prev : merged));
       return { merged, needsUpload, addedTxCount };
@@ -3439,6 +3494,19 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onRetrySync={() => setSyncAttempt((n) => n + 1)}
           onDismissRestored={() => setSync((st) => ({ ...st, restoredCount: 0 }))}
           onOpenBackup={() => setShowBackup(true)}
+          onDismissBlocked={() => setSync((st) => ({ ...st, blocked: null }))}
+          onAcceptRemote={() => {
+            const remote = sync.blocked && sync.blocked.remote;
+            setSync((st) => ({ ...st, blocked: null }));
+            if (!remote) return;
+            allowShrinkRef.current = true;
+            saveSyncMeta(window.localStorage, uid, remote);
+            setData(remote);
+          }}
+          onForceUpload={() => {
+            allowShrinkRef.current = true;
+            uploadNow(dataRef.current, { immediate: true });
+          }}
         />
       )}
 
@@ -3583,7 +3651,10 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           isLight={isLight}
           data={data}
           onClose={() => setShowBackup(false)}
-          onRestore={(backup) => setData(normalizePortfolioData(backup))}
+          onRestore={(backup) => {
+            allowShrinkRef.current = true; // 使用者明確選了這份備份,就算筆數比雲端少也照樣上傳
+            setData(normalizePortfolioData(backup));
+          }}
         />
       )}
       {showImportCsv && (
