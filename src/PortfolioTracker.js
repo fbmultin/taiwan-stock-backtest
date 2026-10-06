@@ -3067,11 +3067,11 @@ export function HeatmapView({ isLight, model, onBack }) {
                 key={t.key}
                 data-testid={isGroupLevel ? `hm-group-${t.key}` : `hm-stock-${t.key}`}
                 onClick={() => (isGroupLevel ? setLevel(t.key) : setPicked(it))}
-                className="absolute cursor-pointer overflow-hidden text-center text-slate-800"
+                className="absolute cursor-pointer overflow-hidden text-center text-slate-800 flex items-center justify-center"
                 style={{ left: t.x, top: t.y, width: t.w, height: t.h, background: color, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.85)' }}
               >
                 {showText && (
-                  <div className="px-1 pt-1.5 leading-tight">
+                  <div className="w-full px-1 leading-tight">
                     <div className="font-bold break-words" style={{ fontSize: fs }}>{label}</div>
                     <div className="font-mono" style={{ fontSize: Math.max(10, fs * 0.8) }}>{pct(value, base)}</div>
                     {showAmount && (
