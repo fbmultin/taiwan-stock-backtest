@@ -124,3 +124,29 @@ test('± 按鈕:00945B 一次跳 0.01,股票 15 元一次跳 0.05', async () => 
   expect(line(stock.el)).toContain('價金 15,350');
   await stock.unmount();
 });
+
+test('複製交易:帶入原交易欄位,改股數就能照交割單拆成多筆(00878 10,000 股 + 4,000 股)', async () => {
+  const onSubmit = jest.fn();
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const original = { symbol: '00878', type: 'sell', price: 35.11, shares: 14000, date: '2026-10-06', groupId: 'g1', copiedFrom: 'orig' };
+  await act(async () => {
+    root.render(<TransactionFormModal isLight data={data} initial={original} onClose={() => {}} onSubmit={onSubmit} onDelete={() => {}} />);
+  });
+  expect(el.textContent).toContain('複製交易');
+  const sharesInput = Array.from(el.querySelectorAll('input')).find((i) => i.value === '14000');
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  await act(async () => {
+    setter.call(sharesInput, '4000');
+    sharesInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  // 跟交割單第二筆一模一樣:價金 140,440、手續費 200、稅 140、應收 140,100
+  expect(line(el)).toContain('價金 140,440・手續費 200・稅 140・應收 140,100');
+  const save = Array.from(el.querySelectorAll('button')).find((b) => /儲存|新增|確認/.test(b.textContent) && !b.disabled && b.textContent.length < 10);
+  await act(async () => { save.click(); });
+  const payload = onSubmit.mock.calls[0][0];
+  expect(payload).toMatchObject({ symbol: '00878', type: 'sell', shares: 4000, price: 35.11, date: '2026-10-06', fee: 200, tax: 140, amount: 140100 });
+  expect(payload.id).toBeUndefined();
+  await act(() => root.unmount());
+});

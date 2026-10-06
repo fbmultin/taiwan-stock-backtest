@@ -20,6 +20,7 @@ import {
   Cloud,
   CloudOff,
   Archive,
+  Copy,
 } from 'lucide-react';
 import {
   mergeForSync,
@@ -184,6 +185,9 @@ function FieldBox({ label, icon, children, isLight, className = '' }) {
 export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDelete }) {
   const keyboardInset = useKeyboardInset();
   const isEdit = Boolean(initial && initial.id);
+  // 「複製交易」:帶入原本那筆的所有欄位,但存成新的一筆(沒有 id)。用途例如券商把一張委託
+  // 拆成好幾筆成交(交割單上 10,000 股 + 4,000 股分開列),複製後只改股數就能照交割單一筆一筆記。
+  const isCopy = Boolean(initial && initial.copiedFrom);
   const presetSymbol = initial && initial.symbol ? initial.symbol : '';
   const [symbol, setSymbol] = useState(presetSymbol);
   const [type, setType] = useState((initial && initial.type) || TX_TYPES.BUY);
@@ -213,7 +217,7 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
   });
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [priceLoading, setPriceLoading] = useState(false);
-  const priceTouchedRef = useRef(isEdit); // 編輯既有交易時視為「已手動設定」,不要被自動帶入蓋掉
+  const priceTouchedRef = useRef(isEdit || isCopy); // 編輯既有交易時視為「已手動設定」,不要被自動帶入蓋掉
   const [isEtf, setIsEtf] = useState(() => isLikelyETF(symbol));
   const etfTouchedRef = useRef(isEdit);
   const nameGuess = TW_STOCK_NAMES[symbol.toUpperCase()] || '';
@@ -265,8 +269,9 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
   // 不管怎麼切換群組、重新查到配息資料,都不要再用自動算出來的值蓋掉。
   const [divRefLoading, setDivRefLoading] = useState(false);
   const [divRef, setDivRef] = useState(null); // { date, amount } | null,amount 是「每股」配息金額
-  const amountTouchedRef = useRef(isEdit);
-  const noteTouchedRef = useRef(isEdit);
+  // 複製來的股利金額/備註是使用者要的值,不要被自動估算蓋掉
+  const amountTouchedRef = useRef(isEdit || isCopy);
+  const noteTouchedRef = useRef(isEdit || isCopy);
 
   // 新增股利交易時,額外查一次這檔股票的配息紀錄(跟ETF回測比較共用同一份
   // dataCache,通常已經有快取、幾乎不用等)。只是要「最近一次配息日期/金額」
@@ -423,7 +428,7 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <div className="text-sm font-bold">{isEdit ? '編輯交易' : '新增交易'}</div>
+            <div className="text-sm font-bold">{isEdit ? '編輯交易' : isCopy ? '複製交易(存成新的一筆)' : '新增交易'}</div>
           </div>
         </div>
 
@@ -1346,7 +1351,7 @@ export function BackupSheet({ isLight, data, onClose, onRestore }) {
 
 // ============== 交易操作選單(編輯/移動/刪除) ==============
 
-function TxActionSheet({ isLight, tx, onClose, onEdit, onMove, onDelete }) {
+function TxActionSheet({ isLight, tx, onClose, onEdit, onCopy = () => {}, onMove, onDelete }) {
   return (
     <div className="fixed inset-0 z-[75] flex items-end justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
@@ -1367,6 +1372,18 @@ function TxActionSheet({ isLight, tx, onClose, onEdit, onMove, onDelete }) {
         >
           <Pencil className="w-4 h-4" />
           <span>編輯交易</span>
+        </button>
+        <button
+          onClick={() => {
+            onCopy(tx);
+            onClose();
+          }}
+          className={`w-full flex items-center gap-3 px-5 py-3.5 text-left ${
+            isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-700'
+          }`}
+        >
+          <Copy className="w-4 h-4" />
+          <span>複製交易</span>
         </button>
         <button
           onClick={() => {
@@ -3003,6 +3020,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [showBackup, setShowBackup] = useState(false);
   const [addTxSymbol, setAddTxSymbol] = useState(null);
   const [editingTx, setEditingTx] = useState(null);
+  const [copyingTx, setCopyingTx] = useState(null);
   const [actionTx, setActionTx] = useState(null);
   const [movingTx, setMovingTx] = useState(null);
 
@@ -3385,16 +3403,20 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const openAddTx = (symbol) => {
     setAddTxSymbol(symbol || null);
     setEditingTx(null);
+    setCopyingTx(null);
     setShowAddTx(true);
   };
   const handleSubmitTx = (txPayload) => {
     if (editingTx) {
       setData((d) => updateTransaction(d, editingTx.id, txPayload));
     } else {
-      setData((d) => addTransaction(d, txPayload));
+      // 複製的交易沿用原本的標籤(同一張委託拆成多筆成交時,通常也想歸在同一組)
+      const payload = copyingTx && copyingTx.tagId ? { ...txPayload, tagId: copyingTx.tagId } : txPayload;
+      setData((d) => addTransaction(d, payload));
     }
     setShowAddTx(false);
     setEditingTx(null);
+    setCopyingTx(null);
     setAddTxSymbol(null);
   };
   const handleDeleteTxFromForm = (txId) => {
@@ -3403,7 +3425,16 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
     setEditingTx(null);
   };
   const handleEditTx = (tx) => {
+    setCopyingTx(null);
     setEditingTx(tx);
+    setAddTxSymbol(tx.symbol);
+    setShowAddTx(true);
+  };
+  // 複製:開新增表單,帶入原交易的欄位(去掉 id/建立時間,存的時候是新的一筆)
+  const handleCopyTx = (tx) => {
+    const { id, createdAt, ...rest } = tx;
+    setEditingTx(null);
+    setCopyingTx({ ...rest, copiedFrom: id });
     setAddTxSymbol(tx.symbol);
     setShowAddTx(true);
   };
@@ -3602,10 +3633,11 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
         <TransactionFormModal
           isLight={isLight}
           data={data}
-          initial={editingTx || (addTxSymbol ? { symbol: addTxSymbol } : null)}
+          initial={editingTx || copyingTx || (addTxSymbol ? { symbol: addTxSymbol } : null)}
           onClose={() => {
             setShowAddTx(false);
             setEditingTx(null);
+            setCopyingTx(null);
             setAddTxSymbol(null);
           }}
           onSubmit={handleSubmitTx}
@@ -3619,6 +3651,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           tx={actionTx}
           onClose={() => setActionTx(null)}
           onEdit={handleEditTx}
+          onCopy={handleCopyTx}
           onMove={(tx) => setMovingTx(tx)}
           onDelete={handleDeleteTx}
         />
