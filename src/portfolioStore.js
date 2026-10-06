@@ -279,6 +279,41 @@ export function moveSymbolsToGroup(data, symbols, groupId) {
   };
 }
 
+// ---------- 持股列表排序 ----------
+
+// 已出場部位的「出場時間」:最後一筆賣出的日期(同一天多筆時再比建立時間)。
+// 沒有任何賣出紀錄就出場的(例如只記了股利、或股數被編輯成 0)退回用最後一筆交易。
+export function lastExitKey(txs) {
+  const list = Array.isArray(txs) ? txs : [];
+  const sells = list.filter((t) => t.type === TX_TYPES.SELL);
+  const pool = sells.length ? sells : list;
+  let best = { date: '', createdAt: 0 };
+  pool.forEach((t) => {
+    const d = t.date || '';
+    const c = t.createdAt || 0;
+    if (d > best.date || (d === best.date && c > best.createdAt)) best = { date: d, createdAt: c };
+  });
+  return best;
+}
+
+// 持股列表的顯示順序:
+//   1. 持有中的部位在前,依市值大到小(原本的排法,不變)
+//   2. 打開「顯示已出場部位」時,已出場的接在後面,依最後一筆賣出日期 新 → 舊
+//      ——已出場的市值都是 0,原本混在一起排等於沒有順序,找最近剛賣掉的那檔很難找。
+// holdings 每筆需有 summary.shares、summary.marketValue、txs。
+export function sortHoldingsForDisplay(holdings) {
+  const open = [];
+  const closed = [];
+  (holdings || []).forEach((h) => (h.summary && h.summary.shares > 0 ? open : closed).push(h));
+  open.sort((a, b) => (b.summary.marketValue || 0) - (a.summary.marketValue || 0));
+  const keyed = closed.map((h) => ({ h, k: lastExitKey(h.txs) }));
+  keyed.sort((a, b) => {
+    if (a.k.date !== b.k.date) return a.k.date < b.k.date ? 1 : -1;
+    return b.k.createdAt - a.k.createdAt;
+  });
+  return open.concat(keyed.map((x) => x.h));
+}
+
 // ---------- 手續費試算 ----------
 
 // 券商交割單的算法:價金、手續費、證交稅都是「計算到元,元以下無條件捨去」,

@@ -65,6 +65,7 @@ import {
   isLikelyETF,
   stepPrice,
   tradeGross,
+  sortHoldingsForDisplay,
   securityTaxRate,
   isBondETF,
   netShareDelta,
@@ -3040,9 +3041,8 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
 
   const openPositions = allSymbolHoldings.filter((h) => h.summary.shares > 0);
   const hiddenCount = allSymbolHoldings.length - openPositions.length;
-  const visibleHoldings = (showHidden ? allSymbolHoldings : openPositions)
-    .slice()
-    .sort((a, b) => b.summary.marketValue - a.summary.marketValue);
+  // 持有中依市值排;已出場的接在後面,依最後一筆賣出日期 新 → 舊(見 sortHoldingsForDisplay)
+  const visibleHoldings = sortHoldingsForDisplay(showHidden ? allSymbolHoldings : openPositions);
   const totalSummary = useMemo(
     () => aggregateSummaries(allSymbolHoldings.map((h) => h.summary)),
     [allSymbolHoldings]
