@@ -103,6 +103,37 @@ import {
 
 const todayStr = () => new Date().toISOString().split('T')[0];
 
+// 台灣投資人的習慣:ETF 記代號(0050、00878、00945B),個股記股名(台積電、禾伸堂)。
+// 所以畫面上 ETF 把代號當主角(放大、加粗、放前面),股名退成小字;個股維持股名為主、代號小字。
+// 查不到名稱(name 等於代號)時只顯示代號。
+export function symbolLabel(symbol, name) {
+  const hasName = Boolean(name) && name !== symbol;
+  if (!hasName) return { primary: symbol, secondary: '', codeFirst: true };
+  return isLikelyETF(symbol)
+    ? { primary: symbol, secondary: name, codeFirst: true }
+    : { primary: name, secondary: symbol, codeFirst: false };
+}
+
+// 依 item.date 把已排好序的列表切成 [[日期, items], ...],保持原本順序
+function groupByDay(items) {
+  const out = [];
+  items.forEach((it) => {
+    const last = out[out.length - 1];
+    if (last && last[0] === it.date) last[1].push(it);
+    else out.push([it.date, [it]]);
+  });
+  return out;
+}
+
+// 交易明細依日期分段用的「10/06(二)」
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+export function formatDayHeader(dateStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const w = new Date(y, m - 1, d).getDay();
+  return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}(${WEEKDAYS[w]})`;
+}
+
 // 手機鍵盤彈出時,大部分瀏覽器的 position:fixed 仍然是用「整個頁面」的高度在定位,
 // 不會跟著可視區域縮小,導致原本貼在畫面最下面的浮動按鈕被鍵盤整個擋住、變成看
 // 不到也點不到。用 visualViewport 量出鍵盤佔用的高度,讓浮動按鈕往上跟著讓開。
@@ -2153,12 +2184,21 @@ function HoldingsListView({
                 )}
                 <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isLight ? 'bg-slate-400' : 'bg-slate-500'}`} />
                 <div className="flex-1 min-w-0 text-left">
-                  <div className="font-bold text-sm truncate">
-                    {h.name}
-                    <span className={`ml-1.5 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                      {h.symbol}
-                    </span>
-                  </div>
+                  {(() => {
+                    const lb = symbolLabel(h.symbol, h.name);
+                    return (
+                      <div className={`font-bold truncate ${lb.codeFirst ? 'text-base font-mono' : 'text-sm'}`}>
+                        {lb.primary}
+                        {lb.secondary && (
+                          <span
+                            className={`ml-1.5 text-[11px] font-normal font-sans ${isLight ? 'text-slate-500' : 'text-slate-400'}`}
+                          >
+                            {lb.secondary}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {dateRange}｜共{txCount}筆
                   </div>
@@ -2207,8 +2247,20 @@ function HoldingsListView({
                 style={{ gridTemplateColumns: 'minmax(0,1fr) 92px 128px' }}
               >
                 <div className="min-w-0">
-                  <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
-                  <div className="font-bold text-base leading-snug line-clamp-2 break-words">{h.name}</div>
+                  {symbolLabel(h.symbol, h.name).codeFirst ? (
+                    <>
+                      {/* ETF:代號是主角,放大放前面;名稱縮成一行小字 */}
+                      <div className="font-mono font-bold text-lg leading-snug tracking-tight">{h.symbol}</div>
+                      {h.name !== h.symbol && (
+                        <div className={`text-xs truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.name}</div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{h.symbol}</div>
+                      <div className="font-bold text-base leading-snug line-clamp-2 break-words">{h.name}</div>
+                    </>
+                  )}
                   <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                     {formatMoney(h.summary.shares)}股
                   </div>
@@ -2403,7 +2455,9 @@ function StockDetailView({
     });
   };
 
-  const renderTxRow = (tx) => (
+  // showDate:在「依日期分段」底下,日期已經寫在分段標題,列裡就不重複;
+  // 標籤卡片展開後的交易可能跨好幾天,才在列裡顯示日期
+  const renderTxRow = (tx, { showDate = true } = {}) => (
     <div
       key={tx.id}
       onClick={() => (selectMode ? onToggleSelectTx(tx.id) : onOpenAction(tx))}
@@ -2426,7 +2480,7 @@ function StockDetailView({
       )}
       <div className="flex-1 min-w-0">
         <div className={`font-bold text-sm ${typeColor(tx.type)}`}>{TX_TYPE_LABELS[tx.type]}</div>
-        <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{tx.date}</div>
+        {showDate && <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{tx.date}</div>}
         {tx.type !== TX_TYPES.CASH_DIVIDEND && (
           <div className="font-mono font-bold text-sm">{tx.price.toFixed(2)}</div>
         )}
@@ -2450,8 +2504,17 @@ function StockDetailView({
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
-          <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{symbol}</div>
-          <div className="font-bold">{name}</div>
+          {symbolLabel(symbol, name).codeFirst ? (
+            <>
+              <div className="font-mono font-bold text-xl leading-tight">{symbol}</div>
+              {name !== symbol && <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{name}</div>}
+            </>
+          ) : (
+            <>
+              <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{symbol}</div>
+              <div className="font-bold">{name}</div>
+            </>
+          )}
         </div>
       </div>
 
@@ -2610,71 +2673,85 @@ function StockDetailView({
           {Object.entries(grouped).map(([month, items]) => (
             <div key={month} className="mt-3">
               <div className={`text-xs mb-1.5 ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>{month}</div>
-              <div className="space-y-2">
-                {items.map((item) => {
-                  if (item.kind === 'tx') return renderTxRow(item.tx);
+              {/* 同一天的交易歸成一段,段與段之間用日期標題與分隔線隔開,一眼看出哪幾筆是同一天的 */}
+              {groupByDay(items).map(([day, dayItems]) => (
+                <div key={day} data-testid="tx-day-group" className="mb-3">
+                  <div
+                    className={`flex items-center gap-2 mb-1.5 text-xs font-bold ${isLight ? 'text-slate-600' : 'text-slate-300'}`}
+                  >
+                    <span>{formatDayHeader(day)}</span>
+                    <span className={`flex-1 h-px ${isLight ? 'bg-slate-200' : 'bg-slate-700'}`} />
+                    {dayItems.length > 1 && (
+                      <span className={`font-normal ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>{dayItems.length}筆</span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {dayItems.map((item) => {
+                      if (item.kind === 'tx') return renderTxRow(item.tx, { showDate: false });
 
-                  const { tag, tagId, txs: groupTxs } = item;
-                  const groupSummary = computeSymbolSummary(groupTxs);
-                  const groupNet = netShareDelta(groupTxs);
-                  const expanded = expandedTagIds.has(tagId);
-                  const groupDates = groupTxs.map((t) => t.date).sort();
-                  const dateRange =
-                    groupDates[0] === groupDates[groupDates.length - 1]
-                      ? groupDates[0]
-                      : `${groupDates[0]} ~ ${groupDates[groupDates.length - 1]}`;
-                  return (
-                    <div
-                      key={tagId}
-                      className={`rounded-xl overflow-hidden ${
-                        isLight ? 'bg-slate-50 border border-slate-200' : 'bg-slate-800/30 border border-slate-700'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleGroupExpanded(tagId)}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ background: tag?.color || '#94a3b8' }}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-bold text-sm truncate">
-                            {tag?.name || '已清倉'}
-                            {groupNet !== 0 && (
-                              <span className="ml-1.5 text-[10px] font-normal text-rose-500">
-                                ⚠淨股數{formatSigned(groupNet)}股
-                              </span>
-                            )}
-                          </div>
-                          <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                            {dateRange}｜共{groupTxs.length}筆
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div
-                            className={`font-mono font-bold text-sm ${pnlColorClass(groupSummary.realizedPnl, isLight)}`}
-                          >
-                            {formatSigned(groupSummary.realizedPnl)}
-                          </div>
-                          <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                            已實現損益
-                          </div>
-                        </div>
-                        <ChevronDown
-                          className={`w-4 h-4 opacity-60 shrink-0 transition-transform ${
-                            expanded ? 'rotate-180' : ''
+                      const { tag, tagId, txs: groupTxs } = item;
+                      const groupSummary = computeSymbolSummary(groupTxs);
+                      const groupNet = netShareDelta(groupTxs);
+                      const expanded = expandedTagIds.has(tagId);
+                      const groupDates = groupTxs.map((t) => t.date).sort();
+                      const dateRange =
+                        groupDates[0] === groupDates[groupDates.length - 1]
+                          ? groupDates[0]
+                          : `${groupDates[0]} ~ ${groupDates[groupDates.length - 1]}`;
+                      return (
+                        <div
+                          key={tagId}
+                          className={`rounded-xl overflow-hidden ${
+                            isLight ? 'bg-slate-50 border border-slate-200' : 'bg-slate-800/30 border border-slate-700'
                           }`}
-                        />
-                      </button>
-                      {expanded && (
-                        <div className="px-2 pb-2 space-y-2">{groupTxs.map((tx) => renderTxRow(tx))}</div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleGroupExpanded(tagId)}
+                            className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              style={{ background: tag?.color || '#94a3b8' }}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-sm truncate">
+                                {tag?.name || '已清倉'}
+                                {groupNet !== 0 && (
+                                  <span className="ml-1.5 text-[10px] font-normal text-rose-500">
+                                    ⚠淨股數{formatSigned(groupNet)}股
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                                {dateRange}｜共{groupTxs.length}筆
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div
+                                className={`font-mono font-bold text-sm ${pnlColorClass(groupSummary.realizedPnl, isLight)}`}
+                              >
+                                {formatSigned(groupSummary.realizedPnl)}
+                              </div>
+                              <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                                已實現損益
+                              </div>
+                            </div>
+                            <ChevronDown
+                              className={`w-4 h-4 opacity-60 shrink-0 transition-transform ${
+                                expanded ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </button>
+                          {expanded && (
+                            <div className="px-2 pb-2 space-y-2">{groupTxs.map((tx) => renderTxRow(tx))}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -2935,12 +3012,21 @@ export function TodayTransactionsView({ isLight, items, stockNames, todayStr, on
               }`}
             >
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm truncate">
-                  {stockNames[tx.symbol] || tx.symbol}
-                  <span className={`ml-1.5 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                    {tx.symbol}
-                  </span>
-                </div>
+                {(() => {
+                  const lb = symbolLabel(tx.symbol, stockNames[tx.symbol]);
+                  return (
+                    <div className={`font-bold truncate ${lb.codeFirst ? 'text-base font-mono' : 'text-sm'}`}>
+                      {lb.primary}
+                      {lb.secondary && (
+                        <span
+                          className={`ml-1.5 text-[11px] font-normal font-sans ${isLight ? 'text-slate-500' : 'text-slate-400'}`}
+                        >
+                          {lb.secondary}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className={`text-xs font-bold ${typeColor(tx.type)}`}>{TX_TYPE_LABELS[tx.type]}</div>
                 {tx.type !== TX_TYPES.CASH_DIVIDEND && (
                   <div className={`font-mono text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
