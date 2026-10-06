@@ -31,7 +31,7 @@ export const LAYER2_TEXT = '以現有資料量，本工具只可能偵測到極�
 export const STOP_LABEL = '自訂設定，未經檢定；預設值來自股魚公開範例。';
 export const TOO_FEW_TEXT = '樣本太少，不顯示統計。';
 
-const SOURCE_NAMES = { FinMind: 'FinMind', TWSE: '證交所', Yahoo: 'Yahoo' };
+const SOURCE_NAMES = { FinMind: 'FinMind', TWSE: '證交所', TPEx: '櫃買中心', Yahoo: 'Yahoo' };
 const HOLD_LABELS = { 63: '63 日', 126: '126 日', 252: '252 日' }; // 約 3、6、12 個月(交易日)
 
 // 百分比格式:帶正負號、一位小數。負號用 −(U+2212)和設計文件一致。

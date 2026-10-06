@@ -433,7 +433,114 @@ const fetchFromTWSE = async (symbol, startDate, endDate) => {
   };
 };
 
-// --- 即時抓取的完整重試鏈(FinMind → TWSE → Yahoo) ---
+// --- 櫃買中心(TPEx)官方資料(上櫃股票在 FinMind 失敗時的第二資料源) ---
+//
+// 為什麼要加:上面的證交所 STOCK_DAY 只有「上市」股票。上櫃股票(例如金居 8358、
+// 元大美債20年 00679B)在 FinMind 失敗時(免費額度每個 IP 每小時 300 次,手機電信的
+// 共用 IP 常常被別人用完)原本只剩下面的 Yahoo,而 Yahoo 要繞的四個公用 CORS 代理
+// 2026-10 實測全部打不通——等於上櫃股票沒有任何能用的備援,這就是「金居怎麼刷新都
+// 不會更新」的原因。櫃買中心的官方資料沒有開放 CORS,所以改呼叫同專案的
+// /api/twPrice(Vercel 伺服器端函式,見 api/twPrice.js)代抓。
+// 跟證交所一樣一次只能查一個月,月數上限也沿用 TWSE_MAX_MONTHS_LIMIT;本機開發
+// (npm start)沒有 /api,會拿到 index.html、解析 JSON 失敗,這裡安靜當成沒資料。
+const fetchTPExMonth = async (symbol, year, month) => {
+  const m = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const res = await fetchWithTimeout(
+      `/api/twPrice?type=tpexMonth&symbol=${encodeURIComponent(symbol)}&month=${m}`,
+      {},
+      10000
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (!json || !Array.isArray(json.rows)) return [];
+    return json.rows
+      .filter((r) => r && r.date && typeof r.close === 'number' && r.close > 0)
+      .map((r) => ({
+        date: r.date,
+        timestamp: new Date(r.date).getTime(),
+        price: r.close,
+        high: typeof r.high === 'number' ? r.high : undefined,
+        low: typeof r.low === 'number' ? r.low : undefined,
+        accumulatedDividend: 0,
+      }));
+  } catch (e) {
+    return [];
+  }
+};
+
+const fetchFromTPEx = async (symbol, startDate, endDate) => {
+  const months = [];
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  while (cursor <= last && months.length <= TWSE_MAX_MONTHS_LIMIT) {
+    months.push({ year: cursor.getFullYear(), month: cursor.getMonth() + 1 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  if (months.length === 0 || months.length > TWSE_MAX_MONTHS_LIMIT) return null;
+  const monthResults = await Promise.all(months.map((m) => fetchTPExMonth(symbol, m.year, m.month)));
+  const startStr = startDate.toISOString().split('T')[0];
+  const data = monthResults
+    .flat()
+    .filter((d) => d.date >= startStr)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (data.length === 0) return null;
+  const divResult = await fetchDividendsFromFinMindOnly(symbol, startDate, endDate);
+  return {
+    symbol,
+    data,
+    divDates: divResult ? divResult.divDates : [],
+    dividendsMap: divResult ? divResult.dividendsMap : {},
+    usedSymbol: symbol,
+    source: 'TPEx',
+    dividendDataIncomplete: !divResult,
+  };
+};
+
+// --- 即時報價(盤中/當日收盤,上市上櫃都有) ---
+//
+// 「我的持股」的更新鈕要「不管是不是盤中,按下去就拿到最新股價」。上面的日資料
+// 來源(FinMind/證交所/櫃買)都要收盤後才有當天那一筆,盤中按更新只會拿到昨天的
+// 收盤價。證交所的即時報價(mis.twse.com.tw)上市、上櫃都查得到,一次可以查很多檔,
+// 但沒有開放 CORS,一樣透過 /api/twPrice 代抓。
+// 回傳 { 代號: { price, prevClose, date:'YYYY-MM-DD', time:'HH:MM:SS' } };
+// 失敗(離線、本機開發沒有 /api、上游逾時)一律回傳 {},呼叫端照用日資料。
+const LIVE_QUOTE_CHUNK = 100;
+export const fetchLiveQuotes = async (symbols) => {
+  const list = Array.from(new Set((symbols || []).map((s) => String(s).trim().toUpperCase()))).filter((s) =>
+    /^[0-9A-Z]{4,6}$/.test(s)
+  );
+  const out = {};
+  for (let i = 0; i < list.length; i += LIVE_QUOTE_CHUNK) {
+    const chunk = list.slice(i, i + LIVE_QUOTE_CHUNK);
+    try {
+      const res = await fetchWithTimeout(
+        `/api/twPrice?type=quote&symbols=${encodeURIComponent(chunk.join(','))}`,
+        { cache: 'no-store' },
+        12000
+      );
+      if (!res.ok) continue;
+      const json = await res.json();
+      const quotes = (json && json.quotes) || {};
+      Object.keys(quotes).forEach((sym) => {
+        const q = quotes[sym];
+        if (q && typeof q.price === 'number' && q.price > 0 && q.date) {
+          out[sym] = {
+            price: q.price,
+            prevClose: typeof q.prevClose === 'number' ? q.prevClose : null,
+            date: q.date,
+            time: q.time || '00:00:00',
+          };
+        }
+      });
+    } catch (e) {
+      // 這一批失敗就略過,其他批次照常
+    }
+  }
+  return out;
+};
+
+// --- 即時抓取的完整重試鏈(FinMind → TWSE → TPEx → Yahoo) ---
 // 這裡只負責「抓」，不處理快取存取；快取的讀寫統一交給呼叫端
 // (fetchStockPriceData / fetchIndexPriceData)處理，避免同一份資料
 // 因為抓取路徑不同而被存成不一致的內容。
@@ -456,6 +563,12 @@ const attemptLiveFetch = async (symbol, startDate, endDate) => {
     const twseResult = await fetchFromTWSE(pureSymbol, startDate, endDate);
     if (twseResult && twseResult.data.length > 0) {
       return twseResult;
+    }
+
+    // 證交所查不到(上櫃股票),再試櫃買中心官方資料,不要直接落到幾乎打不通的 Yahoo 代理。
+    const tpexResult = await fetchFromTPEx(pureSymbol, startDate, endDate);
+    if (tpexResult && tpexResult.data.length > 0) {
+      return tpexResult;
     }
   }
 
