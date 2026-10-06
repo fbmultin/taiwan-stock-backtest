@@ -50,10 +50,11 @@ test('模型:各群組市值、全部合併、已出場不入圖', () => {
 
 test('熱力圖:群組格列出個股(ETF 代號/股名)→ 點群組看個股 → 點個股跳細節框', async () => {
   const model = buildHeatmapModel(data, prices, names);
+  const onBack = jest.fn();
   const el = document.createElement('div');
   document.body.appendChild(el);
   const root = createRoot(el);
-  await act(async () => { root.render(<HeatmapView isLight model={model} onBack={() => {}} />); });
+  await act(async () => { root.render(<HeatmapView isLight model={model} onBack={onBack} />); });
   const g1 = el.querySelector('[data-testid="hm-group-g1"]');
   expect(g1.textContent).toContain('長期');
   expect(g1.textContent).toMatch(/\d+\.\d\d%/);
@@ -71,5 +72,14 @@ test('熱力圖:群組格列出個股(ETF 代號/股名)→ 點群組看個股 �
   expect(pop.textContent).toContain('100股');
   expect(pop.textContent).toContain('100,000');
   expect(pop.textContent).toContain('1000.00(+1.01%)');
+  // 浮動回上一層鈕:每層都有;點細節框外關閉後,個股層回群組層、群組層回首頁
+  await act(async () => { el.querySelector('[data-testid="heatmap-popup"]').parentElement.click(); });
+  const fb = () => el.querySelector('[data-testid="heatmap-float-back"]');
+  expect(fb()).not.toBeNull();
+  await act(async () => { fb().click(); });
+  expect(el.querySelector('[data-testid="hm-group-g1"]')).not.toBeNull();
+  expect(fb()).not.toBeNull();
+  await act(async () => { fb().click(); });
+  expect(onBack).toHaveBeenCalledTimes(1);
   await act(() => root.unmount());
 });

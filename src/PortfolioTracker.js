@@ -3093,6 +3093,18 @@ export function HeatmapView({ isLight, model, onBack }) {
         </div>
       </div>
 
+      {/* 浮動「回上一層」鈕:每一層都有,位置跟其他頁面一致。個股層回群組層,群組層回首頁 */}
+      <button
+        onClick={handleBack}
+        aria-label="回上一層"
+        data-testid="heatmap-float-back"
+        className={`fixed bottom-56 right-4 z-30 w-12 h-12 rounded-full shadow-xl flex items-center justify-center ${
+          isLight ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900'
+        }`}
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
+
       {picked && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-6" onClick={() => setPicked(null)}>
           <div className="absolute inset-0 bg-black/50" />
