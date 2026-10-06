@@ -64,7 +64,7 @@ import {
   isDayTradeSell,
   isLikelyETF,
   stepPrice,
-  tickSize,
+  tradeGross,
   securityTaxRate,
   isBondETF,
   netShareDelta,
@@ -349,15 +349,16 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
   const isBondEtf = isEtf && isBondETF(symbol);
   const taxRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: Boolean(isDayTrade), date });
   const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { taxRate }) : 0;
-  const grossAmount = priceNum * sharesNum; // 價金
+  const grossAmount = tradeGross(priceNum, sharesNum); // 價金(元以下捨去,跟交割單一致)
   const taxLabel = isBondEtf && taxRate === 0
     ? '債券ETF停徵'
     : `${(taxRate * 100).toFixed(taxRate === 0.0015 ? 2 : 1)}%${isDayTrade && !isEtf && taxRate === 0.0015 ? ' 當沖減半' : ''}`;
+  // 交割金額:買進 = 價金 + 手續費;賣出 = 價金 − 手續費 − 證交稅
   const computedAmount =
     type === TX_TYPES.BUY
-      ? -(priceNum * sharesNum + fee)
+      ? -(grossAmount + fee)
       : type === TX_TYPES.SELL
-      ? priceNum * sharesNum - fee - tax
+      ? grossAmount - fee - tax
       : parseFloat(amountOverride) || 0;
 
   const canSubmit =
@@ -560,40 +561,17 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
               </button>
             )}
           </div>
-          <div className="text-xs opacity-60 -mt-2">1張 = 1000股</div>
-
-          {/* 填價格與股數時即時列出費用明細(價金、手續費、證交稅、應付/應收),
-              不用滑到下面的手續費設定區才看得到。 */}
-          {isBuySell && priceNum > 0 && sharesNum > 0 && (
-            <div
-              data-testid="cost-breakdown"
-              className={`rounded-xl px-4 py-3 text-sm space-y-1 ${isLight ? 'bg-slate-100' : 'bg-slate-800/60'}`}
-            >
-              <div className="flex justify-between">
-                <span className="opacity-70">價金</span>
-                <span className="font-mono">{formatMoney(grossAmount)} 元</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="opacity-70">
-                  手續費{fixedFee ? '(固定)' : `(${activeFeeDiscountPct}%${isEtf ? '・ETF' : ''})`}
-                </span>
-                <span className="font-mono">{formatMoney(fee)} 元</span>
-              </div>
-              {type === TX_TYPES.SELL && (
-                <div className="flex justify-between">
-                  <span className="opacity-70">證交稅({taxLabel})</span>
-                  <span className="font-mono">{formatMoney(tax)} 元</span>
-                </div>
-              )}
-              <div className={`flex justify-between pt-1 border-t ${isLight ? 'border-slate-200' : 'border-slate-700'}`}>
-                <span className="font-bold">{type === TX_TYPES.BUY ? '應付金額' : '應收金額'}</span>
-                <span className="font-mono font-bold">{formatMoney(Math.abs(computedAmount))} 元</span>
-              </div>
-              <div className="text-xs opacity-50">
-                升降單位 {tickSize(priceNum, isEtf)} 元({isEtf ? 'ETF' : '股票'}級距)
-              </div>
-            </div>
-          )}
+          {/* 費用摘要跟「1張 = 1000股」放同一行、同樣小字,省空間;
+              應付/應收就是交割金額(價金、手續費、證交稅都以元以下捨去計算)。 */}
+          <div className="text-xs opacity-60 -mt-2 flex flex-wrap gap-x-2" data-testid="cost-breakdown">
+            <span>1張 = 1000股</span>
+            {isBuySell && priceNum > 0 && sharesNum > 0 && (
+              <span className="font-mono">
+                價金 {formatMoney(grossAmount)}・手續費 {formatMoney(fee)}・稅 {formatMoney(tax)}・
+                {type === TX_TYPES.BUY ? '應付' : '應收'} {formatMoney(Math.abs(computedAmount))}
+              </span>
+            )}
+          </div>
 
           <div className="relative">
             <button
@@ -998,7 +976,8 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
       // 稅率跟手動新增交易同一套規則(股票/ETF/債券ETF停徵/股票當沖減半),依該筆交易日期判斷
       const taxRate = securityTaxRate({ isEtf, isBondEtf: isEtf && isBondETF(r.symbol), isDayTrade, date: r.date });
       const tax = r.type === TX_TYPES.SELL ? estimateTax(r.price, r.shares, { taxRate }) : 0;
-      const amount = r.type === TX_TYPES.BUY ? -(r.price * r.shares + fee) : r.price * r.shares - fee - tax;
+      const gross = tradeGross(r.price, r.shares);
+      const amount = r.type === TX_TYPES.BUY ? -(gross + fee) : gross - fee - tax;
       return { ...r, fee, tax, isDayTrade, isEtf, amount };
     });
   }, [parsed, checkedRows, group, data.transactions]);
@@ -2665,7 +2644,8 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 // 明細,方便收盤後快速核對今天到底按了哪些買賣/股利紀錄,不用一檔一檔點進
 // 持股明細去找。items 跟著首頁的群組篩選(txBySymbol 已經依目前群組過濾過),
 // 切換群組時看到的「今日交易」自然也只會是這個群組裡的。
-function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenDetail }) {
+// export 只是為了單元測試(檢查當日進/出/總計摘要)
+export function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenDetail }) {
   const typeColor = (t) =>
     t === TX_TYPES.BUY
       ? isLight
@@ -2680,6 +2660,12 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
       : 'text-amber-400';
 
   const symbolCount = new Set(items.map((tx) => tx.symbol)).size;
+  // 當日交割總結:進 = 買進應付合計、出 = 賣出應收合計、總計 = 出 − 進(正數是要收錢,負數是要付錢)。
+  // 金額直接用每筆交易存下來的 amount(已含手續費、證交稅),跟券商交割單同一個口徑;
+  // 股利不是當天交割的款項,不算進來。
+  const buyTotal = items.filter((tx) => tx.type === TX_TYPES.BUY).reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0);
+  const sellTotal = items.filter((tx) => tx.type === TX_TYPES.SELL).reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0);
+  const hasTrades = items.some((tx) => tx.type === TX_TYPES.BUY || tx.type === TX_TYPES.SELL);
 
   return (
     <div className="pb-24">
@@ -2697,6 +2683,13 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
         <div className="text-sm font-bold mt-1">
           共{items.length}筆交易{items.length > 0 ? `｜${symbolCount}檔個股` : ''}
         </div>
+        {hasTrades && (
+          <div data-testid="today-summary" className="font-mono text-sm mt-2 flex justify-center flex-wrap gap-x-3">
+            <span className={typeColor(TX_TYPES.BUY)}>進 {formatMoney(buyTotal)}</span>
+            <span className={typeColor(TX_TYPES.SELL)}>出 {formatMoney(sellTotal)}</span>
+            <span className="font-bold">總計 {formatSigned(sellTotal - buyTotal)}</span>
+          </div>
+        )}
       </div>
 
       {items.length === 0 ? (

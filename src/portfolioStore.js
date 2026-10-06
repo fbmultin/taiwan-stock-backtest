@@ -281,7 +281,19 @@ export function moveSymbolsToGroup(data, symbols, groupId) {
 
 // ---------- 手續費試算 ----------
 
-// 依群組的手續費優惠設定,算出一筆買賣交易的手續費(四捨五入到整數元)。
+// 券商交割單的算法:價金、手續費、證交稅都是「計算到元,元以下無條件捨去」,
+// 不是四捨五入——原本用 Math.round,常常跟交割單差 1 元(例如價金 15,300 的手續費
+// 21.8 元,交割單是 21,四捨五入會變 22)。浮點數相乘可能出現 21.999999… 這種
+// 誤差,所以先加一個極小值再捨去,避免把剛好整數的金額少算 1 元。
+const FLOOR_EPS = 1e-6;
+export const floorYuan = (x) => Math.floor((Number(x) || 0) + FLOOR_EPS);
+
+// 成交價金(元以下捨去;整張交易本來就是整數,零股如 15.31 × 37 = 566.47 → 566)
+export function tradeGross(price, shares) {
+  return floorYuan((Number(price) || 0) * (Number(shares) || 0));
+}
+
+// 依群組的手續費優惠設定,算出一筆買賣交易的手續費(元以下捨去,不低於低消)。
 // 零股(不足1000股)用「零股交易手續費低消」,整張交易用「一般交易手續費低消」。
 // 很多券商ETF跟一般股票的折數、低消門檻是分開報價的,所以群組底下分成兩組
 // 獨立設定,由 isEtf 決定要用哪一組(預設為一般股票)。
@@ -293,8 +305,8 @@ export function estimateFee(group, price, shares, isEtf = false) {
   const minFeeOdd = isEtf ? group.etfMinFeeOdd : group.stockMinFeeOdd;
   const minFee = isOddLot ? minFeeOdd : minFeeNormal;
   const effectiveDiscountPct = typeof discountPct === 'number' ? discountPct : 100;
-  const raw = price * shares * 0.001425 * (effectiveDiscountPct / 100);
-  return Math.max(Math.round(raw), Math.round(minFee || 0));
+  const raw = tradeGross(price, shares) * 0.001425 * (effectiveDiscountPct / 100);
+  return Math.max(floorYuan(raw), Math.round(minFee || 0));
 }
 
 // 粗略判斷代號是不是ETF:台灣證交所的ETF(含ETN、槓反、債券、主動式ETF)
@@ -333,10 +345,10 @@ export function securityTaxRate({ isEtf = false, isBondEtf = false, isDayTrade =
   return 0.003;
 }
 
-// 證交稅金額(四捨五入到整數元)。taxRate 由呼叫端用 securityTaxRate 算好傳入;
+// 證交稅金額(元以下捨去,跟交割單一致)。taxRate 由呼叫端用 securityTaxRate 算好傳入;
 // 舊的呼叫方式(isDayTrade + taxRate,當沖再減半)保留相容,但新程式請直接傳最終稅率。
 export function estimateTax(price, shares, { isDayTrade = false, taxRate = 0.003 } = {}) {
-  return Math.round(price * shares * taxRate * (isDayTrade ? 0.5 : 1));
+  return floorYuan(tradeGross(price, shares) * taxRate * (isDayTrade ? 0.5 : 1));
 }
 
 // 判斷一筆賣出交易是否算「當沖」:同一天、同一檔股票,交易紀錄裡已經有買進

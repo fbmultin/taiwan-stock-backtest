@@ -16,7 +16,7 @@ jest.mock('./dataCache', () => ({
 
 /* eslint-disable import/first */
 import * as dataCache from './dataCache';
-import { TransactionFormModal } from './PortfolioTracker';
+import { TransactionFormModal, TodayTransactionsView } from './PortfolioTracker';
 /* eslint-enable import/first */
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,48 +58,69 @@ const clickButton = async (el, label) => {
   });
 };
 
-test('00945B 價格 + 按鈕跳 0.01(ETF級距),費用明細列出價金、手續費、應付金額', async () => {
+const line = (el) => el.querySelector('[data-testid="cost-breakdown"]').textContent;
+
+test('買進 00945B:跟「1張 = 1000股」同一行列出價金、手續費、稅、應付;手續費元以下捨去', async () => {
   const { el, unmount } = await render({ symbol: '00945B', type: 'buy', price: 15.3, shares: 1000 });
-  const box = el.querySelector('[data-testid="cost-breakdown"]');
-  expect(box).not.toBeNull();
-  expect(box.textContent).toContain('價金');
-  expect(box.textContent).toContain('15,300');
-  expect(box.textContent).toContain('手續費');
-  expect(box.textContent).toContain('應付金額');
-  expect(box.textContent).toContain('升降單位 0.01');
-  expect(box.textContent).not.toContain('證交稅');
+  // 15,300 × 0.1425% = 21.8 → 交割單是 21(捨去),不是四捨五入的 22
+  expect(line(el)).toContain('1張 = 1000股');
+  expect(line(el)).toContain('價金 15,300・手續費 21・稅 0・應付 15,321');
   await unmount();
 });
 
-test('賣出股票:明細含證交稅 0.3%,應收 = 價金 − 手續費 − 稅', async () => {
+test('賣出股票:稅 0.3%,應收 = 價金 − 手續費 − 稅', async () => {
   const { el, unmount } = await render({ symbol: '2330', type: 'sell', price: 1000, shares: 1000, date: '2026-10-06' });
-  const box = el.querySelector('[data-testid="cost-breakdown"]');
-  expect(box.textContent).toContain('證交稅(0.3%)');
-  expect(box.textContent).toContain('3,000'); // 1,000,000 × 0.3%
-  expect(box.textContent).toContain('1,425'); // 手續費 0.1425%
-  expect(box.textContent).toContain('995,575');
-  expect(box.textContent).toContain('升降單位 5');
+  expect(line(el)).toContain('價金 1,000,000・手續費 1,425・稅 3,000・應收 995,575');
   await unmount();
 });
 
-test('賣出債券ETF:證交稅顯示停徵', async () => {
-  const { el, unmount } = await render({ symbol: '00945B', type: 'sell', price: 15.3, shares: 1000, date: '2026-10-06' });
-  const box = el.querySelector('[data-testid="cost-breakdown"]');
-  expect(box.textContent).toContain('債券ETF停徵');
+test('賣出零股:價金、手續費、稅都元以下捨去', async () => {
+  // 價金 56.7 × 37 = 2097.9 → 2,097;稅 2097 × 0.3% = 6.29 → 6;手續費低於低消時用低消(預設 0 → 2097×0.1425%=2.98 → 2)
+  const { el, unmount } = await render({ symbol: '2884', type: 'sell', price: 56.7, shares: 37, date: '2026-10-06' });
+  expect(line(el)).toContain('價金 2,097・手續費 2・稅 6・應收 2,089');
   await unmount();
+});
+
+test('賣出債券ETF:停徵期間稅 0', async () => {
+  const { el, unmount } = await render({ symbol: '00945B', type: 'sell', price: 15.3, shares: 1000, date: '2026-10-06' });
+  expect(line(el)).toContain('稅 0・應收 15,279');
+  await unmount();
+});
+
+test('今日交易:先一行列出 進/出/總計,再列各筆', async () => {
+  const items = [
+    { id: 'a', symbol: '00945B', type: 'buy', price: 15.3, shares: 1000, amount: -15321 },
+    { id: 'b', symbol: '2330', type: 'sell', price: 1000, shares: 1000, amount: 995575 },
+    { id: 'c', symbol: '0056', type: 'cashDividend', price: 0, shares: 0, amount: 500 },
+  ];
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(
+      <TodayTransactionsView isLight items={items} stockNames={{}} todayStr="2026-10-06" onBack={() => {}} onOpenDetail={() => {}} />
+    );
+  });
+  const sum = el.querySelector('[data-testid="today-summary"]');
+  expect(sum.textContent).toContain('進 15,321');
+  expect(sum.textContent).toContain('出 995,575');
+  expect(sum.textContent).toContain('總計 +980,254');
+  // 摘要在各筆交易之前
+  expect(el.innerHTML.indexOf('today-summary')).toBeLessThan(el.innerHTML.indexOf('00945B'));
+  await act(() => root.unmount());
 });
 
 test('± 按鈕:00945B 一次跳 0.01,股票 15 元一次跳 0.05', async () => {
   const etf = await render({ symbol: '00945B', type: 'buy', price: 15.3, shares: 1000 });
   await clickButton(etf.el, '價格加一檔');
-  expect(etf.el.querySelector('[data-testid="cost-breakdown"]').textContent).toContain('15,310');
+  expect(line(etf.el)).toContain('價金 15,310');
   await clickButton(etf.el, '價格減一檔');
   await clickButton(etf.el, '價格減一檔');
-  expect(etf.el.querySelector('[data-testid="cost-breakdown"]').textContent).toContain('15,290');
+  expect(line(etf.el)).toContain('價金 15,290');
   await etf.unmount();
 
   const stock = await render({ symbol: '2884', type: 'buy', price: 15.3, shares: 1000 });
   await clickButton(stock.el, '價格加一檔');
-  expect(stock.el.querySelector('[data-testid="cost-breakdown"]').textContent).toContain('15,350');
+  expect(line(stock.el)).toContain('價金 15,350');
   await stock.unmount();
 });
