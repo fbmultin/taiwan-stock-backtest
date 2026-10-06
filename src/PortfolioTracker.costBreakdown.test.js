@@ -108,6 +108,10 @@ test('今日交易:先一行列出 進/出/總計,再列各筆;點明細直接�
   expect(sum.textContent).toContain('總計 +980,254');
   // 摘要在各筆交易之前
   expect(el.innerHTML.indexOf('today-summary')).toBeLessThan(el.innerHTML.indexOf('00945B'));
+  // 每筆右欄:股數在上、交易總金額在下(右下角)
+  const amt = el.querySelector('[data-testid="tx-amount"]');
+  expect(amt.previousElementSibling.textContent).toMatch(/股$/);
+  expect(amt.parentElement.lastElementChild).toBe(amt);
   // 點一筆交易直接開操作選單(編輯/複製/移動/刪除),不再先跳到個股頁
   const row = Array.from(el.querySelectorAll('div.cursor-pointer')).find((d) => d.textContent.includes('2330'));
   await act(async () => { row.click(); });

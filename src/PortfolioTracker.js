@@ -3035,13 +3035,14 @@ export function TodayTransactionsView({ isLight, items, stockNames, todayStr, on
                 )}
               </div>
               <div className="text-right shrink-0">
-                <div className="font-mono font-bold text-sm">{formatSigned(tx.amount)}</div>
+                {/* 數量在上、交易總金額在下(右下角):使用者先看股數,再看這筆實收/實付金額 */}
                 {tx.type !== TX_TYPES.CASH_DIVIDEND && (
                   <div className={`font-mono text-xs ${typeColor(tx.type)}`}>
                     {tx.type === TX_TYPES.SELL ? '-' : '+'}
                     {formatMoney(tx.shares)}股
                   </div>
                 )}
+                <div className="font-mono font-bold text-sm" data-testid="tx-amount">{formatSigned(tx.amount)}</div>
               </div>
             </div>
           ))}
