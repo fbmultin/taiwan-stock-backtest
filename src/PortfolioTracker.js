@@ -2871,7 +2871,7 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 // 持股明細去找。items 跟著首頁的群組篩選(txBySymbol 已經依目前群組過濾過),
 // 切換群組時看到的「今日交易」自然也只會是這個群組裡的。
 // export 只是為了單元測試(檢查當日進/出/總計摘要)
-export function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenDetail }) {
+export function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenAction }) {
   const typeColor = (t) =>
     t === TX_TYPES.BUY
       ? isLight
@@ -2927,7 +2927,9 @@ export function TodayTransactionsView({ isLight, items, stockNames, todayStr, on
           {items.map((tx) => (
             <div
               key={tx.id}
-              onClick={() => onOpenDetail(tx.symbol)}
+              // 點一筆交易直接開「編輯/複製/移動/刪除」選單,跟在個股頁點交易紀錄一樣,
+              // 不用先跳到個股頁再找一次那筆交易
+              onClick={() => onOpenAction(tx)}
               className={`flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer ${
                 isLight ? 'bg-slate-100' : 'bg-slate-800/60'
               }`}
@@ -3557,10 +3559,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           stockNames={stockNames}
           todayStr={todayDateStr}
           onBack={() => setView('list')}
-          onOpenDetail={(symbol) => {
-            setDetailSymbol(symbol);
-            setView('detail');
-          }}
+          onOpenAction={(tx) => setActionTx(tx)}
         />
       )}
 

@@ -87,7 +87,8 @@ test('賣出債券ETF:停徵期間稅 0', async () => {
   await unmount();
 });
 
-test('今日交易:先一行列出 進/出/總計,再列各筆', async () => {
+test('今日交易:先一行列出 進/出/總計,再列各筆;點明細直接開操作選單', async () => {
+  const onOpenAction = jest.fn();
   const items = [
     { id: 'a', symbol: '00945B', type: 'buy', price: 15.3, shares: 1000, amount: -15321 },
     { id: 'b', symbol: '2330', type: 'sell', price: 1000, shares: 1000, amount: 995575 },
@@ -98,7 +99,7 @@ test('今日交易:先一行列出 進/出/總計,再列各筆', async () => {
   const root = createRoot(el);
   await act(async () => {
     root.render(
-      <TodayTransactionsView isLight items={items} stockNames={{}} todayStr="2026-10-06" onBack={() => {}} onOpenDetail={() => {}} />
+      <TodayTransactionsView isLight items={items} stockNames={{}} todayStr="2026-10-06" onBack={() => {}} onOpenAction={onOpenAction} />
     );
   });
   const sum = el.querySelector('[data-testid="today-summary"]');
@@ -107,6 +108,10 @@ test('今日交易:先一行列出 進/出/總計,再列各筆', async () => {
   expect(sum.textContent).toContain('總計 +980,254');
   // 摘要在各筆交易之前
   expect(el.innerHTML.indexOf('today-summary')).toBeLessThan(el.innerHTML.indexOf('00945B'));
+  // 點一筆交易直接開操作選單(編輯/複製/移動/刪除),不再先跳到個股頁
+  const row = Array.from(el.querySelectorAll('div.cursor-pointer')).find((d) => d.textContent.includes('2330'));
+  await act(async () => { row.click(); });
+  expect(onOpenAction).toHaveBeenCalledWith(items[1]);
   await act(() => root.unmount());
 });
 
