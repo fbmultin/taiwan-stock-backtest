@@ -638,27 +638,37 @@ const isQuotaExceededError = (e) =>
 // 淘汰「歷史資料涵蓋範圍比較早」的快取。
 // 找過程中若剛好遇到已經損毀、解析不出來的快取,直接視為最該優先清除的
 // 對象(反正也讀不了、留著沒用),不需要再比較 cachedAt。
-const evictOldestPriceCacheEntry = () => {
-  let oldestKey = null;
-  let oldestTime = Infinity;
+// 2026-10 改寫:原本每淘汰一筆,就把 localStorage 裡「每一筆」股價快取整份 JSON.parse
+// 一次(一筆約 50 萬字元)只為了讀 cachedAt;空間滿的時候每存一檔就要淘汰一次、
+// 最多重試 30 次,等於在主執行緒上反覆解析好幾 MB 的 JSON。電腦上不明顯,手機上
+// 會讓畫面整個卡住好幾秒(尤其另一台裝置新增了代號、同步過來後要一次抓好幾檔)。
+// 改成:
+//   1. cachedAt 是 savePriceCache 寫入時的最後一個欄位,直接從字串尾端找出來,不解析整份 JSON;
+//   2. 一次排好「舊 → 新」的淘汰順序,之後依序刪,不再每次重掃。
+const readCachedAtFast = (raw) => {
+  if (typeof raw !== 'string') return 0;
+  const marker = '"cachedAt":"';
+  const i = raw.lastIndexOf(marker);
+  if (i < 0) return 0; // 舊格式或損毀:視為最舊,優先淘汰
+  const j = raw.indexOf('"', i + marker.length);
+  const t = new Date(raw.slice(i + marker.length, j)).getTime();
+  return Number.isFinite(t) ? t : 0;
+};
+
+const priceCacheKeysOldestFirst = (exceptKey) => {
+  const list = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (!key || !key.startsWith(PRICE_CACHE_PREFIX)) continue;
+    if (!key || !key.startsWith(PRICE_CACHE_PREFIX) || key === exceptKey) continue;
+    let t = 0;
     try {
-      const parsed = JSON.parse(localStorage.getItem(key));
-      const t = parsed && parsed.cachedAt ? new Date(parsed.cachedAt).getTime() : 0;
-      if (!Number.isFinite(t) || t < oldestTime) {
-        oldestTime = Number.isFinite(t) ? t : 0;
-        oldestKey = key;
-      }
+      t = readCachedAtFast(localStorage.getItem(key));
     } catch (e) {
-      oldestKey = key;
-      break;
+      t = 0;
     }
+    list.push({ key, t });
   }
-  if (!oldestKey) return false;
-  localStorage.removeItem(oldestKey);
-  return true;
+  return list.sort((x, y) => x.t - y.t).map((x) => x.key);
 };
 
 // 空間不足時「先騰空間、再重試」最多這麼多次才放棄——理論上遇到單一筆
@@ -690,13 +700,18 @@ export const savePriceCache = (symbol, result) => {
     cachedAt: new Date().toISOString(),
   });
   const key = cacheKeyFor(symbol);
+  let evictOrder = null; // 第一次空間不足時才排序,之後依序淘汰
   for (let attempt = 0; attempt <= SAVE_RETRY_ON_QUOTA_LIMIT; attempt++) {
     try {
       localStorage.setItem(key, payload);
       return;
     } catch (e) {
       if (!isQuotaExceededError(e)) return; // 非空間問題,沿用原本安靜放棄的行為
-      if (!evictOldestPriceCacheEntry()) return; // 已經沒有更舊的快取可以淘汰了
+      if (evictOrder === null) evictOrder = priceCacheKeysOldestFirst(key);
+      // 自己這一筆的舊版本也可能佔著空間:其他都淘汰完了才刪它
+      const victim = evictOrder.length ? evictOrder.shift() : localStorage.getItem(key) !== null ? key : null;
+      if (!victim) return; // 已經沒有可以淘汰的快取了
+      localStorage.removeItem(victim);
     }
   }
 };

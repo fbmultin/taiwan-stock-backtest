@@ -87,9 +87,14 @@ export function saveLastQuotes(storage, prices) {
 }
 
 // 開啟時的墊檔:上一次顯示的現價 vs 股價歷史快取,取比較新的
+// 有存過「上一次顯示的現價」就直接用,不去讀股價歷史快取:那份快取一檔約 50 萬字元,
+// 開頁時每檔 JSON.parse 一次,持股一多在手機上會卡住畫面好幾秒;而「上一次顯示的現價」
+// 每次畫面上的價格一變就會存,不會比快取舊。只有沒存過的代號(第一次開、或剛同步進來)
+// 才退回去讀快取。
 export function seedQuote(symbol, { lastQuotes, loadPriceCache }) {
   const saved = lastQuotes && lastQuotes[symbol];
   const fromSaved = saved && typeof saved.price === 'number' && saved.price > 0 ? saved : null;
+  if (fromSaved) return fromSaved;
   let fromCache = null;
   try {
     const cached = loadPriceCache ? loadPriceCache(symbol) : null;

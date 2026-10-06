@@ -59,9 +59,12 @@ test('上一次數據:存了下次開啟讀得回來;只存有現價的代號;�
 test('開啟時墊檔:股價歷史快取被淘汰(沒有了)時,仍用上一次數據,不會空白', () => {
   const lastQuotes = { 8358: { price: 551, prevClose: 570, asOf: '2026-10-06T13:30:00' } };
   expect(seedQuote('8358', { lastQuotes, loadPriceCache: () => null })).toEqual(lastQuotes['8358']);
-  // 兩者都有時取比較新的
-  const cache = { data: daily([['2026-10-06', 551], ['2026-10-07', 560]]) };
-  expect(seedQuote('8358', { lastQuotes, loadPriceCache: () => cache }).price).toBe(560);
+  // 有上一次數據就不讀股價歷史快取(一檔約 50 萬字元,手機上逐檔 JSON.parse 會卡住畫面)
+  const load = jest.fn(() => ({ data: daily([['2026-10-06', 551], ['2026-10-07', 560]]) }));
+  expect(seedQuote('8358', { lastQuotes, loadPriceCache: load }).price).toBe(551);
+  expect(load).not.toHaveBeenCalled();
+  // 沒有上一次數據的代號才退回讀快取
+  expect(seedQuote('2330', { lastQuotes, loadPriceCache: load }).price).toBe(560);
   expect(seedQuote('9999', { lastQuotes, loadPriceCache: () => null })).toBeNull();
 });
 
