@@ -64,6 +64,9 @@ import {
   isDayTradeSell,
   isLikelyETF,
   stepPrice,
+  tickSize,
+  securityTaxRate,
+  isBondETF,
   netShareDelta,
   computeSymbolSummary,
   aggregateSummaries,
@@ -156,7 +159,8 @@ function FieldBox({ label, icon, children, isLight, className = '' }) {
 
 // ============== 新增/編輯交易 Modal ==============
 
-function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDelete }) {
+// export 只是為了讓單元測試能直接渲染這個表單(檢查升降單位與費用明細),畫面上仍只由本檔使用
+export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDelete }) {
   const keyboardInset = useKeyboardInset();
   const isEdit = Boolean(initial && initial.id);
   const presetSymbol = initial && initial.symbol ? initial.symbol : '';
@@ -341,8 +345,14 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
     symbol.trim() &&
     date &&
     isDayTradeSell(data.transactions, symbol.trim().toUpperCase(), date, isEdit ? initial.id : null);
-  const taxRate = isEtf ? 0.001 : 0.003;
-  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { isDayTrade, taxRate }) : 0;
+  // 證交稅率依商品類型與交易日期(債券ETF停徵、股票當沖減半都有法定期限),見 portfolioStore.securityTaxRate
+  const isBondEtf = isEtf && isBondETF(symbol);
+  const taxRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: Boolean(isDayTrade), date });
+  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { taxRate }) : 0;
+  const grossAmount = priceNum * sharesNum; // 價金
+  const taxLabel = isBondEtf && taxRate === 0
+    ? '債券ETF停徵'
+    : `${(taxRate * 100).toFixed(taxRate === 0.0015 ? 2 : 1)}%${isDayTrade && !isEtf && taxRate === 0.0015 ? ' 當沖減半' : ''}`;
   const computedAmount =
     type === TX_TYPES.BUY
       ? -(priceNum * sharesNum + fee)
@@ -501,8 +511,10 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                       // 用函式型 setState(讀前一個「待更新」的值而不是這次渲染當下的
                       // closure 變數),避免快速連點時因為尚未重新渲染、好幾次點擊都
                       // 讀到同一個舊的 price 值,導致點擊被「吃掉」、感覺卡住不動。
-                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, -1)));
+                      // 升降單位依商品類型:ETF(含債券ETF)與股票的級距表不同
+                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, -1, isEtf)));
                     }}
+                    aria-label="價格減一檔"
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
                     <Minus className="w-4 h-4" />
@@ -511,8 +523,9 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                     type="button"
                     onClick={() => {
                       priceTouchedRef.current = true;
-                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, 1)));
+                      setPrice((prev) => String(stepPrice(parseFloat(prev) || 0, 1, isEtf)));
                     }}
+                    aria-label="價格加一檔"
                     className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0"
                   >
                     <Plus className="w-4 h-4" />
@@ -548,6 +561,39 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
             )}
           </div>
           <div className="text-xs opacity-60 -mt-2">1張 = 1000股</div>
+
+          {/* 填價格與股數時即時列出費用明細(價金、手續費、證交稅、應付/應收),
+              不用滑到下面的手續費設定區才看得到。 */}
+          {isBuySell && priceNum > 0 && sharesNum > 0 && (
+            <div
+              data-testid="cost-breakdown"
+              className={`rounded-xl px-4 py-3 text-sm space-y-1 ${isLight ? 'bg-slate-100' : 'bg-slate-800/60'}`}
+            >
+              <div className="flex justify-between">
+                <span className="opacity-70">價金</span>
+                <span className="font-mono">{formatMoney(grossAmount)} 元</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">
+                  手續費{fixedFee ? '(固定)' : `(${activeFeeDiscountPct}%${isEtf ? '・ETF' : ''})`}
+                </span>
+                <span className="font-mono">{formatMoney(fee)} 元</span>
+              </div>
+              {type === TX_TYPES.SELL && (
+                <div className="flex justify-between">
+                  <span className="opacity-70">證交稅({taxLabel})</span>
+                  <span className="font-mono">{formatMoney(tax)} 元</span>
+                </div>
+              )}
+              <div className={`flex justify-between pt-1 border-t ${isLight ? 'border-slate-200' : 'border-slate-700'}`}>
+                <span className="font-bold">{type === TX_TYPES.BUY ? '應付金額' : '應收金額'}</span>
+                <span className="font-mono font-bold">{formatMoney(Math.abs(computedAmount))} 元</span>
+              </div>
+              <div className="text-xs opacity-50">
+                升降單位 {tickSize(priceNum, isEtf)} 元({isEtf ? 'ETF' : '股票'}級距)
+              </div>
+            </div>
+          )}
 
           <div className="relative">
             <button
@@ -717,7 +763,7 @@ function TransactionFormModal({ isLight, data, initial, onClose, onSubmit, onDel
                 <span>試算手續費:{formatMoney(fee)} 元</span>
                 {type === TX_TYPES.SELL && (
                   <span>
-                    證交稅({isEtf ? '0.1%' : '0.3%'}):{formatMoney(tax)} 元{isDayTrade ? '(當沖減半)' : ''}
+                    證交稅({taxLabel}):{formatMoney(tax)} 元
                   </span>
                 )}
               </div>
@@ -949,8 +995,9 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
       }
       const fee = estimateFee(group, r.price, r.shares, isEtf);
       const isDayTrade = r.type === TX_TYPES.SELL && isDayTradeSell(dayTradeLookup, r.symbol, r.date, null);
-      const tax =
-        r.type === TX_TYPES.SELL ? estimateTax(r.price, r.shares, { isDayTrade, taxRate: isEtf ? 0.001 : 0.003 }) : 0;
+      // 稅率跟手動新增交易同一套規則(股票/ETF/債券ETF停徵/股票當沖減半),依該筆交易日期判斷
+      const taxRate = securityTaxRate({ isEtf, isBondEtf: isEtf && isBondETF(r.symbol), isDayTrade, date: r.date });
+      const tax = r.type === TX_TYPES.SELL ? estimateTax(r.price, r.shares, { taxRate }) : 0;
       const amount = r.type === TX_TYPES.BUY ? -(r.price * r.shares + fee) : r.price * r.shares - fee - tax;
       return { ...r, fee, tax, isDayTrade, isEtf, amount };
     });

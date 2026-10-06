@@ -31,7 +31,7 @@ Adam(使用者)習慣全程用繁體中文溝通,請一律用繁體中文回覆�
 
 - **ETF回測比較**(`src/App.js`,目前這個檔案很大,5000+ 行):單筆本金一次性投入,可選擇疊加「每月固定日期加碼」和/或「K線穿越均線加碼」,多檔ETF/股票同時比較報酬率走勢。
 - **定期定額策略最佳化**(`src/DcaOptimizer.js` 畫面 + `src/dcaEngine.js` 純運算引擎):每月固定扣款,搭配均線乖離或K線穿越條件觸發加碼,股數只會增加不會賣出。`dcaEngine.js` 裡有一套「參數範圍 → 組合展開 → 分批背景跑 → 依目標排序取前N名」的框架(`buildParamCombinations` / `runOptimizationBatch`),之後如果要做新的回測引擎(例如正在規劃的「現金等訊號逢低買進」或「相對高停利/相對低買回」策略),這套框架的模式可以直接沿用,但策略本身的買賣邏輯要另外寫——跟目前這個「只買不賣」的 DCA+加碼模型是不同的機制。
-- **我的持股**(`src/PortfolioTracker.js` 畫面 + `src/portfolioStore.js` 資料邏輯):個人實際持股的交易紀錄、群組管理、損益試算,資料存 Firebase Firestore 做跨裝置同步。`portfolioStore.js` 裡已經有手續費/證交稅試算公式(`estimateFee` / `estimateTax`),如果之後要幫回測引擎加上交易成本模型,這裡有現成公式可以參考沿用。
+- **我的持股**(`src/PortfolioTracker.js` 畫面 + `src/portfolioStore.js` 資料邏輯):個人實際持股的交易紀錄、群組管理、損益試算,資料存 Firebase Firestore 做跨裝置同步。`portfolioStore.js` 裡已經有手續費/證交稅試算公式(`estimateFee` / `estimateTax`,證交稅率規則集中在 `securityTaxRate`:股票0.3%、ETF0.1%、債券ETF停徵與股票當沖減半都有法定期限;台股升降單位在 `tickSize`/`stepPrice`,股票與ETF級距不同),如果之後要幫回測引擎加上交易成本模型,這裡有現成公式可以參考沿用。
 
 ## 其他共用模組
 

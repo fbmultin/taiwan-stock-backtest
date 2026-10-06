@@ -306,10 +306,35 @@ export function isLikelyETF(symbol) {
   return /^00/.test(String(symbol || '').trim());
 }
 
-// 證交稅:一般股票千分之3,ETF(含ETN、槓反、債券ETF等)千分之1,當沖(同一天
-// 同股票先買後賣)不分ETF或個股都再減半。taxRate 由呼叫端依 isLikelyETF 或
-// 使用者手動切換的結果傳入;沒有傳的話預設用一般股票的千分之3(比較保守,
-// 高估稅額好過低估)。
+// 債券ETF(代號 00 開頭、最後一碼 B,例如 00679B、00945B)。
+export function isBondETF(symbol) {
+  return /^00\d{3,4}B$/.test(String(symbol || '').trim().toUpperCase());
+}
+
+// 證交稅相關的法定期限(證券交易稅條例):
+// - 第2條之1:債券ETF 停徵證交稅,目前至民國115年(2026)12月31日。
+//   行政院 2026-10-01 已通過再延長10年至125年(2036)底的修正草案,但立法院還沒三讀;
+//   三讀後把這個日期改成 '2036-12-31' 即可。
+// - 第2條之2:現股當沖證交稅減半(千分之3 → 千分之1.5),2024-12-31 三讀延長至 2027-12-31。
+//   適用對象是「股票」的現股當沖;ETF 本身稅率就是千分之1,不再減半。
+export const BOND_ETF_TAX_EXEMPT_UNTIL = '2026-12-31';
+export const DAY_TRADE_TAX_HALF_UNTIL = '2027-12-31';
+
+// 證交稅率(賣出時才課):
+//   一般股票 千分之3;現股當沖 千分之1.5(期限內)
+//   ETF(含 ETN、槓反、主動式)千分之1,當沖不減半
+//   債券ETF 停徵期間內 0
+// date 是交易日期(YYYY-MM-DD),用來判斷是否還在停徵/減半期間;沒給就當作今天。
+export function securityTaxRate({ isEtf = false, isBondEtf = false, isDayTrade = false, date } = {}) {
+  const d = date || new Date().toISOString().slice(0, 10);
+  if (isEtf && isBondEtf && d <= BOND_ETF_TAX_EXEMPT_UNTIL) return 0;
+  if (isEtf) return 0.001;
+  if (isDayTrade && d <= DAY_TRADE_TAX_HALF_UNTIL) return 0.0015;
+  return 0.003;
+}
+
+// 證交稅金額(四捨五入到整數元)。taxRate 由呼叫端用 securityTaxRate 算好傳入;
+// 舊的呼叫方式(isDayTrade + taxRate,當沖再減半)保留相容,但新程式請直接傳最終稅率。
 export function estimateTax(price, shares, { isDayTrade = false, taxRate = 0.003 } = {}) {
   return Math.round(price * shares * taxRate * (isDayTrade ? 0.5 : 1));
 }
@@ -335,10 +360,16 @@ export function netShareDelta(txs) {
   }, 0);
 }
 
-// 台股股價升降單位(最小跳動)級距,依證交所公告的價格級距表:
-// <10 元:0.01 / 10~50 元:0.05 / 50~100 元:0.1 / 100~500 元:0.5 / 500~1000 元:1 / >=1000 元:5
-export function tickSize(price) {
+// 台股申報價格升降單位(最小跳動),依證交所「升降單位」表(櫃買中心相同):
+//   股票(含存託憑證、封閉式基金等):
+//     未滿10元 0.01 / 10~未滿50元 0.05 / 50~未滿100元 0.1 / 100~未滿500元 0.5 /
+//     500~未滿1000元 1 / 1000元以上 5
+//   ETF、ETN、REITs(含債券ETF、槓反、主動式ETF):未滿50元 0.01 / 50元以上 0.05
+// 以前只有股票那張表,ETF 也套用,所以像 00945B 這種 10~50 元的債券ETF 按加減鈕
+// 一次跳 0.05,跳不到 13.27 這種 ETF 合法的價位——現在依商品類型分開。
+export function tickSize(price, isEtf = false) {
   const p = Number(price) || 0;
+  if (isEtf) return p < 50 ? 0.01 : 0.05;
   if (p < 10) return 0.01;
   if (p < 50) return 0.05;
   if (p < 100) return 0.1;
@@ -348,18 +379,29 @@ export function tickSize(price) {
 }
 
 // 依目前價格所在的級距,把價格往上或往下調整一個最小跳動單位。方向 direction
-// 傳 1(往上)或 -1(往下);四捨五入到該級距對應的小數位數,避免浮點數誤差
-// 累積出 0.3000000004 這種顯示瑕疵。
-export function stepPrice(price, direction) {
+// 傳 1(往上)或 -1(往下)。
+// 規則:
+// - 往上用「目前價格」的級距;往下用「比目前價格低一點」的級距——剛好落在級距邊界時
+//   (例如股票 50.00 往下),下一個價位屬於下面那一級(49.95),不是 49.90。
+// - 目前價格不在合法價位上(例如手動輸入 12.33 的股票),先對齊到該方向最近的合法價位,
+//   而不是在錯誤價位上再加減一個跳動。
+// - 四捨五入到兩位小數,避免浮點誤差累積出 0.3000000004。
+export function stepPrice(price, direction, isEtf = false) {
   const current = Number(price) || 0;
-  const tick = tickSize(current);
-  const next = Math.max(0, current + tick * direction);
-  // 跨級距時用「調整後價格」的級距重新算一次跳動單位對齊到整數倍,避免卡在
-  // 級距邊界(例如從 49.98 往上跳,照 10~50 元級距應落在 50.00 而不是 50.03)。
-  const nextTick = tickSize(next);
-  const rounded = Math.round(next / nextTick) * nextTick;
-  const decimals = nextTick < 1 ? 2 : 0;
-  return Number(rounded.toFixed(decimals));
+  const round2 = (x) => Number((Math.round(x * 100) / 100).toFixed(2));
+  const EPS = 1e-9;
+  if (direction > 0) {
+    const tick = tickSize(current, isEtf);
+    const aligned = Math.floor(current / tick + EPS) * tick; // 目前價位往下對齊
+    const next = round2(aligned + tick);
+    // 跨級距時用新級距重新對齊(例如股票 49.95 往上 → 50.00,不會變成 50.03)
+    const nt = tickSize(next, isEtf);
+    return round2(Math.ceil(next / nt - EPS) * nt);
+  }
+  if (current <= 0) return 0;
+  const tickBelow = tickSize(Math.max(0, current - 1e-6), isEtf);
+  const alignedUp = Math.ceil(current / tickBelow - EPS) * tickBelow; // 目前價位往上對齊
+  return Math.max(0, round2(alignedUp - tickBelow));
 }
 
 // ---------- 持股試算引擎 ----------
