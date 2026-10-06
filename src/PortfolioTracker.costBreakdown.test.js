@@ -16,7 +16,7 @@ jest.mock('./dataCache', () => ({
 
 /* eslint-disable import/first */
 import * as dataCache from './dataCache';
-import { TransactionFormModal, TodayTransactionsView } from './PortfolioTracker';
+import { TransactionFormModal, TodayTransactionsView, groupBySymbol } from './PortfolioTracker';
 /* eslint-enable import/first */
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -158,4 +158,10 @@ test('複製交易:帶入原交易欄位,改股數就能照交割單拆成多筆
   expect(payload).toMatchObject({ symbol: '00878', type: 'sell', shares: 4000, price: 35.11, date: '2026-10-06', fee: 200, tax: 140, amount: 140100 });
   expect(payload.id).toBeUndefined();
   await act(() => root.unmount());
+});
+
+test('今日交易明細:同一檔排在一起,檔間依第一次出現順序', () => {
+  const mk = (id, symbol) => ({ id, symbol });
+  const out = groupBySymbol([mk(1, 'A'), mk(2, 'B'), mk(3, 'A'), mk(4, 'C'), mk(5, 'B')]);
+  expect(out.map((x) => x.id)).toEqual([1, 3, 2, 5, 4]);
 });

@@ -2948,6 +2948,19 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 // 持股明細去找。items 跟著首頁的群組篩選(txBySymbol 已經依目前群組過濾過),
 // 切換群組時看到的「今日交易」自然也只會是這個群組裡的。
 // export 只是為了單元測試(檢查當日進/出/總計摘要)
+// 同一檔的交易排在一起:檔與檔之間依「第一次出現」的順序(維持原本時間序),
+// 同一檔內維持原順序。為什麼不按代號排序:使用者習慣照當天下單先後看。
+export function groupBySymbol(items) {
+  const order = new Map();
+  items.forEach((tx) => {
+    if (!order.has(tx.symbol)) order.set(tx.symbol, order.size);
+  });
+  return items
+    .map((tx, idx) => ({ tx, idx }))
+    .sort((a, b) => order.get(a.tx.symbol) - order.get(b.tx.symbol) || a.idx - b.idx)
+    .map((x) => x.tx);
+}
+
 export function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, onOpenAction }) {
   const typeColor = (t) =>
     t === TX_TYPES.BUY
@@ -3001,9 +3014,11 @@ export function TodayTransactionsView({ isLight, items, stockNames, todayStr, on
         </div>
       ) : (
         <div className="px-4 mt-4 space-y-2">
-          {items.map((tx) => (
+          {groupBySymbol(items).map((tx, i, arr) => (
             <div
               key={tx.id}
+              // 換到下一檔時多留一點間距,同一檔的幾筆(例如券商拆成兩筆成交)視覺上連在一起
+              style={i > 0 && arr[i - 1].symbol !== tx.symbol ? { marginTop: 14 } : undefined}
               // 點一筆交易直接開「編輯/複製/移動/刪除」選單,跟在個股頁點交易紀錄一樣,
               // 不用先跳到個股頁再找一次那筆交易
               onClick={() => onOpenAction(tx)}
