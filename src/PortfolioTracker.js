@@ -29,7 +29,15 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 import TW_STOCK_NAMES from './data/twStockNames';
-import { fetchStockPriceData, fetchStockDisplayName, loadPriceCache } from './dataCache';
+import { fetchStockPriceData, fetchStockDisplayName, loadPriceCache, fetchLiveQuotes } from './dataCache';
+import {
+  quoteFromDaily,
+  quoteFromLive,
+  loadLastQuotes,
+  saveLastQuotes,
+  seedQuote,
+  applyQuote,
+} from './portfolioQuotes';
 import { isNonTradingDay, getTaipeiDateTimeParts } from './tradingCalendar';
 import {
   TX_TYPES,
@@ -2700,7 +2708,8 @@ function TodayTransactionsView({ isLight, items, stockNames, todayStr, onBack, o
 
 // ============== 主元件 ==============
 
-function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
+// 匯出只為了單元測試(PortfolioTracker.prices.test.js 直接渲染,略過 Google 登入畫面)
+export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [data, setData] = useState(() => loadPortfolioData());
   const [stockNames, setStockNames] = useState(() => ({ ...TW_STOCK_NAMES }));
   // 開頁當下先同步從 localStorage 的股價快取把每一檔已經抓過的代號「秒開」
@@ -2710,19 +2719,26 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   // 嚇人的鉅額虧損數字,如果這次背景重新抓取剛好失敗(例如多檔同時發動把
   // 代理伺服器擠爆逾時),使用者看到的就會一直停在這個錯誤的0,不會自動
   // 恢復——明明 localStorage 裡其實已經有正確的舊資料,卻完全沒被拿來墊檔。
+  //
+  // 後來發現光靠股價歷史快取墊檔不夠:那份快取一檔約 50 萬字元,幾檔就塞滿 localStorage,
+  // dataCache 會把最久沒更新的幾檔刪掉,被刪的那幾檔開啟時就是空白。所以另外存一份很小的
+  // 「上一次顯示的現價」(portfolioQuotes.js 的 portfolio_last_quotes_v1),兩者取比較新的。
+  const lastQuotesRef = useRef(null);
+  if (lastQuotesRef.current === null) lastQuotesRef.current = loadLastQuotes(window.localStorage);
+  const seedFor = (symbol) => seedQuote(symbol, { lastQuotes: lastQuotesRef.current, loadPriceCache });
   const [prices, setPrices] = useState(() => {
     const initial = {};
     const seenSymbols = new Set((loadPortfolioData().transactions || []).map((tx) => tx.symbol));
     seenSymbols.forEach((symbol) => {
-      const cached = loadPriceCache(symbol);
-      const d = cached && cached.data;
-      if (!d || d.length === 0) return;
-      const last = d[d.length - 1];
-      const prev = d[d.length - 2];
-      initial[symbol] = { price: last.price, prevClose: prev ? prev.price : null, loading: true };
+      const q = seedFor(symbol);
+      if (q) initial[symbol] = { ...q, loading: true };
     });
     return initial;
   });
+  // 每次現價有變動,就存一份「上一次顯示的現價」,下次開啟時直接先顯示這份。
+  useEffect(() => {
+    lastQuotesRef.current = saveLastQuotes(window.localStorage, prices);
+  }, [prices]);
   const pendingRef = useRef(new Set());
   const dataRef = useRef(data);
   dataRef.current = data;
@@ -2810,19 +2826,19 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
       const result = await fetchStockPriceData(symbol, { force });
       const d = (result && result.data) || [];
       const last = d[d.length - 1];
-      const prev = d[d.length - 2];
       // 這次沒抓到任何資料(即時抓取失敗、也沒有快取可以退回)時,不要把
       // price 蓋成0——那樣會讓市值/損益瞬間變成一個假的鉅額虧損,而且一旦
       // 卡在失敗就不會自動恢復。保留目前畫面上原本的值(通常是開頁時從
       // localStorage 快取墊檔的那個價格),只標記 error,下次重新整理或
       // 手動刷新成功時自然會換成新值。真的完全沒有任何舊資料可用的全新
       // 代號,才會維持沒有 price 欄位、由畫面顯示「…」或「-」。
-      setPrices((p) => ({
-        ...p,
-        [symbol]: last
-          ? { price: last.price, prevClose: prev ? prev.price : null, loading: false, error: false }
-          : { ...(p[symbol] || {}), loading: false, error: true },
-      }));
+      // 有新資料時用 applyQuote:只有比畫面上現有的更新才覆蓋,避免這筆晚到的昨收
+      // 蓋掉剛剛拿到的盤中即時報價。
+      setPrices((p) =>
+        last
+          ? applyQuote(p, symbol, quoteFromDaily(d))
+          : { ...p, [symbol]: { ...(p[symbol] || {}), loading: false, error: true } }
+      );
       if (!stockNamesRef.current[symbol]) {
         const nm = await fetchStockDisplayName(symbol);
         if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
@@ -2834,10 +2850,36 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   };
 
   useEffect(() => {
-    symbols.forEach((symbol) => {
-      if (pendingRef.current.has(symbol)) return;
-      pendingRef.current.add(symbol);
-      fetchPriceForSymbol(symbol);
+    const fresh = symbols.filter((symbol) => !pendingRef.current.has(symbol));
+    if (fresh.length === 0) return;
+    fresh.forEach((symbol) => pendingRef.current.add(symbol));
+    // 先墊檔:雲端同步進來的代號(本機持股資料裡原本沒有)開頁初始化時沒被墊到,
+    // 這裡補上,畫面先顯示上一次的數據,不要空白等網路。
+    setPrices((p) => {
+      let next = p;
+      fresh.forEach((symbol) => {
+        if (next[symbol] && typeof next[symbol].price === 'number') return;
+        const q = seedFor(symbol);
+        if (q) next = { ...next, [symbol]: { ...q, loading: true } };
+      });
+      return next;
+    });
+    fresh.forEach((symbol) => fetchPriceForSymbol(symbol));
+    // 同時查一次即時報價(一個請求查完這批代號):盤中開啟也能看到現在的價格,
+    // 不只昨天的收盤價。失敗就算了,日資料照常更新。
+    fetchLiveQuotes(fresh).then((quotes) => {
+      const syms = Object.keys(quotes);
+      if (syms.length === 0) return;
+      setPrices((p) => {
+        let next = p;
+        syms.forEach((sym) => {
+          const wasLoading = next[sym] && next[sym].loading;
+          next = applyQuote(next, sym, quoteFromLive(quotes[sym]));
+          // 日資料還在抓的話,保留「讀取中」狀態,讓它抓完再收尾
+          if (wasLoading) next = { ...next, [sym]: { ...next[sym], loading: true } };
+        });
+        return next;
+      });
     });
   }, [symbolsKey]);
 
@@ -2851,29 +2893,34 @@ function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   // 的狀態,使用者會覺得「數字變得不準」。改成全部收集完、確定每一檔的
   // 結果後,一次性地用單一個 setPrices 套用:抓成功的才覆蓋,抓失敗/逾時
   // 的那幾檔完全不動,直接維持刷新前的舊數字,不會被清空或歸零。
+  //
+  // 2026-10:更新鈕要「不管是不是盤中,按下去就更新所有持股的股價」。日資料來源都要收盤後
+  // 才有當天那一筆,所以同時查一次即時報價(上市、上櫃都有),每檔取兩者中比較新的那個。
   const refreshAllPrices = async () => {
     if (refreshingPrices || symbols.length === 0) return;
     setRefreshingPrices(true);
     try {
-      const results = await Promise.all(
-        symbols.map(async (symbol) => {
-          try {
-            const result = await fetchStockPriceData(symbol, { force: true });
-            const d = (result && result.data) || [];
-            const last = d[d.length - 1];
-            if (!last) return null; // 沒抓到新資料,稍後略過、不動這一檔原本的數字
-            const prev = d[d.length - 2];
-            return { symbol, price: last.price, prevClose: prev ? prev.price : null };
-          } catch (e) {
-            return null;
-          }
-        })
-      );
+      const [results, liveQuotes] = await Promise.all([
+        Promise.all(
+          symbols.map(async (symbol) => {
+            try {
+              const result = await fetchStockPriceData(symbol, { force: true });
+              const q = quoteFromDaily(result && result.data);
+              return q ? { symbol, q } : null; // 沒抓到新資料,稍後略過、不動這一檔原本的數字
+            } catch (e) {
+              return null;
+            }
+          })
+        ),
+        fetchLiveQuotes(symbols).catch(() => ({})),
+      ]);
       setPrices((p) => {
-        const next = { ...p };
+        let next = p;
         results.forEach((r) => {
-          if (!r) return;
-          next[r.symbol] = { ...(next[r.symbol] || {}), price: r.price, prevClose: r.prevClose, loading: false, error: false };
+          if (r) next = applyQuote(next, r.symbol, r.q);
+        });
+        Object.keys(liveQuotes).forEach((sym) => {
+          next = applyQuote(next, sym, quoteFromLive(liveQuotes[sym]));
         });
         return next;
       });
