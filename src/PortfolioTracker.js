@@ -47,6 +47,8 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 import TW_STOCK_NAMES from './data/twStockNames';
+import { squarify } from './treemap';
+import { buildHeatmapModel } from './portfolioHeatmap';
 import { fetchStockPriceData, fetchStockDisplayName, loadPriceCache, fetchLiveQuotes } from './dataCache';
 import {
   quoteFromDaily,
@@ -1887,6 +1889,7 @@ function HoldingsListView({
   onOpenSettings,
   onOpenSummary,
   onOpenTodayTx,
+  onOpenHeatmap = () => {},
   onAddTx,
   onOpenImport,
   activeGroup,
@@ -2063,6 +2066,12 @@ function HoldingsListView({
       <div className="px-4 mt-5 flex items-center justify-between">
         <div className="font-bold">績效數據</div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={onOpenHeatmap}
+            className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
+          >
+            熱力圖 &gt;
+          </button>
           <button
             onClick={onOpenTodayTx}
             className={`text-xs font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}
@@ -2948,6 +2957,185 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
 // 持股明細去找。items 跟著首頁的群組篩選(txBySymbol 已經依目前群組過濾過),
 // 切換群組時看到的「今日交易」自然也只會是這個群組裡的。
 // export 只是為了單元測試(檢查當日進/出/總計摘要)
+// ---------- 持股熱力圖 ----------
+// 兩層:第一層「群組」(格子大小 = 群組市值,格內列出個股),點群組進第二層「個股」;
+// 「全部」= 不分群組的個股圖。顏色代表今日漲跌(台股習慣:紅漲綠跌,越深越多),
+// 格內只顯示金額(市值)與比重,不顯示股價;點個股跳出細節框。
+function heatColor(pct) {
+  if (pct === null || pct === undefined || !isFinite(pct)) return 'hsl(215, 14%, 78%)';
+  const t = Math.min(Math.abs(pct) / 3, 1); // 漲跌 3% 以上顏色最深
+  if (Math.abs(pct) < 0.005) return 'hsl(215, 14%, 80%)';
+  return pct > 0 ? `hsl(0, ${42 + 18 * t}%, ${86 - 26 * t}%)` : `hsl(140, ${22 + 16 * t}%, ${80 - 24 * t}%)`;
+}
+
+function useBoxWidth(fallback = 360) {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(fallback);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setWidth(Math.round(w));
+    };
+    measure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  return [ref, width];
+}
+
+export function HeatmapView({ isLight, model, onBack }) {
+  // level: null = 第一層(群組);否則是 group id 或 ALL_GROUP_ID(第二層)
+  const [level, setLevel] = useState(null);
+  const [picked, setPicked] = useState(null);
+  const [boxRef, width] = useBoxWidth();
+  const height = Math.max(380, Math.round((typeof window !== 'undefined' ? window.innerHeight : 800) * 0.62));
+
+  const current = level === null ? null : level === ALL_GROUP_ID ? model.total : model.groups.find((g) => g.id === level) || null;
+  const totalValue = model.total.marketValue;
+
+  const tiles = useMemo(() => {
+    if (level === null) return squarify(model.groups.map((g) => ({ key: g.id, value: g.marketValue })), 0, 0, width, height);
+    if (!current) return [];
+    return squarify(current.items.map((it) => ({ key: it.symbol, value: it.marketValue })), 0, 0, width, height);
+  }, [level, current, model, width, height]);
+
+  const pct = (v, base) => (base > 0 ? `${((v / base) * 100).toFixed(2)}%` : '-');
+  const muted = isLight ? 'text-slate-500' : 'text-slate-400';
+  const handleBack = () => (level === null ? onBack() : setLevel(null));
+  const title = level === null ? '持股熱力圖' : `熱力圖｜${current ? current.name : ''}`;
+  const headerValue = level === null ? totalValue : current ? current.marketValue : 0;
+  const empty = tiles.length === 0;
+
+  return (
+    <div className="pb-24">
+      <div className="flex items-center gap-2 px-4 pt-4">
+        <button onClick={handleBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0" aria-label="返回">
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1 text-center -ml-7">
+          <div className="font-bold">{title}</div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-2 text-center">
+        <div className="font-mono font-bold text-2xl" data-testid="heatmap-total">{formatMoney(headerValue)}</div>
+        <div className={`text-xs mt-0.5 ${muted}`}>
+          {level === null ? '點群組看個股' : `占全部 ${pct(headerValue, totalValue)}`}｜顏色=今日漲跌(紅漲綠跌)
+        </div>
+        {level === null && model.groups.length > 0 && (
+          <button
+            onClick={() => setLevel(ALL_GROUP_ID)}
+            className={`mt-2 text-xs font-bold px-3 py-1 rounded-full ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'}`}
+          >
+            全部個股 &gt;
+          </button>
+        )}
+      </div>
+
+      <div className="px-2 mt-3">
+        <div ref={boxRef} className="relative w-full overflow-hidden rounded-lg" style={{ height }} data-testid="heatmap-box">
+          {empty && (
+            <div className={`absolute inset-0 flex items-center justify-center text-sm ${muted}`}>
+              還沒有可顯示的持股(需要有現價與庫存)
+            </div>
+          )}
+          {tiles.map((t) => {
+            const isGroupLevel = level === null;
+            const g = isGroupLevel ? model.groups.find((x) => x.id === t.key) : null;
+            const it = isGroupLevel ? null : current.items.find((x) => x.symbol === t.key);
+            const color = heatColor(isGroupLevel ? g.changePct : it.changePct);
+            const fs = Math.max(10, Math.min(20, Math.sqrt(t.w * t.h) / 7));
+            const showText = t.w >= 38 && t.h >= 26;
+            const showAmount = showText && t.h >= fs * 3.6 && t.w >= 64;
+            const base = isGroupLevel ? totalValue : current.marketValue;
+            const value = isGroupLevel ? g.marketValue : it.marketValue;
+            const label = isGroupLevel ? g.name : symbolLabel(it.symbol, it.name).primary;
+            // 群組格:把組內個股(ETF 代號/個股股名)依市值列在下面,放不下的由 overflow 切掉
+            const listH = t.h - fs * 4.4;
+            const memberText = isGroupLevel
+              ? g.items.map((m) => symbolLabel(m.symbol, m.name).primary).join('、')
+              : '';
+            return (
+              <div
+                key={t.key}
+                data-testid={isGroupLevel ? `hm-group-${t.key}` : `hm-stock-${t.key}`}
+                onClick={() => (isGroupLevel ? setLevel(t.key) : setPicked(it))}
+                className="absolute cursor-pointer overflow-hidden text-center text-slate-800"
+                style={{ left: t.x, top: t.y, width: t.w, height: t.h, background: color, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.85)' }}
+              >
+                {showText && (
+                  <div className="px-1 pt-1.5 leading-tight">
+                    <div className="font-bold break-words" style={{ fontSize: fs }}>{label}</div>
+                    <div className="font-mono" style={{ fontSize: Math.max(10, fs * 0.8) }}>{pct(value, base)}</div>
+                    {showAmount && (
+                      <div className="font-mono" style={{ fontSize: Math.max(10, fs * 0.8) }}>{formatMoney(value)}</div>
+                    )}
+                    {isGroupLevel && showAmount && listH >= 14 && (
+                      <div
+                        className="mt-1 overflow-hidden text-slate-700/80 break-words"
+                        style={{ fontSize: 11, lineHeight: '14px', maxHeight: Math.floor(listH / 14) * 14 }}
+                      >
+                        {memberText}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {picked && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-6" onClick={() => setPicked(null)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            data-testid="heatmap-popup"
+            onClick={(e) => e.stopPropagation()}
+            className={`relative w-full max-w-xs rounded-xl px-5 py-4 shadow-2xl ${isLight ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+          >
+            {(() => {
+              const lb = symbolLabel(picked.symbol, picked.name);
+              return (
+                <div className="text-center mb-3">
+                  <div className="font-bold text-lg font-mono">{lb.codeFirst ? lb.primary : lb.secondary}</div>
+                  {(lb.codeFirst ? lb.secondary : lb.primary) && (
+                    <div className="font-bold">{lb.codeFirst ? lb.secondary : lb.primary}</div>
+                  )}
+                </div>
+              );
+            })()}
+            {[
+              ['持股比重', pct(picked.marketValue, current ? current.marketValue : totalValue)],
+              ['持股數量', `${formatMoney(picked.shares)}股`],
+              ['市值', formatMoney(picked.marketValue)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between py-1">
+                <span className={muted}>{k}</span>
+                <span className="font-mono font-bold">{v}</span>
+              </div>
+            ))}
+            <div className="flex justify-between py-1">
+              <span className={muted}>現價</span>
+              <span className={`font-mono font-bold ${pnlColorClass(picked.changePct, isLight)}`}>
+                {picked.price ? picked.price.toFixed(2) : '-'}
+                {picked.changePct !== null && picked.changePct !== undefined ? `(${formatPct(picked.changePct)})` : ''}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 同一檔的交易排在一起:檔與檔之間依「第一次出現」的順序(維持原本時間序),
 // 同一檔內維持原順序。為什麼不按代號排序:使用者習慣照當天下單先後看。
 export function groupBySymbol(items) {
@@ -3273,6 +3461,9 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const txBySymbol = useMemo(() => getTransactionsByGroup(data, data.activeGroupId), [data]);
   const symbols = useMemo(() => Object.keys(txBySymbol), [txBySymbol]);
   const symbolsKey = symbols.join(',');
+  // 所有群組的代號:熱力圖第一層要看全部群組,現價不能只抓目前選到的群組
+  const allDataSymbols = useMemo(() => Array.from(new Set(data.transactions.map((tx) => tx.symbol))), [data.transactions]);
+  const allSymbolsKey = allDataSymbols.join(',');
 
   const stockNamesRef = useRef(stockNames);
   stockNamesRef.current = stockNames;
@@ -3309,7 +3500,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   };
 
   useEffect(() => {
-    const fresh = symbols.filter((symbol) => !pendingRef.current.has(symbol));
+    const fresh = allDataSymbols.filter((symbol) => !pendingRef.current.has(symbol));
     if (fresh.length === 0) return;
     fresh.forEach((symbol) => pendingRef.current.add(symbol));
     // 先墊檔:雲端同步進來的代號(本機持股資料裡原本沒有)開頁初始化時沒被墊到,
@@ -3340,7 +3531,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
         return next;
       });
     });
-  }, [symbolsKey]);
+  }, [allSymbolsKey]);
 
   const [refreshingPrices, setRefreshingPrices] = useState(false);
 
@@ -3356,12 +3547,12 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   // 2026-10:更新鈕要「不管是不是盤中,按下去就更新所有持股的股價」。日資料來源都要收盤後
   // 才有當天那一筆,所以同時查一次即時報價(上市、上櫃都有),每檔取兩者中比較新的那個。
   const refreshAllPrices = async () => {
-    if (refreshingPrices || symbols.length === 0) return;
+    if (refreshingPrices || allDataSymbols.length === 0) return;
     setRefreshingPrices(true);
     try {
       const [results, liveQuotes] = await Promise.all([
         Promise.all(
-          symbols.map(async (symbol) => {
+          allDataSymbols.map(async (symbol) => {
             try {
               const result = await fetchStockPriceData(symbol, { force: true });
               const q = quoteFromDaily(result && result.data);
@@ -3371,7 +3562,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
             }
           })
         ),
-        fetchLiveQuotes(symbols).catch(() => ({})),
+        fetchLiveQuotes(allDataSymbols).catch(() => ({})),
       ]);
       setPrices((p) => {
         let next = p;
@@ -3384,7 +3575,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
         return next;
       });
       // 股票名稱缺的話順便補,不影響上面價格的「全部確定完成才套用」邏輯。
-      symbols.forEach((symbol) => {
+      allDataSymbols.forEach((symbol) => {
         if (stockNamesRef.current[symbol]) return;
         fetchStockDisplayName(symbol).then((nm) => {
           if (nm) setStockNames((sn) => ({ ...sn, [symbol]: nm }));
@@ -3467,6 +3658,12 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   );
 
   const activeGroup = data.groups.find((g) => g.id === data.activeGroupId) || null;
+
+  // 熱力圖資料:只有開著熱力圖時才計算(要對每個群組各算一次,平常不浪費)
+  const heatmapModel = useMemo(
+    () => (view === 'heatmap' ? buildHeatmapModel(data, prices, stockNames) : { total: { marketValue: 0, items: [] }, groups: [] }),
+    [view, data, prices, stockNames]
+  );
 
   // ---- 今日交易明細(首頁「績效數據」旁「今日交易」) ----
   // 「今天」比對的是交易自己的日期欄位(YYYY-MM-DD),跟 computeSymbolSummary
@@ -3613,6 +3810,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onOpenSettings={handleOpenGroupSettings}
           onOpenSummary={() => setView('summary')}
           onOpenTodayTx={() => setView('todayTx')}
+          onOpenHeatmap={() => setView('heatmap')}
           onAddTx={() => openAddTx(null)}
           onOpenImport={() => setShowImportCsv(true)}
           activeGroup={activeGroup}
@@ -3653,6 +3851,8 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onBack={() => setView('list')}
         />
       )}
+
+      {view === 'heatmap' && <HeatmapView isLight={isLight} model={heatmapModel} onBack={() => setView('list')} />}
 
       {view === 'todayTx' && (
         <TodayTransactionsView
