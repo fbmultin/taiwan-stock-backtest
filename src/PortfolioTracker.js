@@ -17,7 +17,10 @@ import {
   Upload,
   LogOut,
   RefreshCw,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
+import { mergeForSync, loadSyncMeta, saveSyncMeta } from './portfolioSync';
 import {
   onAuthStateChanged,
   signInWithCredential,
@@ -49,6 +52,9 @@ import {
   fetchRemoteDataOnce,
   subscribeRemoteData,
   saveRemoteData,
+  hasPendingRemoteSave,
+  cancelPendingRemoteSave,
+  normalizePortfolioData,
   createGroup,
   updateGroup,
   deleteGroup,
@@ -1733,8 +1739,12 @@ function HoldingsListView({
   onSignOut,
   onRefreshPrices,
   refreshingPrices,
+  sync = { status: 'off' },
+  onRetrySync = () => {},
+  onDismissRestored = () => {},
 }) {
   const displayedHoldings = holdings;
+  const syncLoading = sync.status === 'loading';
   // 浮動「切換群組」色塊鈕:點開主鈕,原地往上展開每個群組各一顆的色塊小圓鈕
   // (用群組自己的顏色),點哪顆就切到哪個群組;「全部」跟「+新增群組」也各佔
   // 一顆,收合在同一個位置。主鈕放在跟其他頁面「回上一層」鈕相同的 bottom-56
@@ -1794,6 +1804,56 @@ function HoldingsListView({
           )}
         </div>
       </div>
+
+      {/* 雲端同步狀態:下載中/無法連線要明確提示,不然空白畫面會被誤會成「資料不見了」 */}
+      {syncLoading && (
+        <div
+          data-testid="sync-banner"
+          className={`mx-4 mt-3 rounded-xl px-3 py-2 text-sm flex items-center gap-2 ${
+            isLight ? 'bg-sky-50 text-sky-800' : 'bg-sky-900/40 text-sky-200'
+          }`}
+        >
+          <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+          <span>正在從雲端下載你的持股資料…下載完成前,這台裝置的變更不會上傳。</span>
+        </div>
+      )}
+      {sync.status === 'error' && (
+        <div
+          data-testid="sync-banner"
+          className={`mx-4 mt-3 rounded-xl px-3 py-2 text-sm flex items-center gap-2 ${
+            isLight ? 'bg-amber-50 text-amber-800' : 'bg-amber-900/40 text-amber-200'
+          }`}
+        >
+          <CloudOff className="w-4 h-4 shrink-0" />
+          <span className="flex-1">
+            {sync.error === 'save'
+              ? '變更還沒上傳到雲端(網路不穩?),已先存在這台裝置。'
+              : '無法連線雲端,目前顯示這台裝置上的資料;連上之前,變更只會存在這台裝置。'}
+          </span>
+          <button onClick={onRetrySync} className="shrink-0 px-2 py-1 rounded-lg font-bold bg-amber-500 text-white">
+            重試
+          </button>
+        </div>
+      )}
+      {sync.restoredCount > 0 && (
+        <div
+          className={`mx-4 mt-3 rounded-xl px-3 py-2 text-sm flex items-center gap-2 ${
+            isLight ? 'bg-emerald-50 text-emerald-800' : 'bg-emerald-900/40 text-emerald-200'
+          }`}
+        >
+          <Cloud className="w-4 h-4 shrink-0" />
+          <span className="flex-1">已把這台裝置上 {sync.restoredCount} 筆雲端沒有的交易補上傳。</span>
+          <button onClick={onDismissRestored} className="shrink-0 p-1" aria-label="關閉">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      {sync.status === 'synced' && sync.lastSyncedAt && (
+        <div className={`px-4 pt-2 text-xs flex items-center justify-center gap-1 ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
+          <Cloud className="w-3 h-3" />
+          已同步 {sync.lastSyncedAt.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      )}
 
       {/* Adam要求的版面調整:原本這兩個位置分別放「庫存市值」「未實現損益」,
           現在位置、字型格式都不變,改放「總損益(不顯示%)」「庫存市值」。 */}
@@ -1886,7 +1946,7 @@ function HoldingsListView({
       <div className="px-3 mt-2 space-y-2">
         {displayedHoldings.length === 0 && (
           <div className={`text-center py-10 text-sm ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>
-            這個群組還沒有任何持股,點右下角「＋」新增第一筆交易。
+            {syncLoading ? '正在從雲端載入持股…' : '這個群組還沒有任何持股,點右下角「＋」新增第一筆交易。'}
           </div>
         )}
         {displayedHoldings.map((h) => {
@@ -2806,44 +2866,106 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [selectedSymbols, setSelectedSymbols] = useState(new Set());
   const [movingSymbols, setMovingSymbols] = useState(null); // string[] | null
 
+  // ---- 跨裝置同步(詳細規則見 portfolioSync.js 開頭的說明) ----
+  // status:off(沒登入)/ loading(正在讀雲端)/ synced(已同步)/ error(讀不到雲端或上傳失敗)
+  // 關鍵:syncReadyRef 為 true(已經成功讀過雲端並合併)之前,本機的任何變動都只存本機,
+  // 絕不上傳——2026-10 的事故就是開頁時本機空白資料搶在雲端讀完之前上傳,蓋掉了雲端正本。
+  const [sync, setSync] = useState(() => ({ status: uid ? 'loading' : 'off', lastSyncedAt: null, restoredCount: 0, error: null }));
+  const [syncAttempt, setSyncAttempt] = useState(0);
+  const syncReadyRef = useRef(false);
+  // 最後一次「確定跟雲端一致」的內容(JSON),本機資料跟它一樣就不用再上傳
+  const remoteJsonRef = useRef(null);
+
+  const markSynced = (savedData) => {
+    remoteJsonRef.current = JSON.stringify(savedData);
+    saveSyncMeta(window.localStorage, uid, savedData);
+    setSync((s) => ({ ...s, status: 'synced', lastSyncedAt: new Date(), error: null }));
+  };
+  const uploadNow = (d, { immediate = false } = {}) => {
+    saveRemoteData(uid, d, {
+      immediate,
+      onSaved: (payload) => markSynced(payload),
+      onError: () => setSync((s) => ({ ...s, status: 'error', error: 'save' })),
+    });
+  };
+
   useEffect(() => {
-    savePortfolioData(data); // 本機快取:離線、或下面雲端同步還沒跑完時也能馬上讀寫
-    saveRemoteData(uid, data); // 已登入時才會真的寫出去(內建 debounce)
+    savePortfolioData(data); // 本機快取:離線、或雲端同步還沒跑完時也能馬上讀寫
+    if (!uid || !syncReadyRef.current) return; // 還沒讀過雲端:先不上傳
+    if (JSON.stringify(JSON.parse(JSON.stringify(data))) === remoteJsonRef.current) return; // 跟雲端一樣
+    uploadNow(data);
   }, [data, uid]);
 
-  // 登入狀態改變時,跟雲端對一次資料:
-  // - 雲端已經有資料 -> 用雲端那份蓋過本機(雲端是跨裝置的正本)
-  // - 雲端還沒有資料(這個帳號第一次登入) -> 把本機現有資料當成起點上傳
-  // 之後透過 onSnapshot 持續訂閱,另一台裝置改了資料也會即時同步過來。
+  // 登入(或按「重試」)時:先讀雲端 → 跟本機三方合併 → 才開始雙向同步。
   useEffect(() => {
-    if (!uid) return undefined;
+    syncReadyRef.current = false;
+    remoteJsonRef.current = null;
+    if (!uid) {
+      setSync({ status: 'off', lastSyncedAt: null, restoredCount: 0, error: null });
+      return undefined;
+    }
+    setSync((s) => ({ ...s, status: 'loading', error: null }));
     let cancelled = false;
     let unsubscribe = () => {};
 
+    // 收到雲端資料(第一次讀取、或之後別台裝置改了)時的共同處理
+    const applyRemote = (rawRemote) => {
+      const remote = rawRemote ? normalizePortfolioData(rawRemote) : null;
+      const { data: merged, needsUpload, addedTxCount } = mergeForSync({
+        local: dataRef.current,
+        remote,
+        meta: loadSyncMeta(window.localStorage),
+        uid,
+      });
+      if (remote) {
+        remoteJsonRef.current = JSON.stringify(remote);
+        // 記下「雲端此刻有哪些交易」;本機補上去的那些等上傳成功後(markSynced)才記
+        saveSyncMeta(window.localStorage, uid, remote);
+      }
+      setData((prev) => (JSON.stringify(prev) === JSON.stringify(merged) ? prev : merged));
+      return { merged, needsUpload, addedTxCount };
+    };
+
     (async () => {
       try {
-        const remote = await fetchRemoteDataOnce(uid);
+        // 手機網路不穩時 getDoc 可能等很久,15 秒還沒回來就先顯示「無法連線」,讓使用者可以重試
+        const remote = await Promise.race([
+          fetchRemoteDataOnce(uid),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
+        ]);
         if (cancelled) return;
-        if (remote) {
-          setData((prev) => (JSON.stringify(prev) === JSON.stringify(remote) ? prev : remote));
-        } else {
-          saveRemoteData(uid, dataRef.current, { immediate: true });
-        }
+        const { merged, needsUpload, addedTxCount } = applyRemote(remote);
+        syncReadyRef.current = true;
+        setSync((s) => ({ ...s, restoredCount: addedTxCount }));
+        if (needsUpload) uploadNow(merged, { immediate: true });
+        else markSynced(remote ? JSON.parse(remoteJsonRef.current) : merged);
       } catch (e) {
-        console.error('讀取雲端資料失敗,先繼續使用本機資料', e);
+        console.error('讀取雲端資料失敗,先繼續使用本機資料(不會上傳,避免蓋掉雲端)', e);
+        if (!cancelled) setSync((s) => ({ ...s, status: 'error', error: 'load' }));
+        return;
       }
-
-      unsubscribe = subscribeRemoteData(uid, (remote) => {
-        if (!remote) return;
-        setData((prev) => (JSON.stringify(prev) === JSON.stringify(remote) ? prev : remote));
-      }, (e) => console.error('雲端同步訂閱中斷', e));
+      if (cancelled) return;
+      unsubscribe = subscribeRemoteData(
+        uid,
+        (remote, { hasPendingWrites } = {}) => {
+          // 自己剛寫的回音、或還有變更沒送出時,不拿雲端蓋本機(會吃掉剛剛的操作)
+          if (!remote || hasPendingWrites || hasPendingRemoteSave()) return;
+          const json = JSON.stringify(normalizePortfolioData(remote));
+          if (json === remoteJsonRef.current) return;
+          const { merged, needsUpload } = applyRemote(remote);
+          if (needsUpload) uploadNow(merged);
+          else setSync((s) => ({ ...s, status: 'synced', lastSyncedAt: new Date(), error: null }));
+        },
+        (e) => console.error('雲端同步訂閱中斷', e)
+      );
     })();
 
     return () => {
       cancelled = true;
       unsubscribe();
+      cancelPendingRemoteSave();
     };
-  }, [uid]);
+  }, [uid, syncAttempt]);
 
   // 切換「持股列表 / 個股詳情」畫面時捲回最上方。
   // 如果使用者在列表往下滑很多之後才點進某一檔,detail 畫面會沿用同一個捲動位置,
@@ -3194,6 +3316,9 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onOpenMoveSymbols={() => setMovingSymbols(Array.from(selectedSymbols))}
           onRefreshPrices={handleRefreshPrices}
           refreshingPrices={refreshingPrices}
+          sync={sync}
+          onRetrySync={() => setSyncAttempt((n) => n + 1)}
+          onDismissRestored={() => setSync((st) => ({ ...st, restoredCount: 0 }))}
         />
       )}
 

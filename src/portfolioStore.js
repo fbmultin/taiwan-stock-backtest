@@ -27,30 +27,53 @@ export async function fetchRemoteDataOnce(uid) {
 }
 
 // 訂閱雲端資料變化(例如在另一台裝置上改的),回傳取消訂閱函式。
+// 第二個參數帶 hasPendingWrites:這台裝置自己剛寫、還沒被伺服器確認的那一版也會觸發一次,
+// 呼叫端用它分辨「別台裝置改的」與「自己寫的回音」。
 export function subscribeRemoteData(uid, onData, onError) {
   if (!uid) return () => {};
   return onSnapshot(
     doc(db, REMOTE_COLLECTION, uid),
-    (snap) => onData(snap.exists() ? snap.data() : null),
+    (snap) =>
+      onData(snap.exists() ? snap.data() : null, {
+        hasPendingWrites: Boolean(snap.metadata && snap.metadata.hasPendingWrites),
+      }),
     onError
   );
 }
 
 let saveTimer = null;
 // 把資料寫回雲端;預設加一點 debounce,避免連續操作(例如快速點+/-調整股數)
-// 時每一下都各自觸發一次網路寫入。immediate:true 用在「帳號第一次登入、
-// 要把本機既有資料當成起點上傳」這種只會發生一次、不想等待的情境。
-export function saveRemoteData(uid, data, { immediate = false } = {}) {
+// 時每一下都各自觸發一次網路寫入。immediate:true 用在「合併後要立刻把本機補的資料上傳」。
+// 注意:呼叫端必須先確認「已經成功讀過雲端」才能呼叫(見 portfolioSync.js 開頭的事故說明),
+// 這個函式本身不做判斷。onSaved/onError 讓畫面能顯示同步狀態。
+export function saveRemoteData(uid, data, { immediate = false, onSaved, onError } = {}) {
   if (!uid) return;
   clearTimeout(saveTimer);
+  saveTimer = null;
   const payload = sanitizeForFirestore(data);
   const run = () => {
-    setDoc(doc(db, REMOTE_COLLECTION, uid), payload).catch((e) => {
-      console.error('雲端同步失敗(本機資料不受影響,下次有網路時會再試)', e);
-    });
+    saveTimer = null;
+    setDoc(doc(db, REMOTE_COLLECTION, uid), payload)
+      .then(() => onSaved && onSaved(payload))
+      .catch((e) => {
+        console.error('雲端同步失敗(本機資料不受影響,下次有網路時會再試)', e);
+        if (onError) onError(e);
+      });
   };
   if (immediate) run();
   else saveTimer = setTimeout(run, 800);
+}
+
+// 還有一筆等著送出的變更(debounce 中)。這段期間收到的雲端快照不能拿來蓋本機,
+// 否則剛剛的操作會被舊版本吃掉。
+export function hasPendingRemoteSave() {
+  return saveTimer !== null;
+}
+
+// 登出/換帳號時取消還沒送出的寫入,避免寫到錯的帳號
+export function cancelPendingRemoteSave() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
 }
 
 export const TX_TYPES = {
@@ -131,21 +154,29 @@ function migrateGroup(g) {
   };
 }
 
+// 把任何來源(本機 localStorage、雲端 Firestore)的資料整理成同一個格式;
+// 雲端那份原本是直接拿來用,沒有經過舊欄位搬移,這裡統一處理。
+export function normalizePortfolioData(parsed) {
+  if (!parsed || !Array.isArray(parsed.groups) || parsed.groups.length === 0) {
+    const base = defaultData();
+    // 群組被清空但還有交易時,保留交易(掛到預設群組上),不要讓交易跟著消失
+    const txs = parsed && Array.isArray(parsed.transactions) ? parsed.transactions : [];
+    return { ...base, transactions: txs.map((t) => ({ ...t, groupId: base.groups[0].id })) };
+  }
+  return {
+    version: 1,
+    groups: parsed.groups.map(migrateGroup),
+    tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+    transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+    activeGroupId: parsed.activeGroupId || parsed.groups[0].id,
+  };
+}
+
 export function loadPortfolioData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultData();
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.groups) || parsed.groups.length === 0) {
-      return defaultData();
-    }
-    return {
-      version: 1,
-      groups: parsed.groups.map(migrateGroup),
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-      activeGroupId: parsed.activeGroupId || parsed.groups[0].id,
-    };
+    return normalizePortfolioData(JSON.parse(raw));
   } catch (e) {
     console.error('讀取持股資料失敗,改用預設空白資料', e);
     return defaultData();
