@@ -11,7 +11,7 @@ Adam(使用者)習慣全程用繁體中文溝通,請一律用繁體中文回覆�
 - GitHub repo:`fbmultin/taiwan-stock-backtest`,`main` 分支
 - Vercel 會自動監聽 `main` 分支推送並重新部署,正式網址:`https://taiwan-stock-backtest-two.vercel.app`
 - Firebase 專案:`twstock-a4ef0`(Firestore 用於「我的持股」跨裝置同步,以及股價/配息資料的共用快取)
-- 前端框架:Create React App(`react-scripts`),純前端 SPA,沒有自己的後端 server
+- 前端框架:Create React App(`react-scripts`),前端 SPA;另有少數 Vercel 伺服器端函式放在 `api/`(`marketSnapshot.js` 股本/ETF規模/費用率、`twPrice.js` 即時報價與櫃買中心日資料),用來代抓沒有開放 CORS 的官方資料,前端以同網域 `/api/...` 呼叫(本機 `npm start` 沒有這些路徑,呼叫失敗時程式會安靜退回其他來源)
 
 ## 重要雷點
 
@@ -35,7 +35,7 @@ Adam(使用者)習慣全程用繁體中文溝通,請一律用繁體中文回覆�
 
 ## 其他共用模組
 
-- `src/dataCache.js`:股價/配息資料抓取與快取(localStorage + Firestore 共用快取),資料來源依序嘗試 FinMind → TWSE → Yahoo。`fetchStockPriceData` 預設會做輕量增量抓取(只抓近期資料再合併),不是每次都重抓全部歷史。
+- `src/dataCache.js`:股價/配息資料抓取與快取(localStorage + Firestore 共用快取),資料來源依序嘗試 FinMind → TWSE(上市)→ TPEx(上櫃,經 `/api/twPrice`)→ Yahoo(公用 CORS 代理,2026-10 實測幾乎都打不通,只是最後一道)。另有 `fetchLiveQuotes`(證交所即時報價,經 `/api/twPrice`)給「我的持股」更新鈕用。`fetchStockPriceData` 預設會做輕量增量抓取(只抓近期資料再合併),不是每次都重抓全部歷史。
 - `src/tradingCalendar.js`:台股交易日曆(國定假日、週末判斷)。
 - `src/firebase.js`:Firebase 初始化。
 
