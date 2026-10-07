@@ -1853,6 +1853,8 @@ function StatCard({
   valueClass = '',
   subValue,
   subValueClass = '',
+  // 預設維持原本「(subValue)」的括號樣式;個股頁今日損益卡要不加括號才用 false
+  subValueParens = true,
   sizeClass = 'shrink-0 min-w-[110px]',
 }) {
   return (
@@ -1865,7 +1867,7 @@ function StatCard({
       <div className={`text-base font-mono font-bold ${valueClass}`}>{value}</div>
       {subValue && (
         <div className={`text-[11px] font-mono mt-0.5 ${subValueClass || (isLight ? 'text-slate-500' : 'text-slate-400')}`}>
-          ({subValue})
+          {subValueParens ? `(${subValue})` : subValue}
         </div>
       )}
     </div>
@@ -2393,7 +2395,7 @@ function HoldingsListView({
 
 // ============== 個股詳情 ==============
 
-function StockDetailView({
+export function StockDetailView({
   isLight,
   data,
   symbol,
@@ -2540,14 +2542,18 @@ function StockDetailView({
 
           <div className="px-4 mt-3 flex gap-2 overflow-x-auto">
             <StatCard isLight={isLight} label="持有股數" value={`${formatMoney(summary.shares)}股`} />
-            <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
-            <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
+            {/* 今日損益放在持有股數與現價之間:主值是金額、下方小字是百分比(不加括號) */}
             <StatCard
               isLight={isLight}
               label="今日損益"
-              value={formatPct(summary.todayPnlPct)}
+              value={formatSigned(summary.todayPnl)}
               valueClass={pnlColorClass(summary.todayPnl, isLight)}
+              subValue={formatPct(summary.todayPnlPct)}
+              subValueClass={pnlColorClass(summary.todayPnl, isLight)}
+              subValueParens={false}
             />
+            <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
+            <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
           </div>
         </>
       )}

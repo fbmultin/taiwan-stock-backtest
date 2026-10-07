@@ -15,7 +15,7 @@ jest.mock('./dataCache', () => ({
 }));
 
 /* eslint-disable import/first */
-import { HeatmapView } from './PortfolioTracker';
+import { HeatmapView, StockDetailView } from './PortfolioTracker';
 import { buildHeatmapModel } from './portfolioHeatmap';
 /* eslint-enable import/first */
 
@@ -81,5 +81,31 @@ test('熱力圖:群組格列出個股(ETF 代號/股名)→ 點群組看個股 �
   expect(fb()).not.toBeNull();
   await act(async () => { fb().click(); });
   expect(onBack).toHaveBeenCalledTimes(1);
+  await act(() => root.unmount());
+});
+
+test('個股頁統計卡:順序為持有股數、今日損益、現價、買進均價;今日損益主值金額、小字百分比(無括號)', async () => {
+  const summary = {
+    shares: 1000, marketValue: 50000, unrealizedPnl: 100, unrealizedPnlPct: 0.2,
+    currentPrice: 50, avgPrice: 49.9, todayPnl: 12345, todayPnlPct: 1.25,
+  };
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(
+      <StockDetailView
+        isLight data={data} symbol="2330" name="台積電" summary={summary} transactions={[]} tags={[]}
+        onBack={() => {}} onAddTx={() => {}} onOpenAction={() => {}} selectMode={false}
+        selectedTxIds={new Set()} onToggleSelectMode={() => {}} onToggleSelectTx={() => {}} onOpenTagPicker={() => {}}
+      />
+    );
+  });
+  const row = el.querySelector('.overflow-x-auto');
+  const cards = Array.from(row.children);
+  expect(cards.map((c) => c.firstElementChild.textContent)).toEqual(['持有股數', '今日損益', '現價', '買進均價']);
+  const today = cards[1];
+  expect(today.children[1].textContent).toBe('+12,345');
+  expect(today.children[2].textContent).toBe('+1.25%'); // 不加括號
   await act(() => root.unmount());
 });
