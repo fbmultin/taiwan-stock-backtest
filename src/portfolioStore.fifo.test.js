@@ -1,4 +1,4 @@
-import { matchFifo, computeSymbolSummary } from './portfolioStore';
+import { matchFifo, computeSymbolSummary, removeTagFromTransactions } from './portfolioStore';
 
 const tx = (id, type, date, price, shares, extra = {}) => ({ id, type, date, price, shares, fee: 0, tax: 0, createdAt: 0, ...extra });
 
@@ -35,4 +35,14 @@ test('今日已實現損益用先進先出,不是平均成本', () => {
 test('配股當成本 0 的一批參與配對', () => {
   const r = matchFifo([tx('b1', 'buy', '2026-01-02', 10, 1000), tx('d1', 'stockDividend', '2026-02-02', 0, 100), tx('s1', 'sell', '2026-03-02', 10, 1050)]);
   expect(r.buyRemaining).toEqual({ b1: 0, d1: 50 });
+});
+
+test('移除標籤:只清掉選到的交易的 tagId,標籤本身保留', () => {
+  const data = {
+    tags: [{ id: 'g1', name: '已清倉1' }],
+    transactions: [{ id: 'a', tagId: 'g1' }, { id: 'b', tagId: 'g1' }, { id: 'c' }],
+  };
+  const next = removeTagFromTransactions(data, ['a', 'c']);
+  expect(next.transactions.map((x) => x.tagId || null)).toEqual([null, 'g1', null]);
+  expect(next.tags).toEqual(data.tags);
 });

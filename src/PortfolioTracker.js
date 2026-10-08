@@ -77,6 +77,7 @@ import {
   deleteGroup,
   createTagAndApply,
   applyTagToTransactions,
+  removeTagFromTransactions,
   addTransaction,
   updateTransaction,
   deleteTransaction,
@@ -2412,6 +2413,7 @@ export function StockDetailView({
   onToggleSelectMode,
   onToggleSelectTx,
   onOpenTagPicker,
+  onRemoveTag = () => {},
 }) {
   const [tab, setTab] = useState('transactions');
   const [expandedTagIds, setExpandedTagIds] = useState(() => new Set());
@@ -2420,6 +2422,7 @@ export function StockDetailView({
   // 框選套用標籤時,選取的這幾筆交易「淨股數」要等於0,才代表構成一個完整的
   // 已清倉波段,之後才能各自獨立、準確地計算這組自己的已實現損益。
   const selectedNetShares = netShareDelta(sorted.filter((tx) => selectedTxIds.has(tx.id)));
+  const selectedTaggedCount = sorted.filter((tx) => selectedTxIds.has(tx.id) && tx.tagId).length;
 
   // 已經套用同一個標籤的交易,在畫面上合併成一張可收合的「已清倉」卡片,累積
   // 越多組波段也不會讓交易紀錄越滑越長。只在「第一次遇到」(因為是新到舊
@@ -2735,7 +2738,8 @@ export function StockDetailView({
                       const { tag, tagId, txs: groupTxs } = item;
                       const groupSummary = computeSymbolSummary(groupTxs);
                       const groupNet = netShareDelta(groupTxs);
-                      const expanded = expandedTagIds.has(tagId);
+                      // 框選模式下一律展開:已套用標籤的交易收在卡片裡,不展開就選不到、也就沒辦法移除標籤
+                      const expanded = selectMode || expandedTagIds.has(tagId);
                       const groupDates = groupTxs.map((t) => t.date).sort();
                       const dateRange =
                         groupDates[0] === groupDates[groupDates.length - 1]
@@ -2820,13 +2824,28 @@ export function StockDetailView({
               ⚠淨股數{formatSigned(selectedNetShares)}股,建議為0再套用
             </div>
           )}
-          <button
-            onClick={onOpenTagPicker}
-            className="px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 font-bold text-sm"
-          >
-            <Tag className="w-4 h-4" />
-            套用標籤({selectedTxIds.size})
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 選到的交易裡有已套用標籤的,才出現「移除標籤」;數字是其中有標籤的筆數 */}
+            {selectedTaggedCount > 0 && (
+              <button
+                onClick={onRemoveTag}
+                data-testid="remove-tag-btn"
+                className={`px-4 py-3.5 rounded-full shadow-lg flex items-center gap-2 font-bold text-sm ${
+                  isLight ? 'bg-white text-rose-600 border border-rose-300' : 'bg-slate-800 text-rose-300 border border-rose-500/60'
+                }`}
+              >
+                <X className="w-4 h-4" />
+                移除標籤({selectedTaggedCount})
+              </button>
+            )}
+            <button
+              onClick={onOpenTagPicker}
+              className="px-5 py-3.5 rounded-full bg-amber-500 text-white shadow-lg flex items-center gap-2 font-bold text-sm"
+            >
+              <Tag className="w-4 h-4" />
+              套用標籤({selectedTxIds.size})
+            </button>
+          </div>
         </div>
       )}
 
@@ -3819,6 +3838,12 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
     setSelectedTxIds(new Set());
     setSelectMode(false);
   };
+  // 移除標籤:選到的交易回到一般列表(標籤本身保留,之後可再套用)
+  const handleRemoveTag = () => {
+    setData((d) => removeTagFromTransactions(d, Array.from(selectedTxIds)));
+    setSelectedTxIds(new Set());
+    setSelectMode(false);
+  };
   const handleCreateTag = (name, color) => {
     // 手動框選已清倉波段時,不想每組都還要特地取名字——名稱留空就自動按照
     // 這檔股票目前已經用掉幾個標籤來編號(已清倉1、已清倉2...)。
@@ -3951,6 +3976,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
             })
           }
           onOpenTagPicker={() => setShowTagPicker(true)}
+          onRemoveTag={handleRemoveTag}
         />
       )}
 

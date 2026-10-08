@@ -254,6 +254,17 @@ export function createTagAndApply(data, { name, color }, txIds) {
   };
 }
 
+// 移除標籤:把選到的交易的 tagId 清掉,讓它們回到一般交易列表。
+// 標籤本身(名稱/顏色)保留在 data.tags,之後還可以重新套用;不自動刪除沒人用的標籤,
+// 避免誤刪使用者取好的名字。
+export function removeTagFromTransactions(data, txIds) {
+  const idSet = new Set(txIds);
+  return {
+    ...data,
+    transactions: data.transactions.map((tx) => (idSet.has(tx.id) && tx.tagId ? { ...tx, tagId: null } : tx)),
+  };
+}
+
 export function applyTagToTransactions(data, txIds, tagId) {
   const idSet = new Set(txIds);
   return {

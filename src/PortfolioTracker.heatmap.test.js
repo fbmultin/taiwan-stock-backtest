@@ -136,3 +136,33 @@ test('個股頁交易明細:買進列註記先進先出的賣出時間', async (
   expect(notes).toEqual(['(賣出 03/02 賣500,餘500股)', '(賣出 03/02)']);
   await act(() => root.unmount());
 });
+
+test('框選後:選到有標籤的交易才出現「移除標籤」,點了會呼叫 onRemoveTag', async () => {
+  const mk = (id, tagId) => ({ id, type: 'buy', date: '2026-01-02', price: 10, shares: 1000, amount: 0, fee: 0, tax: 0, createdAt: 0, tagId });
+  const txs = [mk('t1', 'g1'), mk('t2', undefined), mk('t3', 'g1')];
+  const summary = { shares: 3000, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 1, avgPrice: 1, todayPnl: 0, todayPnlPct: 0 };
+  const onRemoveTag = jest.fn();
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const render = (ids) =>
+    act(async () => {
+      root.render(
+        <StockDetailView
+          isLight data={data} symbol="2330" name="台積電" summary={summary} transactions={txs}
+          tags={[{ id: 'g1', name: '已清倉1', color: '#f00' }]}
+          onBack={() => {}} onAddTx={() => {}} onOpenAction={() => {}} selectMode
+          selectedTxIds={new Set(ids)} onToggleSelectMode={() => {}} onToggleSelectTx={() => {}}
+          onOpenTagPicker={() => {}} onRemoveTag={onRemoveTag}
+        />
+      );
+    });
+  await render(['t2']); // 只選沒標籤的 → 沒有移除鈕
+  expect(el.querySelector('[data-testid="remove-tag-btn"]')).toBeNull();
+  await render(['t1', 't2', 't3']);
+  const btn = el.querySelector('[data-testid="remove-tag-btn"]');
+  expect(btn.textContent).toContain('移除標籤(2)'); // 3 筆裡 2 筆有標籤
+  await act(async () => { btn.click(); });
+  expect(onRemoveTag).toHaveBeenCalledTimes(1);
+  await act(() => root.unmount());
+});
