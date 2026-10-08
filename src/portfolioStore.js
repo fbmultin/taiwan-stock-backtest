@@ -518,6 +518,64 @@ function annualize(periodReturnPct, years) {
 // currentPrice / prevClose 由呼叫端傳入(來自 dataCache 抓到的即時報價)。
 // todayDate 預設是「今天」的日期字串(YYYY-MM-DD),用來額外累計「本日已實現
 // 損益」;外部呼叫端一般不需要自己傳,只有測試時才需要固定日期。
+// 先進先出(FIFO)配對:每一筆賣出,依序拿最早買進、還沒賣完的那批來對沖。
+// 為什麼獨立成函式:個股頁要在每筆「買進」旁註記「這批已在何時賣出」,
+// 「今日已實現損益」也要用同一套配對算,兩邊必須共用同一份結果才不會對不起來。
+//   - 同一天買先賣後(跟 computeSymbolSummary 的排序一致,避免當天先賣後買誤判庫存不足)
+//   - 同日同類型依 createdAt(沒有就維持原順序)
+//   - 配股(股票股利)當成成本 0 的一批,才跟庫存股數對得上
+//   - 買進成本 = 價*股數+手續費,按配對到的股數等比例分攤;賣出淨額 = 價*股數-手續費-稅
+// 回傳:
+//   buyMatches[buyId] = [{ sellId, date, shares }]  這批買進被哪幾筆賣出對沖(依賣出先後)
+//   buyRemaining[buyId] = 這批還沒賣掉的股數
+//   sellRealized[sellId] = { gain, shares }  這筆賣出的已實現損益(資本利得,FIFO)
+export function matchFifo(transactions) {
+  const list = (transactions || []).map((t, i) => ({ t, i }));
+  list.sort((a, b) => {
+    if (a.t.date < b.t.date) return -1;
+    if (a.t.date > b.t.date) return 1;
+    const rank = (x) => (x.t.type === TX_TYPES.SELL ? 1 : 0);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    const ca = a.t.createdAt || 0;
+    const cb = b.t.createdAt || 0;
+    return ca - cb || a.i - b.i;
+  });
+  const lots = []; // { id, remaining, unitCost }
+  const buyMatches = {};
+  const buyRemaining = {};
+  const sellRealized = {};
+  list.forEach(({ t }) => {
+    if (t.type === TX_TYPES.BUY) {
+      const total = t.price * t.shares + (t.fee || 0);
+      lots.push({ id: t.id, remaining: t.shares, unitCost: t.shares > 0 ? total / t.shares : 0 });
+      buyMatches[t.id] = [];
+      buyRemaining[t.id] = t.shares;
+    } else if (t.type === TX_TYPES.STOCK_DIVIDEND) {
+      lots.push({ id: t.id, remaining: t.shares, unitCost: 0 });
+      buyMatches[t.id] = [];
+      buyRemaining[t.id] = t.shares;
+    } else if (t.type === TX_TYPES.SELL) {
+      const available = lots.reduce((n, l) => n + l.remaining, 0);
+      const sold = Math.min(t.shares, available);
+      let need = sold;
+      let cost = 0;
+      for (let k = 0; k < lots.length && need > 0; k += 1) {
+        const lot = lots[k];
+        if (lot.remaining <= 0) continue;
+        const take = Math.min(lot.remaining, need);
+        lot.remaining -= take;
+        need -= take;
+        cost += take * lot.unitCost;
+        buyRemaining[lot.id] = lot.remaining;
+        buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take });
+      }
+      const proceeds = t.price * sold - (t.fee || 0) - (t.tax || 0);
+      sellRealized[t.id] = { gain: proceeds - cost, shares: sold };
+    }
+  });
+  return { buyMatches, buyRemaining, sellRealized };
+}
+
 export function computeSymbolSummary(
   transactions,
   { currentPrice = 0, prevClose = null, groups = [], todayDate = new Date().toISOString().split('T')[0] } = {}
@@ -543,8 +601,10 @@ export function computeSymbolSummary(
   let stockDividendShares = 0;
   let totalFee = 0;
   let totalTax = 0;
-  let todayRealizedGain = 0; // 本日(日期等於 todayDate 的交易)已實現損益,含資本利得與現金股利
+  let todayRealizedGain = 0; // 本日(日期等於 todayDate 的交易)已實現損益,含資本利得(先進先出)與現金股利
   let firstDate = sorted.length ? sorted[0].date : null;
+  // 今日已實現(資本利得部分)改用先進先出配對;累計已實現/持有均價仍是平均成本法
+  const fifo = matchFifo(transactions);
 
   sorted.forEach((tx) => {
     if (tx.type === TX_TYPES.BUY) {
@@ -564,7 +624,7 @@ export function computeSymbolSummary(
       const proceeds = tx.price * soldShares - (tx.fee || 0) - (tx.tax || 0);
       const gain = proceeds - costOfSold;
       realizedCapitalGain += gain;
-      if (tx.date === todayDate) todayRealizedGain += gain;
+      if (tx.date === todayDate) todayRealizedGain += fifo.sellRealized[tx.id] ? fifo.sellRealized[tx.id].gain : gain;
       shares -= soldShares;
       costBasis -= costOfSold;
       pureCostBasis -= pureCostOfSold;

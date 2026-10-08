@@ -93,6 +93,7 @@ import {
   isBondETF,
   netShareDelta,
   computeSymbolSummary,
+  matchFifo,
   aggregateSummaries,
   getTransactionsByGroup,
   formatMoney,
@@ -2468,6 +2469,26 @@ export function StockDetailView({
 
   // showDate:在「依日期分段」底下,日期已經寫在分段標題,列裡就不重複;
   // 標籤卡片展開後的交易可能跨好幾天,才在列裡顯示日期
+  // 先進先出配對:買進列旁註記「已在何時賣出」。整份交易一起配對(不受標籤收合影響)
+  const fifo = useMemo(() => matchFifo(transactions), [transactions]);
+  const sellNote = (tx) => {
+    if (tx.type !== TX_TYPES.BUY) return '';
+    const ms = fifo.buyMatches[tx.id] || [];
+    if (ms.length === 0) return '';
+    // 同一天的多筆賣出合併;整批賣完只寫日期,只賣掉一部分或分多天賣就附上股數
+    const byDate = [];
+    ms.forEach((m) => {
+      const last = byDate[byDate.length - 1];
+      if (last && last.date === m.date) last.shares += m.shares;
+      else byDate.push({ date: m.date, shares: m.shares });
+    });
+    const md = (d) => String(d).slice(5).replace('-', '/');
+    const whole = byDate.length === 1 && fifo.buyRemaining[tx.id] === 0 && byDate[0].shares === tx.shares;
+    const text = byDate.map((x) => (whole ? md(x.date) : `${md(x.date)} 賣${formatMoney(x.shares)}`)).join('、');
+    const rest = fifo.buyRemaining[tx.id];
+    return `(賣出 ${text}${rest > 0 ? `,餘${formatMoney(rest)}股` : ''})`;
+  };
+
   const renderTxRow = (tx, { showDate = true } = {}) => (
     <div
       key={tx.id}
@@ -2490,7 +2511,14 @@ export function StockDetailView({
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <div className={`font-bold text-sm ${typeColor(tx.type)}`}>{TX_TYPE_LABELS[tx.type]}</div>
+        <div className={`font-bold text-sm ${typeColor(tx.type)}`}>
+          {TX_TYPE_LABELS[tx.type]}
+          {sellNote(tx) && (
+            <span data-testid="sell-note" className={`ml-1 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+              {sellNote(tx)}
+            </span>
+          )}
+        </div>
         {showDate && <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{tx.date}</div>}
         {tx.type !== TX_TYPES.CASH_DIVIDEND && (
           <div className="font-mono font-bold text-sm">{tx.price.toFixed(2)}</div>

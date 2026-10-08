@@ -109,3 +109,30 @@ test('個股頁統計卡:順序為持有股數、今日損益、現價、買進�
   expect(today.children[2].textContent).toBe('+1.25%'); // 不加括號
   await act(() => root.unmount());
 });
+
+test('個股頁交易明細:買進列註記先進先出的賣出時間', async () => {
+  const mk = (id, type, date, price, shares) => ({ id, type, date, price, shares, amount: 0, fee: 0, tax: 0, createdAt: 0 });
+  const txs = [
+    mk('b1', 'buy', '2026-01-02', 10, 1000),
+    mk('b2', 'buy', '2026-02-02', 20, 1000),
+    mk('b3', 'buy', '2026-02-20', 30, 1000),
+    mk('s1', 'sell', '2026-03-02', 30, 1500),
+  ];
+  const summary = { shares: 1500, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 1, avgPrice: 1, todayPnl: 0, todayPnlPct: 0 };
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(
+      <StockDetailView
+        isLight data={data} symbol="2330" name="台積電" summary={summary} transactions={txs} tags={[]}
+        onBack={() => {}} onAddTx={() => {}} onOpenAction={() => {}} selectMode={false}
+        selectedTxIds={new Set()} onToggleSelectMode={() => {}} onToggleSelectTx={() => {}} onOpenTagPicker={() => {}}
+      />
+    );
+  });
+  const notes = Array.from(el.querySelectorAll('[data-testid="sell-note"]')).map((n) => n.textContent);
+  // 顯示順序是新到舊:b3(沒賣,無註記)、b2(賣一半)、b1(整批賣完)
+  expect(notes).toEqual(['(賣出 03/02 賣500,餘500股)', '(賣出 03/02)']);
+  await act(() => root.unmount());
+});
