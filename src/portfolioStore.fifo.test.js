@@ -1,4 +1,4 @@
-import { matchFifo, computeSymbolSummary, removeTagFromTransactions } from './portfolioStore';
+import { matchFifo, computeSymbolSummary, removeTagFromTransactions, computeDayPnl, aggregateSummaries } from './portfolioStore';
 
 const tx = (id, type, date, price, shares, extra = {}) => ({ id, type, date, price, shares, fee: 0, tax: 0, createdAt: 0, ...extra });
 
@@ -45,4 +45,39 @@ test('移除標籤:只清掉選到的交易的 tagId,標籤本身保留', () => 
   const next = removeTagFromTransactions(data, ['a', 'c']);
   expect(next.transactions.map((x) => x.tagId || null)).toEqual([null, 'g1', null]);
   expect(next.tags).toEqual(data.tags);
+});
+
+const TODAY = '2026-10-08';
+
+test('當日損益:原有庫存、賣出、今日買進各自用對的基準', () => {
+  const txs = [
+    tx('b0', 'buy', '2026-09-01', 20, 1000), // 昨天已持有 1000 股
+    tx('s1', 'sell', TODAY, 31, 400), // 賣原有庫存 400 股:(31-28)*400
+    tx('b1', 'buy', TODAY, 27, 200), // 今天買 200 股:(30-27)*200
+  ];
+  const r = computeDayPnl(txs, { currentPrice: 30, prevClose: 28, todayDate: TODAY });
+  expect(r.parts).toEqual([
+    { kind: 'carry', shares: 600, pnl: 1200 }, // (30-28)*600
+    { kind: 'soldPrev', shares: 400, pnl: 1200 },
+    { kind: 'boughtToday', shares: 200, pnl: 600 },
+  ]);
+  expect(r.pnl).toBe(3000);
+  expect(r.base).toBe(1000 * 28 + 200 * 27);
+});
+
+test('當日損益:當沖用賣價減買價;沒有昨收時只算有基準的部分', () => {
+  const day = computeDayPnl([tx('b1', 'buy', TODAY, 27, 100), tx('s1', 'sell', TODAY, 28, 100)], { currentPrice: 30, prevClose: 28, todayDate: TODAY });
+  expect(day.pnl).toBe(100);
+  expect(day.parts).toEqual([{ kind: 'dayTrade', shares: 100, pnl: 100 }]);
+  const noPrev = computeDayPnl([tx('b0', 'buy', '2026-09-01', 20, 1000)], { currentPrice: 30, prevClose: null, todayDate: TODAY });
+  expect(noPrev.pnl).toBe(0);
+});
+
+test('當日損益:沒有今天的交易時等於舊算法 股數×(現價-昨收);並納入彙總', () => {
+  const txs = [tx('b0', 'buy', '2026-09-01', 20, 1000)];
+  const s = computeSymbolSummary(txs, { currentPrice: 30, prevClose: 28, todayDate: TODAY });
+  expect(s.todayPnl).toBe(2000);
+  expect(s.todayPnlPct).toBeCloseTo((2000 / 28000) * 100, 6);
+  const agg = aggregateSummaries([s, computeSymbolSummary(txs, { currentPrice: 10, prevClose: 11, todayDate: TODAY })]);
+  expect(agg.todayPnl).toBe(1000);
 });

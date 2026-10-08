@@ -587,6 +587,73 @@ export function matchFifo(transactions) {
   return { buyMatches, buyRemaining, sellRealized };
 }
 
+// 當日損益(今天這一天賺賠多少,跟成本算法無關):
+//   - 昨天收盤前就持有、今天還持有的:(現價 - 昨收) × 股數
+//   - 昨天就持有、今天賣出的:(賣價 - 昨收) × 股數
+//   - 今天買進又今天賣出(當沖):(賣價 - 買價) × 股數
+//   - 今天買進、還持有的:(現價 - 買進價) × 股數
+// 賣出時先對沖「昨天就持有」的股數,不夠才算今天買進的(先進先出)。
+// 不含手續費與證交稅、也不含現金股利(股利算在「今日已實現」)。
+// 為什麼要重算:舊算法只有「目前股數 × (現價 - 昨收)」,今天賣掉的股票完全不算,
+// 今天買進的也用昨收當基準,跟其他 App 的「當日損益」對不上。
+// 回傳 { pnl, base, parts:[{kind,shares,pnl}] }(parts 供「點今日損益看明細」使用)
+export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null, todayDate } = {}) {
+  const hasPrev = prevClose != null && prevClose > 0;
+  const hasPrice = currentPrice > 0;
+  const sorted = [...(transactions || [])].sort((a, b) => {
+    if (a.date < b.date) return -1;
+    if (a.date > b.date) return 1;
+    return (a.createdAt || 0) - (b.createdAt || 0);
+  });
+  // 昨天收盤時的庫存股數
+  let prevHeld = 0;
+  sorted.forEach((t) => {
+    if (t.date >= todayDate) return;
+    if (t.type === TX_TYPES.BUY || t.type === TX_TYPES.STOCK_DIVIDEND) prevHeld += t.shares;
+    else if (t.type === TX_TYPES.SELL) prevHeld -= Math.min(t.shares, prevHeld);
+  });
+  const today = sorted.filter((t) => t.date === todayDate);
+  // 今天買進的批次(依序被今天的賣出對沖)
+  const pool = today.filter((t) => t.type === TX_TYPES.BUY).map((t) => ({ price: t.price, left: t.shares }));
+  const todayBuyCost = today.filter((t) => t.type === TX_TYPES.BUY).reduce((n, t) => n + t.price * t.shares, 0);
+  let prevAvail = prevHeld;
+  let soldPrevPnl = 0;
+  let soldPrevShares = 0;
+  let dayTradePnl = 0;
+  let dayTradeShares = 0;
+  today.forEach((t) => {
+    if (t.type !== TX_TYPES.SELL) return;
+    let rest = t.shares;
+    const fromPrev = Math.min(rest, prevAvail);
+    if (fromPrev > 0) {
+      prevAvail -= fromPrev;
+      rest -= fromPrev;
+      soldPrevShares += fromPrev;
+      if (hasPrev) soldPrevPnl += (t.price - prevClose) * fromPrev;
+    }
+    for (let k = 0; k < pool.length && rest > 0; k += 1) {
+      const take = Math.min(pool[k].left, rest);
+      if (take <= 0) continue;
+      pool[k].left -= take;
+      rest -= take;
+      dayTradeShares += take;
+      dayTradePnl += (t.price - pool[k].price) * take;
+    }
+  });
+  const carryPnl = hasPrev && hasPrice ? prevAvail * (currentPrice - prevClose) : 0;
+  const boughtShares = pool.reduce((n, b) => n + b.left, 0);
+  const boughtPnl = hasPrice ? pool.reduce((n, b) => n + b.left * (currentPrice - b.price), 0) : 0;
+  const parts = [];
+  if (prevAvail > 0) parts.push({ kind: 'carry', shares: prevAvail, pnl: carryPnl });
+  if (soldPrevShares > 0) parts.push({ kind: 'soldPrev', shares: soldPrevShares, pnl: soldPrevPnl });
+  if (dayTradeShares > 0) parts.push({ kind: 'dayTrade', shares: dayTradeShares, pnl: dayTradePnl });
+  if (boughtShares > 0) parts.push({ kind: 'boughtToday', shares: boughtShares, pnl: boughtPnl });
+  const pnl = carryPnl + soldPrevPnl + dayTradePnl + boughtPnl;
+  // 百分比的分母:昨天收盤的持股市值 + 今天買進的金額(也就是「這天投入的本金」)
+  const base = (hasPrev ? prevHeld * prevClose : 0) + todayBuyCost;
+  return { pnl, base, parts };
+}
+
 export function computeSymbolSummary(
   transactions,
   { currentPrice = 0, prevClose = null, groups = [], todayDate = new Date().toISOString().split('T')[0] } = {}
@@ -672,7 +739,8 @@ export function computeSymbolSummary(
 
   const investedBase = investedCapital || 1; // 避免除以 0
   const costBase = costBasis || 1;
-  const todayPnl = prevClose != null ? shares * (currentPrice - prevClose) : 0;
+  const day = computeDayPnl(transactions, { currentPrice, prevClose, todayDate });
+  const todayPnl = day.pnl;
   const marketBase = marketValue || 1;
 
   return {
@@ -688,7 +756,9 @@ export function computeSymbolSummary(
     unrealizedPnlPct: (unrealizedPnl / costBase) * 100,
     estimatedExitCost,
     todayPnl,
-    todayPnlPct: (todayPnl / marketBase) * 100,
+    todayPnlPct: (todayPnl / (day.base || marketBase)) * 100,
+    todayBase: day.base,
+    todayPnlParts: day.parts,
     realizedPnl,
     realizedPnlPct: (realizedPnl / investedBase) * 100,
     todayRealizedPnl: todayRealizedGain,
@@ -717,6 +787,7 @@ export function aggregateSummaries(symbolSummaries) {
     totalPnl: 0,
     unrealizedPnl: 0,
     todayPnl: 0,
+    todayBase: 0,
     realizedPnl: 0,
     todayRealizedPnl: 0,
     capitalGain: 0,
@@ -734,6 +805,7 @@ export function aggregateSummaries(symbolSummaries) {
     base.totalPnl += s.totalPnl;
     base.unrealizedPnl += s.unrealizedPnl;
     base.todayPnl += s.todayPnl;
+    base.todayBase += s.todayBase || 0;
     base.realizedPnl += s.realizedPnl;
     base.todayRealizedPnl += s.todayRealizedPnl || 0;
     base.capitalGain += s.capitalGain;
@@ -755,7 +827,7 @@ export function aggregateSummaries(symbolSummaries) {
     investmentYears: years,
     totalPnlPct: (base.totalPnl / investedBase) * 100,
     unrealizedPnlPct: (base.unrealizedPnl / costBase) * 100,
-    todayPnlPct: (base.todayPnl / marketBase) * 100,
+    todayPnlPct: (base.todayPnl / (base.todayBase || marketBase)) * 100,
     realizedPnlPct: (base.realizedPnl / investedBase) * 100,
     capitalGainPct: (base.capitalGain / investedBase) * 100,
     cashDividendPct: (base.cashDividend / investedBase) * 100,

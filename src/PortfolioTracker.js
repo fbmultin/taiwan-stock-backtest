@@ -1858,10 +1858,15 @@ function StatCard({
   // 預設維持原本「(subValue)」的括號樣式;個股頁今日損益卡要不加括號才用 false
   subValueParens = true,
   sizeClass = 'shrink-0 min-w-[110px]',
+  // 有傳 onClick 才變成可點(例如今日損益點開明細);其他卡片維持原樣
+  onClick,
+  testId,
 }) {
   return (
     <div
-      className={`rounded-xl px-3 py-2.5 ${sizeClass} ${
+      onClick={onClick}
+      data-testid={testId}
+      className={`rounded-xl px-3 py-2.5 ${sizeClass} ${onClick ? 'cursor-pointer' : ''} ${
         isLight ? 'bg-slate-100' : 'bg-slate-800/60'
       }`}
     >
@@ -1872,6 +1877,57 @@ function StatCard({
           {subValueParens ? `(${subValue})` : subValue}
         </div>
       )}
+    </div>
+  );
+}
+
+// ============== 今日損益明細(浮動視窗,樣式比照熱力圖細節框) ==============
+// rows: [{ symbol, name, pnl, parts:[{kind,shares,pnl}] }];每檔列出各部分怎麼來的
+const DAY_PART_LABELS = {
+  carry: (n) => `原有庫存 ${formatMoney(n)}股:現價−昨收`,
+  soldPrev: (n) => `賣出原有庫存 ${formatMoney(n)}股:賣價−昨收`,
+  dayTrade: (n) => `當沖 ${formatMoney(n)}股:賣價−買價`,
+  boughtToday: (n) => `今日買進 ${formatMoney(n)}股:現價−買價`,
+};
+
+export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onClose }) {
+  const list = rows.filter((r) => r.parts && r.parts.length > 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
+  const total = list.reduce((n, r) => n + r.pnl, 0);
+  const muted = isLight ? 'text-slate-500' : 'text-slate-400';
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-6" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50" />
+      <div
+        data-testid="today-pnl-popup"
+        onClick={(e) => e.stopPropagation()}
+        className={`relative w-full max-w-sm max-h-[75vh] overflow-y-auto rounded-xl px-5 py-4 shadow-2xl ${
+          isLight ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'
+        }`}
+      >
+        <div className="text-center mb-3">
+          <div className="font-bold">{title}</div>
+          <div className={`font-mono font-bold text-xl ${pnlColorClass(total, isLight)}`}>{formatSigned(total)}</div>
+          <div className={`text-[11px] ${muted}`}>價差損益,不含手續費、證交稅與股利(股利算在今日已實現)</div>
+        </div>
+        {list.length === 0 && <div className={`text-center text-sm py-4 ${muted}`}>今天沒有可計算的持股或交易</div>}
+        {list.map((r) => {
+          const lb = symbolLabel(r.symbol, r.name);
+          return (
+            <div key={r.symbol} data-testid="today-pnl-row" className={`py-2 border-t ${isLight ? 'border-slate-200' : 'border-slate-700'}`}>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className={`font-bold truncate ${lb.codeFirst ? 'font-mono' : ''}`}>{lb.primary}</div>
+                <div className={`font-mono font-bold shrink-0 ${pnlColorClass(r.pnl, isLight)}`}>{formatSigned(r.pnl)}</div>
+              </div>
+              {r.parts.map((pt) => (
+                <div key={pt.kind} className={`flex justify-between gap-2 text-[11px] ${muted}`}>
+                  <span>{DAY_PART_LABELS[pt.kind](pt.shares)}</span>
+                  <span className={`font-mono shrink-0 ${pnlColorClass(pt.pnl, isLight)}`}>{formatSigned(pt.pnl)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1893,6 +1949,7 @@ function HoldingsListView({
   onOpenSettings,
   onOpenSummary,
   onOpenTodayTx,
+  onOpenTodayPnl = () => {},
   onOpenHeatmap = () => {},
   onAddTx,
   onOpenImport,
@@ -2101,6 +2158,8 @@ function HoldingsListView({
           subValue={`今日已實現損益${formatSigned(totalSummary.todayRealizedPnl)}`}
           subValueClass={pnlColorClass(totalSummary.todayRealizedPnl, isLight)}
           sizeClass="flex-1 min-w-0"
+          onClick={onOpenTodayPnl}
+          testId="home-today-pnl-card"
         />
         <StatCard
           isLight={isLight}
@@ -2416,6 +2475,7 @@ export function StockDetailView({
   onRemoveTag = () => {},
 }) {
   const [tab, setTab] = useState('transactions');
+  const [showDayPnl, setShowDayPnl] = useState(false);
   const [expandedTagIds, setExpandedTagIds] = useState(() => new Set());
   const sorted = [...transactions].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
@@ -2582,11 +2642,22 @@ export function StockDetailView({
               subValue={formatPct(summary.todayPnlPct)}
               subValueClass={pnlColorClass(summary.todayPnl, isLight)}
               subValueParens={false}
+              onClick={() => setShowDayPnl(true)}
+              testId="detail-today-pnl-card"
             />
             <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
             <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
           </div>
         </>
+      )}
+
+      {showDayPnl && (
+        <TodayPnlPopup
+          isLight={isLight}
+          title={`今日損益明細｜${symbolLabel(symbol, name).primary}`}
+          rows={[{ symbol, name, pnl: summary.todayPnl, parts: summary.todayPnlParts }]}
+          onClose={() => setShowDayPnl(false)}
+        />
       )}
 
       <div
@@ -3384,6 +3455,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedTxIds, setSelectedTxIds] = useState(new Set());
   const [showTagPicker, setShowTagPicker] = useState(false);
+  const [showTodayPnl, setShowTodayPnl] = useState(false);
 
   // ---- 持股列表「框選移動群組」----
   const [symbolSelectMode, setSymbolSelectMode] = useState(false);
@@ -3882,6 +3954,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onOpenSummary={() => setView('summary')}
           onOpenTodayTx={() => setView('todayTx')}
           onOpenHeatmap={() => setView('heatmap')}
+          onOpenTodayPnl={() => setShowTodayPnl(true)}
           onAddTx={() => openAddTx(null)}
           onOpenImport={() => setShowImportCsv(true)}
           activeGroup={activeGroup}
@@ -4069,6 +4142,20 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           data={data}
           onClose={() => setShowImportCsv(false)}
           onImport={handleImportTransactions}
+        />
+      )}
+
+      {showTodayPnl && (
+        <TodayPnlPopup
+          isLight={isLight}
+          title={`今日損益明細｜${activeGroup ? activeGroup.name : '全部'}`}
+          rows={allSymbolHoldings.map((h) => ({
+            symbol: h.symbol,
+            name: h.name,
+            pnl: h.summary.todayPnl,
+            parts: h.summary.todayPnlParts,
+          }))}
+          onClose={() => setShowTodayPnl(false)}
         />
       )}
 

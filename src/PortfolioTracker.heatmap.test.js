@@ -15,7 +15,7 @@ jest.mock('./dataCache', () => ({
 }));
 
 /* eslint-disable import/first */
-import { HeatmapView, StockDetailView } from './PortfolioTracker';
+import { HeatmapView, StockDetailView, TodayPnlPopup } from './PortfolioTracker';
 import { buildHeatmapModel } from './portfolioHeatmap';
 /* eslint-enable import/first */
 
@@ -164,5 +164,49 @@ test('框選後:選到有標籤的交易才出現「移除標籤」,點了會呼
   expect(btn.textContent).toContain('移除標籤(2)'); // 3 筆裡 2 筆有標籤
   await act(async () => { btn.click(); });
   expect(onRemoveTag).toHaveBeenCalledTimes(1);
+  await act(() => root.unmount());
+});
+
+test('今日損益明細浮動視窗:合計、每檔各部分、依影響大小排序', async () => {
+  const rows = [
+    { symbol: '2330', name: '台積電', pnl: 1200, parts: [{ kind: 'carry', shares: 600, pnl: 1200 }] },
+    { symbol: '00878', name: '國泰永續高股息', pnl: -3000, parts: [{ kind: 'soldPrev', shares: 1000, pnl: -2000 }, { kind: 'boughtToday', shares: 500, pnl: -1000 }] },
+    { symbol: '0050', name: '元大台灣50', pnl: 0, parts: [] },
+  ];
+  const onClose = jest.fn();
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => { root.render(<TodayPnlPopup isLight rows={rows} onClose={onClose} />); });
+  const pop = el.querySelector('[data-testid="today-pnl-popup"]');
+  expect(pop.textContent).toContain('-1,800'); // 合計 = 1200 - 3000
+  const rs = Array.from(el.querySelectorAll('[data-testid="today-pnl-row"]'));
+  expect(rs.length).toBe(2); // 沒有可計算部分的不列
+  expect(rs[0].textContent).toContain('00878'); // |−3000| 最大排最前
+  expect(rs[0].textContent).toContain('賣出原有庫存 1,000股');
+  expect(rs[0].textContent).toContain('今日買進 500股');
+  expect(rs[1].textContent).toContain('台積電');
+  await act(async () => { pop.parentElement.click(); });
+  expect(onClose).toHaveBeenCalled();
+  await act(() => root.unmount());
+});
+
+test('個股頁:點今日損益卡開明細', async () => {
+  const summary = { shares: 1000, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 30, avgPrice: 20, todayPnl: 2000, todayPnlPct: 7, todayPnlParts: [{ kind: 'carry', shares: 1000, pnl: 2000 }] };
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(
+      <StockDetailView
+        isLight data={data} symbol="2330" name="台積電" summary={summary} transactions={[]} tags={[]}
+        onBack={() => {}} onAddTx={() => {}} onOpenAction={() => {}} selectMode={false}
+        selectedTxIds={new Set()} onToggleSelectMode={() => {}} onToggleSelectTx={() => {}} onOpenTagPicker={() => {}}
+      />
+    );
+  });
+  expect(el.querySelector('[data-testid="today-pnl-popup"]')).toBeNull();
+  await act(async () => { el.querySelector('[data-testid="detail-today-pnl-card"]').click(); });
+  expect(el.querySelector('[data-testid="today-pnl-popup"]').textContent).toContain('原有庫存 1,000股');
   await act(() => root.unmount());
 });
