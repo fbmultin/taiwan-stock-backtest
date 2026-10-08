@@ -1943,6 +1943,11 @@ export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onC
                         <span className={`font-mono shrink-0 ${pnlColorClass(pt.pnl, isLight)}`}>{formatSigned(pt.pnl)}</span>
                       </div>
                     ))}
+                    {sec.key === 'hold' && (ps.find((pt) => pt.kind === 'carry') || {}).lots && (
+                      <div data-testid="carry-lots" className={`pl-3 text-[11px] ${muted}`}>
+                        昨天庫存來源:{ps.find((pt) => pt.kind === 'carry').lots.map((l) => `${l.date.slice(5)} 買${formatMoney(l.shares)}股`).join('、')}
+                      </div>
+                    )}
                   </div>
                 );
               })}

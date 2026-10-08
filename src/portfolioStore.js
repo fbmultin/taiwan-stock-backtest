@@ -607,10 +607,28 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
   });
   // 昨天收盤時的庫存股數
   let prevHeld = 0;
+  // 同時記下「昨天庫存」是由哪幾天的買進組成(先進先出扣掉賣出),給明細顯示來源,
+  // 使用者覺得「昨天不該有這麼多股」時,一看就知道是哪幾筆交易被算成昨天就持有
+  const lots = [];
+  const consumeLots = (n) => {
+    let rest = n;
+    while (rest > 0 && lots.length) {
+      const take = Math.min(lots[0].shares, rest);
+      lots[0].shares -= take;
+      rest -= take;
+      if (lots[0].shares <= 0) lots.shift();
+    }
+  };
   sorted.forEach((t) => {
     if (t.date >= todayDate) return;
-    if (t.type === TX_TYPES.BUY || t.type === TX_TYPES.STOCK_DIVIDEND) prevHeld += t.shares;
-    else if (t.type === TX_TYPES.SELL) prevHeld -= Math.min(t.shares, prevHeld);
+    if (t.type === TX_TYPES.BUY || t.type === TX_TYPES.STOCK_DIVIDEND) {
+      prevHeld += t.shares;
+      lots.push({ date: t.date, shares: t.shares });
+    } else if (t.type === TX_TYPES.SELL) {
+      const n = Math.min(t.shares, prevHeld);
+      prevHeld -= n;
+      consumeLots(n);
+    }
   });
   const today = sorted.filter((t) => t.date === todayDate);
   // 今天買進的批次(依序被今天的賣出對沖)
@@ -627,6 +645,7 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
     const fromPrev = Math.min(rest, prevAvail);
     if (fromPrev > 0) {
       prevAvail -= fromPrev;
+      consumeLots(fromPrev);
       rest -= fromPrev;
       soldPrevShares += fromPrev;
       if (hasPrev) soldPrevPnl += (t.price - prevClose) * fromPrev;
@@ -644,7 +663,7 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
   const boughtShares = pool.reduce((n, b) => n + b.left, 0);
   const boughtPnl = hasPrice ? pool.reduce((n, b) => n + b.left * (currentPrice - b.price), 0) : 0;
   const parts = [];
-  if (prevAvail > 0) parts.push({ kind: 'carry', shares: prevAvail, pnl: carryPnl });
+  if (prevAvail > 0) parts.push({ kind: 'carry', shares: prevAvail, pnl: carryPnl, lots });
   if (soldPrevShares > 0) parts.push({ kind: 'soldPrev', shares: soldPrevShares, pnl: soldPrevPnl });
   if (dayTradeShares > 0) parts.push({ kind: 'dayTrade', shares: dayTradeShares, pnl: dayTradePnl });
   if (boughtShares > 0) parts.push({ kind: 'boughtToday', shares: boughtShares, pnl: boughtPnl });

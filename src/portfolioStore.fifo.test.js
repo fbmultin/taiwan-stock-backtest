@@ -57,7 +57,7 @@ test('當日損益:原有庫存、賣出、今日買進各自用對的基準', (
   ];
   const r = computeDayPnl(txs, { currentPrice: 30, prevClose: 28, todayDate: TODAY });
   expect(r.parts).toEqual([
-    { kind: 'carry', shares: 600, pnl: 1200 }, // (30-28)*600
+    { kind: 'carry', shares: 600, pnl: 1200, lots: [{ date: '2026-09-01', shares: 600 }] }, // (30-28)*600
     { kind: 'soldPrev', shares: 400, pnl: 1200 },
     { kind: 'boughtToday', shares: 200, pnl: 600 },
   ]);
@@ -80,4 +80,17 @@ test('當日損益:沒有今天的交易時等於舊算法 股數×(現價-昨�
   expect(s.todayPnlPct).toBeCloseTo((2000 / 28000) * 100, 6);
   const agg = aggregateSummaries([s, computeSymbolSummary(txs, { currentPrice: 10, prevClose: 11, todayDate: TODAY })]);
   expect(agg.todayPnl).toBe(1000);
+});
+
+test('當日損益:昨天庫存來源依先進先出扣掉賣出,供明細顯示', () => {
+  const txs = [
+    tx('b1', 'buy', '2026-10-01', 100, 1000),
+    tx('b2', 'buy', '2026-10-05', 110, 600),
+    tx('s0', 'sell', '2026-10-06', 120, 300), // 昨天前已賣 300,先扣最早那批
+    tx('s1', 'sell', TODAY, 121, 200), // 今天賣 200 也先扣昨天庫存
+  ];
+  const r = computeDayPnl(txs, { currentPrice: 125, prevClose: 120, todayDate: TODAY });
+  const carry = r.parts.find((p) => p.kind === 'carry');
+  expect(carry.shares).toBe(1100);
+  expect(carry.lots).toEqual([{ date: '2026-10-01', shares: 500 }, { date: '2026-10-05', shares: 600 }]);
 });
