@@ -94,3 +94,15 @@ test('當日損益:昨天庫存來源依先進先出扣掉賣出,供明細顯示
   expect(carry.shares).toBe(1100);
   expect(carry.lots).toEqual([{ date: '2026-10-01', shares: 500 }, { date: '2026-10-05', shares: 600 }]);
 });
+
+test('當日損益:同一天先登記賣、後登記買時,昨天庫存不會被虛增(買先賣後)', () => {
+  const txs = [
+    tx('s0', 'sell', '2026-08-21', 641, 1000, { createdAt: 1 }), // 先登記賣
+    tx('b0', 'buy', '2026-08-21', 675, 1000, { createdAt: 2 }), // 後登記買
+    tx('b1', 'buy', '2026-09-29', 800, 600),
+    tx('s1', 'sell', TODAY, 875, 300),
+  ];
+  const r = computeDayPnl(txs, { currentPrice: 870, prevClose: 860, todayDate: TODAY });
+  const carry = r.parts.find((p) => p.kind === 'carry');
+  expect(carry.shares).toBe(300); // 8/21 買賣對沖為 0,昨天庫存 600,今天賣 300 後剩 300(修正前會多出 1000)
+});

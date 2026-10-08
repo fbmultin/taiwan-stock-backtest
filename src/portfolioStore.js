@@ -600,9 +600,14 @@ export function matchFifo(transactions) {
 export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null, todayDate } = {}) {
   const hasPrev = prevClose != null && prevClose > 0;
   const hasPrice = currentPrice > 0;
+  // 同一天要「買先、賣後」(跟 computeSymbolSummary / matchFifo 一致)。不然像同一天先登記
+  // 賣 1000 再登記買 1000(匯入或補登時常見)會被當成「賣的時候沒庫存」而漏扣,
+  // 昨天庫存就憑空多出 1000 股,今日損益明細的「昨天就持有」跟著算錯。
   const sorted = [...(transactions || [])].sort((a, b) => {
     if (a.date < b.date) return -1;
     if (a.date > b.date) return 1;
+    const rank = (t) => (t.type === TX_TYPES.SELL ? 1 : 0);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     return (a.createdAt || 0) - (b.createdAt || 0);
   });
   // 昨天收盤時的庫存股數
