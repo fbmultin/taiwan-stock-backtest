@@ -1883,12 +1883,17 @@ function StatCard({
 
 // ============== 今日損益明細(浮動視窗,樣式比照熱力圖細節框) ==============
 // rows: [{ symbol, name, pnl, parts:[{kind,shares,pnl}] }];每檔列出各部分怎麼來的
+// 明細分兩區:「現有庫存」(目前還抱著的股數,對應首頁持股列表的股數)與「今日已交易」
+// (今天賣掉的)。現有庫存再拆成兩種基準:昨天收盤就持有的(現價−昨收)、今天才買的(現價−買價),
+// 兩者股數相加=首頁看到的持有股數,使用者才對得上帳。
 const DAY_PART_LABELS = {
-  carry: (n) => `原有庫存 ${formatMoney(n)}股:現價−昨收`,
-  soldPrev: (n) => `賣出原有庫存 ${formatMoney(n)}股:賣價−昨收`,
-  dayTrade: (n) => `當沖 ${formatMoney(n)}股:賣價−買價`,
+  carry: (n) => `昨天就持有 ${formatMoney(n)}股:現價−昨收`,
   boughtToday: (n) => `今日買進 ${formatMoney(n)}股:現價−買價`,
+  soldPrev: (n) => `賣出(昨天就持有)${formatMoney(n)}股:賣價−昨收`,
+  dayTrade: (n) => `當沖 ${formatMoney(n)}股:賣價−買價`,
 };
+const HOLD_KINDS = ['carry', 'boughtToday'];
+const TRADED_KINDS = ['soldPrev', 'dayTrade'];
 
 export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onClose }) {
   const list = rows.filter((r) => r.parts && r.parts.length > 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
@@ -1918,12 +1923,29 @@ export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onC
                 <div className={`font-bold truncate ${lb.codeFirst ? 'font-mono' : ''}`}>{lb.primary}</div>
                 <div className={`font-mono font-bold shrink-0 ${pnlColorClass(r.pnl, isLight)}`}>{formatSigned(r.pnl)}</div>
               </div>
-              {r.parts.map((pt) => (
-                <div key={pt.kind} className={`flex justify-between gap-2 text-[11px] ${muted}`}>
-                  <span>{DAY_PART_LABELS[pt.kind](pt.shares)}</span>
-                  <span className={`font-mono shrink-0 ${pnlColorClass(pt.pnl, isLight)}`}>{formatSigned(pt.pnl)}</span>
-                </div>
-              ))}
+              {[
+                { key: 'hold', kinds: HOLD_KINDS, title: (n) => `現有庫存 ${formatMoney(n)}股` },
+                { key: 'traded', kinds: TRADED_KINDS, title: () => '今日已交易' },
+              ].map((sec) => {
+                const ps = r.parts.filter((pt) => sec.kinds.includes(pt.kind));
+                if (ps.length === 0) return null;
+                const sh = ps.reduce((n, pt) => n + pt.shares, 0);
+                const sub = ps.reduce((n, pt) => n + pt.pnl, 0);
+                return (
+                  <div key={sec.key} className="mt-1">
+                    <div className="flex justify-between gap-2 text-xs font-semibold">
+                      <span>{sec.title(sh)}</span>
+                      <span className={`font-mono shrink-0 ${pnlColorClass(sub, isLight)}`}>{formatSigned(sub)}</span>
+                    </div>
+                    {ps.map((pt) => (
+                      <div key={pt.kind} className={`flex justify-between gap-2 text-[11px] pl-3 ${muted}`}>
+                        <span>{DAY_PART_LABELS[pt.kind](pt.shares)}</span>
+                        <span className={`font-mono shrink-0 ${pnlColorClass(pt.pnl, isLight)}`}>{formatSigned(pt.pnl)}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           );
         })}

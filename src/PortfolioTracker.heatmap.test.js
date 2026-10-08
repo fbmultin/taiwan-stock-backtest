@@ -183,8 +183,10 @@ test('今日損益明細浮動視窗:合計、每檔各部分、依影響大小�
   const rs = Array.from(el.querySelectorAll('[data-testid="today-pnl-row"]'));
   expect(rs.length).toBe(2); // 沒有可計算部分的不列
   expect(rs[0].textContent).toContain('00878'); // |−3000| 最大排最前
-  expect(rs[0].textContent).toContain('賣出原有庫存 1,000股');
+  expect(rs[0].textContent).toContain('賣出(昨天就持有)1,000股');
   expect(rs[0].textContent).toContain('今日買進 500股');
+  expect(rs[0].textContent).toContain('現有庫存 500股');
+  expect(rs[0].textContent).toContain('今日已交易');
   expect(rs[1].textContent).toContain('台積電');
   await act(async () => { pop.parentElement.click(); });
   expect(onClose).toHaveBeenCalled();
@@ -207,6 +209,6 @@ test('個股頁:點今日損益卡開明細', async () => {
   });
   expect(el.querySelector('[data-testid="today-pnl-popup"]')).toBeNull();
   await act(async () => { el.querySelector('[data-testid="detail-today-pnl-card"]').click(); });
-  expect(el.querySelector('[data-testid="today-pnl-popup"]').textContent).toContain('原有庫存 1,000股');
+  expect(el.querySelector('[data-testid="today-pnl-popup"]').textContent).toContain('現有庫存 1,000股');
   await act(() => root.unmount());
 });
