@@ -437,6 +437,65 @@ export function isDayTradeSell(transactions, symbol, date, excludeTxId = null) {
   );
 }
 
+// 當沖股數配對:同一檔、同一天同時有買有賣,就把「買」跟「賣」能互相抵銷的股數
+// (= min(當天買進總股數, 當天賣出總股數))視為當沖。依登記順序(createdAt,再依原順序)
+// 分配到各筆買進與賣出:先登記的先配。不分先買後賣或先賣後買,只看同一天。
+// 回傳 { buyDt: {txId: 股數}, sellDt: {txId: 股數} }
+// 為什麼要獨立出來:持股試算(庫存/均價/已實現)、先進先出配對、當日損益、證交稅
+// 都要用同一份「哪幾股是當沖」的認定,才不會各算各的對不起來。
+export function allocateDayTrades(transactions) {
+  const byDate = {};
+  (transactions || []).forEach((t, i) => {
+    if (t.type !== TX_TYPES.BUY && t.type !== TX_TYPES.SELL) return;
+    (byDate[t.date] = byDate[t.date] || []).push({ t, i });
+  });
+  const buyDt = {};
+  const sellDt = {};
+  const order = (a, b) => (a.t.createdAt || 0) - (b.t.createdAt || 0) || a.i - b.i;
+  Object.values(byDate).forEach((list) => {
+    const buys = list.filter((x) => x.t.type === TX_TYPES.BUY).sort(order);
+    const sells = list.filter((x) => x.t.type === TX_TYPES.SELL).sort(order);
+    const sum = (arr) => arr.reduce((n, x) => n + (x.t.shares || 0), 0);
+    const total = Math.min(sum(buys), sum(sells));
+    if (total <= 0) return;
+    const assign = (arr, out) => {
+      let rest = total;
+      arr.forEach(({ t }) => {
+        const take = Math.min(t.shares || 0, rest);
+        rest -= take;
+        if (take > 0) out[t.id] = take;
+      });
+    };
+    assign(buys, buyDt);
+    assign(sells, sellDt);
+  });
+  return { buyDt, sellDt };
+}
+
+// 新增/編輯一筆賣出時,這筆裡有幾股算當沖:同一天同一檔(不分群組,稅務上看的是
+// 同一個帳戶)的買進總股數,扣掉同一天其他賣出已經配走的,剩下的才配給這筆。
+export function dayTradeSharesForSell(transactions, symbol, date, sellShares, excludeTxId = null) {
+  let buys = 0;
+  let otherSells = 0;
+  (transactions || []).forEach((t) => {
+    if (t.id === excludeTxId || t.symbol !== symbol || t.date !== date) return;
+    if (t.type === TX_TYPES.BUY) buys += t.shares || 0;
+    else if (t.type === TX_TYPES.SELL) otherSells += t.shares || 0;
+  });
+  return Math.max(0, Math.min(sellShares || 0, buys - otherSells));
+}
+
+// 賣出證交稅:當沖的股數用當沖稅率(股票期限內千分之1.5),其餘用一般稅率,
+// 分開計算各自元以下捨去後相加(券商交割單對部分當沖也是拆開算)。
+// ETF 當沖不減半,兩個稅率相同時直接整筆算,避免拆開捨去多差 1 元。
+export function estimateSellTax(price, shares, { dayTradeShares = 0, isEtf = false, isBondEtf = false, date } = {}) {
+  const dt = Math.max(0, Math.min(dayTradeShares || 0, shares || 0));
+  const normalRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: false, date });
+  const dtRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: true, date });
+  if (dt <= 0 || dtRate === normalRate) return estimateTax(price, shares, { taxRate: normalRate });
+  return estimateTax(price, dt, { taxRate: dtRate }) + estimateTax(price, shares - dt, { taxRate: normalRate });
+}
+
 // 計算一組交易紀錄的「淨股數」變化:買進、股票股利增加股數,賣出減少股數,
 // 現金股利不影響股數。框選套用標籤(標記成一組「已清倉」波段)時用這個檢查
 // 選取的交易淨股數是否等於0——等於0才代表這組交易買了又全部賣光,沒有剩餘
@@ -533,6 +592,7 @@ function annualize(periodReturnPct, years) {
 // 為什麼獨立成函式:個股頁要在每筆「買進」旁註記「這批已在何時賣出」,
 // 「今日已實現損益」也要用同一套配對算,兩邊必須共用同一份結果才不會對不起來。
 //   - 同一天買先賣後(跟 computeSymbolSummary 的排序一致,避免當天先賣後買誤判庫存不足)
+//   - 同一天有買有賣視為當沖:賣出先對沖同一天的買進,剩下的才拿舊庫存
 //   - 同日同類型依 createdAt(沒有就維持原順序)
 //   - 配股(股票股利)當成成本 0 的一批,才跟庫存股數對得上
 //   - 買進成本 = 價*股數+手續費,按配對到的股數等比例分攤;賣出淨額 = 價*股數-手續費-稅
@@ -558,7 +618,7 @@ export function matchFifo(transactions) {
   list.forEach(({ t }) => {
     if (t.type === TX_TYPES.BUY) {
       const total = t.price * t.shares + (t.fee || 0);
-      lots.push({ id: t.id, remaining: t.shares, unitCost: t.shares > 0 ? total / t.shares : 0 });
+      lots.push({ id: t.id, date: t.date, remaining: t.shares, unitCost: t.shares > 0 ? total / t.shares : 0 });
       buyMatches[t.id] = [];
       buyRemaining[t.id] = t.shares;
     } else if (t.type === TX_TYPES.STOCK_DIVIDEND) {
@@ -570,16 +630,19 @@ export function matchFifo(transactions) {
       const sold = Math.min(t.shares, available);
       let need = sold;
       let cost = 0;
-      for (let k = 0; k < lots.length && need > 0; k += 1) {
-        const lot = lots[k];
-        if (lot.remaining <= 0) continue;
-        const take = Math.min(lot.remaining, need);
-        lot.remaining -= take;
-        need -= take;
-        cost += take * lot.unitCost;
-        buyRemaining[lot.id] = lot.remaining;
-        buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take });
-      }
+      // 第一輪只拿「同一天買進」的批次(當沖先互相抵銷),第二輪才依先進先出拿最早的
+      [(lot) => lot.date === t.date, () => true].forEach((ok) => {
+        for (let k = 0; k < lots.length && need > 0; k += 1) {
+          const lot = lots[k];
+          if (lot.remaining <= 0 || !ok(lot)) continue;
+          const take = Math.min(lot.remaining, need);
+          lot.remaining -= take;
+          need -= take;
+          cost += take * lot.unitCost;
+          buyRemaining[lot.id] = lot.remaining;
+          buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take });
+        }
+      });
       const proceeds = t.price * sold - (t.fee || 0) - (t.tax || 0);
       sellRealized[t.id] = { gain: proceeds - cost, shares: sold };
     }
@@ -592,7 +655,7 @@ export function matchFifo(transactions) {
 //   - 昨天就持有、今天賣出的:(賣價 - 昨收) × 股數
 //   - 今天買進又今天賣出(當沖):(賣價 - 買價) × 股數
 //   - 今天買進、還持有的:(現價 - 買進價) × 股數
-// 賣出時先對沖「昨天就持有」的股數,不夠才算今天買進的(先進先出)。
+// 同一天有買有賣視為當沖:賣出先對沖今天的買進,超過的部分才算賣掉昨天的庫存。
 // 不含手續費與證交稅、也不含現金股利(股利算在「今日已實現」)。
 // 為什麼要重算:舊算法只有「目前股數 × (現價 - 昨收)」,今天賣掉的股票完全不算,
 // 今天買進的也用昨收當基準,跟其他 App 的「當日損益」對不上。
@@ -647,14 +710,6 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
   today.forEach((t) => {
     if (t.type !== TX_TYPES.SELL) return;
     let rest = t.shares;
-    const fromPrev = Math.min(rest, prevAvail);
-    if (fromPrev > 0) {
-      prevAvail -= fromPrev;
-      consumeLots(fromPrev);
-      rest -= fromPrev;
-      soldPrevShares += fromPrev;
-      if (hasPrev) soldPrevPnl += (t.price - prevClose) * fromPrev;
-    }
     for (let k = 0; k < pool.length && rest > 0; k += 1) {
       const take = Math.min(pool[k].left, rest);
       if (take <= 0) continue;
@@ -662,6 +717,13 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
       rest -= take;
       dayTradeShares += take;
       dayTradePnl += (t.price - pool[k].price) * take;
+    }
+    const fromPrev = Math.min(rest, prevAvail);
+    if (fromPrev > 0) {
+      prevAvail -= fromPrev;
+      consumeLots(fromPrev);
+      soldPrevShares += fromPrev;
+      if (hasPrev) soldPrevPnl += (t.price - prevClose) * fromPrev;
     }
   });
   const carryPnl = hasPrev && hasPrice ? prevAvail * (currentPrice - prevClose) : 0;
@@ -707,24 +769,47 @@ export function computeSymbolSummary(
   let firstDate = sorted.length ? sorted[0].date : null;
   // 今日已實現(資本利得部分)改用先進先出配對;累計已實現/持有均價仍是平均成本法
   const fifo = matchFifo(transactions);
+  // 同一天有買有賣視為當沖:當沖的股數(買進那一側)不進庫存、不影響持有均價,
+  // 直接跟同一天的賣出配對結算(成本 = 當天買價 + 按股數分攤的買進手續費)。
+  // 只有沒被當沖抵銷的買進才進庫存;賣出超過當沖的部分才用庫存均價結算。
+  // 以前同一天的買會先併進庫存再賣,當天買的價格會被攤進剩下庫存的均價,
+  // 導致「明明只是當沖,持有均價卻跟著變」。
+  const { buyDt, sellDt } = allocateDayTrades(transactions);
+  let dtDate = null;
+  let dtShares = 0; // 當天買進、等著被當沖賣出配對的股數
+  let dtCost = 0;
 
   sorted.forEach((tx) => {
+    if ((tx.type === TX_TYPES.BUY || tx.type === TX_TYPES.SELL) && tx.date !== dtDate) {
+      dtDate = tx.date;
+      dtShares = 0;
+      dtCost = 0;
+    }
     if (tx.type === TX_TYPES.BUY) {
       const cost = tx.price * tx.shares + (tx.fee || 0);
-      const pureCost = tx.price * tx.shares;
-      shares += tx.shares;
-      costBasis += cost;
-      pureCostBasis += pureCost;
+      const dt = Math.min(buyDt[tx.id] || 0, tx.shares);
+      const keep = tx.shares - dt;
+      const ratio = tx.shares > 0 ? keep / tx.shares : 0;
+      dtShares += dt;
+      dtCost += cost - cost * ratio;
+      shares += keep;
+      costBasis += cost * ratio;
+      pureCostBasis += tx.price * keep;
       investedCapital += cost;
       totalFee += tx.fee || 0;
     } else if (tx.type === TX_TYPES.SELL) {
+      const dt = Math.min(sellDt[tx.id] || 0, tx.shares, dtShares);
+      const dtUnit = dtShares > 0 ? dtCost / dtShares : 0;
+      const costOfDt = dtUnit * dt;
+      dtShares -= dt;
+      dtCost -= costOfDt;
       const avgCost = shares > 0 ? costBasis / shares : 0;
       const pureAvgCost = shares > 0 ? pureCostBasis / shares : 0;
-      const soldShares = Math.min(tx.shares, shares);
+      const soldShares = Math.min(tx.shares - dt, shares);
       const costOfSold = avgCost * soldShares;
       const pureCostOfSold = pureAvgCost * soldShares;
-      const proceeds = tx.price * soldShares - (tx.fee || 0) - (tx.tax || 0);
-      const gain = proceeds - costOfSold;
+      const proceeds = tx.price * (soldShares + dt) - (tx.fee || 0) - (tx.tax || 0);
+      const gain = proceeds - costOfSold - costOfDt;
       realizedCapitalGain += gain;
       if (tx.date === todayDate) todayRealizedGain += fifo.sellRealized[tx.id] ? fifo.sellRealized[tx.id].gain : gain;
       shares -= soldShares;

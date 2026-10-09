@@ -85,7 +85,8 @@ import {
   moveSymbolsToGroup,
   estimateFee,
   estimateTax,
-  isDayTradeSell,
+  dayTradeSharesForSell,
+  estimateSellTax,
   isLikelyETF,
   stepPrice,
   tradeGross,
@@ -400,20 +401,27 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
     ? estimateFee({ ...group, etfFeeDiscountPct, stockFeeDiscountPct }, priceNum, sharesNum, isEtf)
     : 0;
   const fee = fixedFee ? parseFloat(manualFee) || 0 : autoFee;
-  // 當沖判斷:同一天、同一檔股票的交易紀錄裡已經有買進,賣出的證交稅就減半。
-  const isDayTrade =
-    type === TX_TYPES.SELL &&
-    symbol.trim() &&
-    date &&
-    isDayTradeSell(data.transactions, symbol.trim().toUpperCase(), date, isEdit ? initial.id : null);
+  // 當沖判斷:同一天、同一檔股票有買進,能跟這筆賣出互相抵銷的股數才算當沖
+  // (同一天的買進先被其他賣出配走的就不算),只有這部分證交稅減半,其餘照一般稅率。
+  const dtShares =
+    type === TX_TYPES.SELL && symbol.trim() && date
+      ? dayTradeSharesForSell(data.transactions, symbol.trim().toUpperCase(), date, sharesNum, isEdit ? initial.id : null)
+      : 0;
+  const isDayTrade = dtShares > 0;
   // 證交稅率依商品類型與交易日期(債券ETF停徵、股票當沖減半都有法定期限),見 portfolioStore.securityTaxRate
   const isBondEtf = isEtf && isBondETF(symbol);
-  const taxRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: Boolean(isDayTrade), date });
-  const tax = type === TX_TYPES.SELL ? estimateTax(priceNum, sharesNum, { taxRate }) : 0;
+  const taxRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: false, date });
+  const dtRate = securityTaxRate({ isEtf, isBondEtf, isDayTrade: true, date });
+  const tax = type === TX_TYPES.SELL ? estimateSellTax(priceNum, sharesNum, { dayTradeShares: dtShares, isEtf, isBondEtf, date }) : 0;
   const grossAmount = tradeGross(priceNum, sharesNum); // 價金(元以下捨去,跟交割單一致)
+  const pctLabel = (r) => `${(r * 100).toFixed(r === 0.0015 ? 2 : 1)}%`;
   const taxLabel = isBondEtf && taxRate === 0
     ? '債券ETF停徵'
-    : `${(taxRate * 100).toFixed(taxRate === 0.0015 ? 2 : 1)}%${isDayTrade && !isEtf && taxRate === 0.0015 ? ' 當沖減半' : ''}`;
+    : isDayTrade && dtRate !== taxRate
+    ? dtShares >= sharesNum
+      ? `${pctLabel(dtRate)} 當沖減半`
+      : `當沖${formatMoney(dtShares)}股 ${pctLabel(dtRate)}+其餘 ${pctLabel(taxRate)}`
+    : pctLabel(taxRate);
   // 交割金額:買進 = 價金 + 手續費;賣出 = 價金 − 手續費 − 證交稅
   const computedAmount =
     type === TX_TYPES.BUY
@@ -1018,9 +1026,10 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
   const computedRows = useMemo(() => {
     if (!parsed || !group) return [];
     const selected = parsed.rows.filter((r) => r.valid && checkedRows[r.rowIndex]);
+    // 匯入的每列給一個暫時 id,算當沖股數時才能把「自己」排除在「其他賣出」之外
     const dayTradeLookup = [
       ...data.transactions,
-      ...selected.map((r) => ({ symbol: r.symbol, date: r.date, type: r.type })),
+      ...selected.map((r) => ({ id: `__import_${r.rowIndex}`, symbol: r.symbol, date: r.date, type: r.type, shares: r.shares })),
     ];
     return selected.map((r) => {
       const isEtf = isLikelyETF(r.symbol);
@@ -1033,10 +1042,12 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
         return { ...r, fee: 0, tax: 0, isDayTrade: false, isEtf, amount: 0 };
       }
       const fee = estimateFee(group, r.price, r.shares, isEtf);
-      const isDayTrade = r.type === TX_TYPES.SELL && isDayTradeSell(dayTradeLookup, r.symbol, r.date, null);
-      // 稅率跟手動新增交易同一套規則(股票/ETF/債券ETF停徵/股票當沖減半),依該筆交易日期判斷
-      const taxRate = securityTaxRate({ isEtf, isBondEtf: isEtf && isBondETF(r.symbol), isDayTrade, date: r.date });
-      const tax = r.type === TX_TYPES.SELL ? estimateTax(r.price, r.shares, { taxRate }) : 0;
+      const dtShares =
+        r.type === TX_TYPES.SELL ? dayTradeSharesForSell(dayTradeLookup, r.symbol, r.date, r.shares, `__import_${r.rowIndex}`) : 0;
+      const isDayTrade = dtShares > 0;
+      // 稅率跟手動新增交易同一套規則(股票/ETF/債券ETF停徵/股票當沖減半,只有當沖股數減半),依該筆交易日期判斷
+      const isBondEtf = isEtf && isBondETF(r.symbol);
+      const tax = r.type === TX_TYPES.SELL ? estimateSellTax(r.price, r.shares, { dayTradeShares: dtShares, isEtf, isBondEtf, date: r.date }) : 0;
       const gross = tradeGross(r.price, r.shares);
       const amount = r.type === TX_TYPES.BUY ? -(gross + fee) : gross - fee - tax;
       return { ...r, fee, tax, isDayTrade, isEtf, amount };
