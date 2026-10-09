@@ -8,6 +8,7 @@ import {
   saveLastQuotes,
   seedQuote,
   applyQuote,
+  isStaleQuote,
 } from './portfolioQuotes';
 
 const mem = () => {
@@ -76,4 +77,12 @@ test('applyQuote:比畫面上舊的不覆蓋,但會清掉讀取中;新的覆蓋�
   expect(p2['8358']).toMatchObject({ price: 551, prevClose: 570 });
   const p3 = applyQuote(p2, '2330', null);
   expect(p3['2330']).toEqual({ loading: false });
+});
+
+test('isStaleQuote:資料時間早於應有的交易日才算過期;沒資料或沒基準日不判定', () => {
+  expect(isStaleQuote('2026-10-06T13:30:00', '2026-10-07')).toBe(true); // 還停在前一個交易日
+  expect(isStaleQuote('2026-10-07T13:30:00', '2026-10-07')).toBe(false); // 就是今天
+  expect(isStaleQuote('2026-10-07T10:15:03', '2026-10-07')).toBe(false); // 盤中即時報價
+  expect(isStaleQuote(null, '2026-10-07')).toBe(false);
+  expect(isStaleQuote('2026-10-06T13:30:00', null)).toBe(false);
 });

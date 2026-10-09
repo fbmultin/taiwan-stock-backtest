@@ -123,3 +123,35 @@ test('更新鈕:不分盤中盤後,所有持股都拿即時報價更新(上櫃�
   expect(saved['8358']).toEqual({ price: 553, prevClose: 570, asOf: '2026-10-06T10:15:03' });
   unmount();
 });
+
+test('現價資料時間明顯是舊的(更新失敗/還沒更新),持股列表顯示過期提醒圖示', async () => {
+  // 8358 的上一次數據是很久以前的,擺明不是最新;2330 沒有存過上一次數據,不該被標過期。
+  localStorage.setItem(LAST_QUOTES_KEY, JSON.stringify({ 8358: { price: 300, prevClose: 300, asOf: '2020-01-01T13:30:00' } }));
+  const { el, unmount } = await render();
+  const icons = el.querySelectorAll('[data-testid="stale-quote-icon"]');
+  expect(icons.length).toBe(1);
+  unmount();
+});
+
+test('全部檢視的總損益明細也列出「本日已實現損益」', async () => {
+  const { getEffectiveTodayDateStr } = require('./tradingCalendar');
+  const today = getEffectiveTodayDateStr();
+  localStorage.setItem(
+    'portfolio_tracker_v1',
+    JSON.stringify({
+      ...portfolio,
+      transactions: [
+        ...portfolio.transactions,
+        { id: 't3', groupId: 'g1', symbol: '8358', type: 'sell', date: today, shares: 500, price: 320, createdAt: 2 },
+      ],
+    })
+  );
+  const { el, unmount } = await render();
+  await flush();
+  const summaryBtn = Array.from(el.querySelectorAll('button')).find((b) => b.textContent.includes('查看全部'));
+  await act(async () => {
+    summaryBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  expect(el.textContent).toContain('本日已實現損益');
+  unmount();
+});

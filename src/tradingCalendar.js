@@ -140,3 +140,16 @@ export const getLastCompletedTradingDay = (referenceDate = new Date()) => {
   }
   return d;
 };
+
+// 「我的持股」用的「今天」:平常就是今天,但如果今天不是交易日(週末/國定假日),
+// 當天不會有任何交易,「本日已實現損益」「今日交易」都只會是0或空的,假日打開
+// 完全看不到東西可以檢視。改成非交易日就退回最近一個交易日,讓這些「今日XX」
+// 的數字/清單改顯示那一天收盤後的資訊供检視,而不是硬要湊出「今天」不存在的數字。
+// referenceDateStr 預設用 UTC 日期字串,跟 computeSymbolSummary 的 todayDate
+// 預設值(new Date().toISOString().split('T')[0])一致,兩邊才不會對不起來。
+export const getEffectiveTodayDateStr = (referenceDate = new Date()) => {
+  const todayDateStr = referenceDate.toISOString().split('T')[0];
+  const todayUTC = new Date(`${todayDateStr}T00:00:00Z`);
+  if (!isNonTradingDay(todayUTC)) return todayDateStr;
+  return getLastCompletedTradingDay(referenceDate).toISOString().split('T')[0];
+};

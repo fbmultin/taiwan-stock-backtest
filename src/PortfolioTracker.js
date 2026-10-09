@@ -21,6 +21,7 @@ import {
   CloudOff,
   Archive,
   Copy,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   mergeForSync,
@@ -57,8 +58,9 @@ import {
   saveLastQuotes,
   seedQuote,
   applyQuote,
+  isStaleQuote,
 } from './portfolioQuotes';
-import { isNonTradingDay, getTaipeiDateTimeParts } from './tradingCalendar';
+import { isNonTradingDay, getTaipeiDateTimeParts, getEffectiveTodayDateStr } from './tradingCalendar';
 import {
   TX_TYPES,
   TX_TYPE_LABELS,
@@ -2004,6 +2006,7 @@ function HoldingsListView({
   onSignOut,
   onRefreshPrices,
   refreshingPrices,
+  todayDateStr,
   sync = { status: 'off' },
   onRetrySync = () => {},
   onDismissRestored = () => {},
@@ -2386,6 +2389,13 @@ function HoldingsListView({
                   </div>
                   <div className={`font-mono font-bold text-lg whitespace-nowrap ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {h.summary.currentPrice ? h.summary.currentPrice.toFixed(2) : h.loading ? '…' : '-'}
+                    {isStaleQuote(h.asOf, todayDateStr) && (
+                      <AlertTriangle
+                        data-testid="stale-quote-icon"
+                        title={`現價可能不是最新,資料時間:${String(h.asOf).slice(0, 10)}`}
+                        className="inline-block w-3 h-3 ml-0.5 -mt-2 text-amber-500"
+                      />
+                    )}
                   </div>
                   <div className={`text-xs font-mono ${pnlColorClass(h.summary.todayPnl, isLight)}`}>
                     {formatPct(h.summary.todayPnlPct)}
@@ -2505,6 +2515,8 @@ export function StockDetailView({
   symbol,
   name,
   summary,
+  priceAsOf,
+  todayDateStr,
   transactions,
   tags,
   onBack,
@@ -2709,7 +2721,22 @@ export function StockDetailView({
               onClick={() => setShowDayPnl(true)}
               testId="detail-today-pnl-card"
             />
-            <StatCard isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
+            <StatCard
+              isLight={isLight}
+              label="現價"
+              value={
+                <>
+                  {summary.currentPrice.toFixed(2)}
+                  {isStaleQuote(priceAsOf, todayDateStr) && (
+                    <AlertTriangle
+                      data-testid="stale-quote-icon"
+                      title={`現價可能不是最新,資料時間:${String(priceAsOf).slice(0, 10)}`}
+                      className="inline-block w-3 h-3 ml-0.5 -mt-2 text-amber-500"
+                    />
+                  )}
+                </>
+              }
+            />
             <StatCard isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
           </div>
         </>
@@ -2751,7 +2778,22 @@ export function StockDetailView({
         <div className="px-4 mt-3">
           <SectionHeader isLight={isLight}>交易</SectionHeader>
           <DataRow isLight={isLight} label="庫存股數" value={`${formatMoney(summary.shares)}股`} />
-          <DataRow isLight={isLight} label="現價" value={summary.currentPrice.toFixed(2)} />
+          <DataRow
+            isLight={isLight}
+            label="現價"
+            value={
+              <>
+                {summary.currentPrice.toFixed(2)}
+                {isStaleQuote(priceAsOf, todayDateStr) && (
+                  <AlertTriangle
+                    data-testid="stale-quote-icon"
+                    title={`現價可能不是最新,資料時間:${String(priceAsOf).slice(0, 10)}`}
+                    className="inline-block w-3 h-3 ml-0.5 -mt-2 text-amber-500"
+                  />
+                )}
+              </>
+            }
+          />
           <DataRow isLight={isLight} label="買進均價" value={summary.avgPrice.toFixed(2)} />
           <DataRow isLight={isLight} label="投資期間" value={`${summary.investmentYears.toFixed(2)}年`} />
 
@@ -3090,6 +3132,13 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
           label="已實現損益"
           value={`${formatSigned(summary.realizedPnl)}｜${formatPct(summary.realizedPnlPct)}`}
           colorClass={pnlColorClass(summary.realizedPnl, isLight)}
+        />
+        <DataRow
+          isLight={isLight}
+          indent={2}
+          label="本日已實現損益"
+          value={`(${formatSigned(summary.todayRealizedPnl)})`}
+          colorClass={pnlColorClass(summary.todayRealizedPnl, isLight)}
         />
         <DataRow
           isLight={isLight}
@@ -3834,6 +3883,12 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
     return () => clearInterval(timer);
   }, [symbolsKey]);
 
+  // 「今天」如果是非交易日(週末/國定假日),當天不會有任何交易,「本日已實現
+  // 損益」「今日交易」清單都只會是0或空的,等於假日打開完全看不到東西可以檢視。
+  // getEffectiveTodayDateStr 會在非交易日退回最近一個交易日,讓「今日損益」
+  // 「本日已實現損益」「今日交易」都顯示那一天收盤後的資訊供检視。
+  const todayDateStr = getEffectiveTodayDateStr();
+
   const allSymbolHoldings = useMemo(
     () =>
       symbols.map((symbol) => {
@@ -3843,10 +3898,11 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           currentPrice: priceInfo.price || 0,
           prevClose: priceInfo.prevClose,
           groups: data.groups,
+          todayDate: todayDateStr,
         });
-        return { symbol, name: stockNames[symbol] || symbol, summary, loading: priceInfo.loading, txs };
+        return { symbol, name: stockNames[symbol] || symbol, summary, loading: priceInfo.loading, txs, asOf: priceInfo.asOf };
       }),
-    [symbols, txBySymbol, prices, stockNames, data.groups]
+    [symbols, txBySymbol, prices, stockNames, data.groups, todayDateStr]
   );
 
   const openPositions = allSymbolHoldings.filter((h) => h.summary.shares > 0);
@@ -3867,10 +3923,9 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
   );
 
   // ---- 今日交易明細(首頁「績效數據」旁「今日交易」) ----
-  // 「今天」比對的是交易自己的日期欄位(YYYY-MM-DD),跟 computeSymbolSummary
-  // 算「今日損益」用的 todayDate 預設值一致,不是看現在幾點。txBySymbol 本身
-  // 已經依目前選到的群組篩選過,所以這裡列出來的也自然只會是這個群組的。
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  // 「今天」比對的是交易自己的日期欄位(YYYY-MM-DD),跟上面 todayDateStr(假日會
+  // 退回最近一個交易日)共用同一個基準,假日也能看到上一個交易日的交易清單。
+  // txBySymbol 本身已經依目前選到的群組篩選過,所以這裡列出來的也自然只會是這個群組的。
   const todayTransactions = useMemo(() => {
     const list = [];
     Object.entries(txBySymbol).forEach(([symbol, txs]) => {
@@ -4031,6 +4086,7 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
           onOpenMoveSymbols={() => setMovingSymbols(Array.from(selectedSymbols))}
           onRefreshPrices={handleRefreshPrices}
           refreshingPrices={refreshingPrices}
+          todayDateStr={todayDateStr}
           sync={sync}
           onRetrySync={() => setSyncAttempt((n) => n + 1)}
           onDismissRestored={() => setSync((st) => ({ ...st, restoredCount: 0 }))}
@@ -4086,8 +4142,11 @@ export function PortfolioTrackerInner({ isLight, uid, userEmail, onSignOut }) {
                   currentPrice: (prices[detailSymbol] || {}).price || 0,
                   prevClose: (prices[detailSymbol] || {}).prevClose,
                   groups: data.groups,
+                  todayDate: todayDateStr,
                 })
           }
+          priceAsOf={(prices[detailSymbol] || {}).asOf}
+          todayDateStr={todayDateStr}
           transactions={detailTxs}
           tags={data.tags}
           onBack={() => {

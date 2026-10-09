@@ -116,3 +116,12 @@ export function applyQuote(prev, symbol, q) {
     [symbol]: { ...cur, price: best.price, prevClose: best.prevClose, asOf: best.asOf, loading: false, error: false },
   };
 }
+
+// 「更新股價」失敗(逾時、本機沒有 /api、上游擋爬蟲)時是安靜放棄、維持舊價格,
+// 畫面上完全看不出來「這筆其實沒更新成功」。用現價的資料時間(asOf,格式
+// YYYY-MM-DDTHH:MM:SS)跟目前應該有的最近交易日比,舊過預期就視為過期,
+// 使用者才知道「現在看到的不一定是最新價」,而不是誤以為損益已經是最新的。
+export function isStaleQuote(asOf, refDateStr) {
+  if (!asOf || !refDateStr) return false;
+  return String(asOf).slice(0, 10) < refDateStr;
+}
