@@ -2813,13 +2813,6 @@ export function StockDetailView({
           <DataRow
             isLight={isLight}
             indent={1}
-            label="今日損益"
-            value={`${formatSigned(summary.todayPnl)}｜${formatPct(summary.todayPnlPct)}`}
-            colorClass={pnlColorClass(summary.todayPnl, isLight)}
-          />
-          <DataRow
-            isLight={isLight}
-            indent={1}
             label="已實現損益"
             value={`${formatSigned(summary.realizedPnl)}｜${formatPct(summary.realizedPnlPct)}`}
             colorClass={pnlColorClass(summary.realizedPnl, isLight)}
