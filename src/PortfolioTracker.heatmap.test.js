@@ -186,7 +186,7 @@ test('今日損益明細浮動視窗:合計、每檔各部分、依影響大小�
   expect(rs[0].textContent).toContain('賣出(昨天就持有)1,000股');
   expect(rs[0].textContent).toContain('今日買進 500股');
   expect(rs[0].textContent).toContain('現有庫存 500股');
-  expect(rs[0].textContent).toContain('今日已交易');
+  expect(rs[0].textContent).toContain('今日已實現');
   expect(rs[1].textContent).toContain('台積電');
   await act(async () => { pop.parentElement.click(); });
   expect(onClose).toHaveBeenCalled();
@@ -210,5 +210,37 @@ test('個股頁:點今日損益卡開明細', async () => {
   expect(el.querySelector('[data-testid="today-pnl-popup"]')).toBeNull();
   await act(async () => { el.querySelector('[data-testid="detail-today-pnl-card"]').click(); });
   expect(el.querySelector('[data-testid="today-pnl-popup"]').textContent).toContain('現有庫存 1,000股');
+  await act(() => root.unmount());
+});
+
+test('個股頁交易明細:同一天有買有賣的賣出標成「現沖」,其餘維持「賣出」', async () => {
+  const mk = (id, type, date, price, shares, createdAt) => ({ id, type, date, price, shares, amount: 0, fee: 0, tax: 0, createdAt });
+  const txs = [
+    mk('b0', 'buy', '2026-09-01', 10, 1000, 1), // 昨天的庫存
+    mk('b1', 'buy', '2026-10-08', 11, 300, 2), // 今天買 300
+    mk('s1', 'sell', '2026-10-08', 12, 200, 3), // 當沖 200(對到 b1)
+    mk('s2', 'sell', '2026-10-08', 13, 500, 4), // 當沖 100 + 賣舊庫存 400
+  ];
+  const summary = { shares: 1100, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 1, avgPrice: 1, todayPnl: 0, todayPnlPct: 0 };
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(
+      <StockDetailView
+        isLight data={data} symbol="2330" name="台積電" summary={summary} transactions={txs} tags={[]}
+        onBack={() => {}} onAddTx={() => {}} onOpenAction={() => {}} selectMode={false}
+        selectedTxIds={new Set()} onToggleSelectMode={() => {}} onToggleSelectTx={() => {}} onOpenTagPicker={() => {}}
+      />
+    );
+  });
+  // 買進列後面可能接著先進先出的賣出註記(sellNote),只取最前面的類型文字比對
+  const labels = Array.from(el.querySelectorAll('.font-bold.text-sm'))
+    .map((n) => n.textContent)
+    .filter((t) => t.startsWith('買進') || t.startsWith('賣出') || t.startsWith('現沖'))
+    .map((t) => (t.startsWith('現沖') ? '現沖' : t.startsWith('買進') ? '買進' : '賣出'));
+  // 同一天內維持原登記順序:b1(買進)、s1(全部當沖,標現沖)、s2(有當沖成分,標現沖);
+  // 10/08 這組排在 09/01 的 b0(買進)前面(日期新到舊)
+  expect(labels).toEqual(['買進', '現沖', '現沖', '買進']);
   await act(() => root.unmount());
 });

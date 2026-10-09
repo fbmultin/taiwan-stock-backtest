@@ -630,8 +630,12 @@ export function matchFifo(transactions) {
       const sold = Math.min(t.shares, available);
       let need = sold;
       let cost = 0;
+      let dtShares = 0; // 當沖部分(對到同一天買進的批次)
+      let dtCost = 0;
+      let prevShares = 0; // 賣原有庫存部分(對到更早的批次)
+      let prevCost = 0;
       // 第一輪只拿「同一天買進」的批次(當沖先互相抵銷),第二輪才依先進先出拿最早的
-      [(lot) => lot.date === t.date, () => true].forEach((ok) => {
+      [(lot) => lot.date === t.date, () => true].forEach((ok, pass) => {
         for (let k = 0; k < lots.length && need > 0; k += 1) {
           const lot = lots[k];
           if (lot.remaining <= 0 || !ok(lot)) continue;
@@ -639,12 +643,24 @@ export function matchFifo(transactions) {
           lot.remaining -= take;
           need -= take;
           cost += take * lot.unitCost;
+          if (pass === 0) {
+            dtShares += take;
+            dtCost += take * lot.unitCost;
+          } else {
+            prevShares += take;
+            prevCost += take * lot.unitCost;
+          }
           buyRemaining[lot.id] = lot.remaining;
           buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take });
         }
       });
       const proceeds = t.price * sold - (t.fee || 0) - (t.tax || 0);
-      sellRealized[t.id] = { gain: proceeds - cost, shares: sold };
+      // 手續費、證交稅依股數比例分攤到「當沖」與「賣原有庫存」兩邊,兩邊已實現損益
+      // 相加會等於整筆的已實現損益(gain),不會因為拆開而兜不起來。
+      const feeTaxPerShare = sold > 0 ? ((t.fee || 0) + (t.tax || 0)) / sold : 0;
+      const dayTradeGain = t.price * dtShares - feeTaxPerShare * dtShares - dtCost;
+      const soldPrevGain = t.price * prevShares - feeTaxPerShare * prevShares - prevCost;
+      sellRealized[t.id] = { gain: proceeds - cost, shares: sold, dayTradeShares: dtShares, dayTradeGain, soldPrevShares: prevShares, soldPrevGain };
     }
   });
   return { buyMatches, buyRemaining, sellRealized };
@@ -766,6 +782,11 @@ export function computeSymbolSummary(
   let totalFee = 0;
   let totalTax = 0;
   let todayRealizedGain = 0; // 本日(日期等於 todayDate 的交易)已實現損益,含資本利得(先進先出)與現金股利
+  let todayDtRealized = 0; // 本日已實現損益拆開:當沖部分
+  let todayDtRealizedShares = 0;
+  let todayPrevRealized = 0; // 本日已實現損益拆開:賣原有庫存部分
+  let todayPrevRealizedShares = 0;
+  let todayDividend = 0; // 本日現金股利
   let firstDate = sorted.length ? sorted[0].date : null;
   // 今日已實現(資本利得部分)改用先進先出配對;累計已實現/持有均價仍是平均成本法
   const fifo = matchFifo(transactions);
@@ -811,7 +832,16 @@ export function computeSymbolSummary(
       const proceeds = tx.price * (soldShares + dt) - (tx.fee || 0) - (tx.tax || 0);
       const gain = proceeds - costOfSold - costOfDt;
       realizedCapitalGain += gain;
-      if (tx.date === todayDate) todayRealizedGain += fifo.sellRealized[tx.id] ? fifo.sellRealized[tx.id].gain : gain;
+      if (tx.date === todayDate) {
+        const fr = fifo.sellRealized[tx.id];
+        todayRealizedGain += fr ? fr.gain : gain;
+        if (fr) {
+          todayDtRealized += fr.dayTradeGain;
+          todayDtRealizedShares += fr.dayTradeShares;
+          todayPrevRealized += fr.soldPrevGain;
+          todayPrevRealizedShares += fr.soldPrevShares;
+        }
+      }
       shares -= soldShares;
       costBasis -= costOfSold;
       pureCostBasis -= pureCostOfSold;
@@ -820,7 +850,10 @@ export function computeSymbolSummary(
     } else if (tx.type === TX_TYPES.CASH_DIVIDEND) {
       const amt = tx.amount || tx.price * tx.shares || 0;
       cashDividend += amt;
-      if (tx.date === todayDate) todayRealizedGain += amt;
+      if (tx.date === todayDate) {
+        todayRealizedGain += amt;
+        todayDividend += amt;
+      }
     } else if (tx.type === TX_TYPES.STOCK_DIVIDEND) {
       shares += tx.shares;
       stockDividendShares += tx.shares;
@@ -848,8 +881,17 @@ export function computeSymbolSummary(
 
   const investedBase = investedCapital || 1; // 避免除以 0
   const costBase = costBasis || 1;
+  // computeDayPnl 算出的是「現有庫存」價差(現價/買價 - 成本基準),純粹未實現;
+  // 今天已經賣出/配息的部分改用上面 FIFO 算出的已實現損益(已扣手續費、證交稅,
+  // 含股利),兩者合併才是真正「今天賺賠多少」的完整數字,不再是兩個各算各的數字。
   const day = computeDayPnl(transactions, { currentPrice, prevClose, todayDate });
-  const todayPnl = day.pnl;
+  const unrealizedParts = day.parts.filter((p) => p.kind === 'carry' || p.kind === 'boughtToday');
+  const unrealizedTodayPnl = unrealizedParts.reduce((n, p) => n + p.pnl, 0);
+  const todayPnlParts = [...unrealizedParts];
+  if (todayPrevRealizedShares > 0) todayPnlParts.push({ kind: 'soldPrev', shares: todayPrevRealizedShares, pnl: todayPrevRealized });
+  if (todayDtRealizedShares > 0) todayPnlParts.push({ kind: 'dayTrade', shares: todayDtRealizedShares, pnl: todayDtRealized });
+  if (todayDividend !== 0) todayPnlParts.push({ kind: 'dividend', shares: 0, pnl: todayDividend });
+  const todayPnl = unrealizedTodayPnl + todayRealizedGain;
   const marketBase = marketValue || 1;
 
   return {
@@ -867,7 +909,7 @@ export function computeSymbolSummary(
     todayPnl,
     todayPnlPct: (todayPnl / (day.base || marketBase)) * 100,
     todayBase: day.base,
-    todayPnlParts: day.parts,
+    todayPnlParts,
     realizedPnl,
     realizedPnlPct: (realizedPnl / investedBase) * 100,
     todayRealizedPnl: todayRealizedGain,

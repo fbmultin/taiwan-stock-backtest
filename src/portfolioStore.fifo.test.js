@@ -162,3 +162,22 @@ test('證交稅:只有當沖的股數減半,ETF 不減半', () => {
   expect(estimateSellTax(100, 1000, { dayTradeShares: 0, date: TODAY })).toBe(300);
   expect(estimateSellTax(100, 1000, { dayTradeShares: 1000, isEtf: true, date: TODAY })).toBe(100);
 });
+
+test('今日損益:合併未實現(現有庫存)與今日已實現(含手續費、證交稅、股利)', () => {
+  const txs = [
+    tx('b0', 'buy', '2026-10-01', 100, 1000, { fee: 0 }), // 昨天就持有 1000 股
+    tx('s1', 'sell', TODAY, 110, 300, { fee: 50, tax: 45 }), // 賣掉昨天庫存 300 股:已實現 = 110*300-50-45-100*300=2905
+    tx('d1', 'cashDividend', TODAY, 0, 0, { amount: 1000 }), // 今日股利 1000
+  ];
+  const s = computeSymbolSummary(txs, { currentPrice: 115, prevClose: 108, todayDate: TODAY });
+  const unrealized = (115 - 108) * 700; // 現有庫存 700 股(1000 減今天賣掉的 300)的價差
+  const realized = 110 * 300 - 50 - 45 - 100 * 300 + 1000; // 賣出已實現 + 股利
+  expect(s.todayRealizedPnl).toBeCloseTo(realized);
+  expect(s.todayPnl).toBeCloseTo(unrealized + realized); // 兩者合併,不再是各算各的兩個數字
+  const soldPart = s.todayPnlParts.find((p) => p.kind === 'soldPrev');
+  const divPart = s.todayPnlParts.find((p) => p.kind === 'dividend');
+  expect(soldPart.shares).toBe(300);
+  expect(soldPart.pnl).toBeCloseTo(110 * 300 - 50 - 45 - 100 * 300); // 已實現,非價差
+  expect(divPart.pnl).toBe(1000);
+  expect(s.todayPnlParts.reduce((n, p) => n + p.pnl, 0)).toBeCloseTo(s.todayPnl); // 明細加總要等於合計
+});

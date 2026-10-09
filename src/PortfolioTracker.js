@@ -87,6 +87,7 @@ import {
   estimateTax,
   dayTradeSharesForSell,
   estimateSellTax,
+  allocateDayTrades,
   isLikelyETF,
   stepPrice,
   tradeGross,
@@ -1894,17 +1895,19 @@ function StatCard({
 
 // ============== 今日損益明細(浮動視窗,樣式比照熱力圖細節框) ==============
 // rows: [{ symbol, name, pnl, parts:[{kind,shares,pnl}] }];每檔列出各部分怎麼來的
-// 明細分兩區:「現有庫存」(目前還抱著的股數,對應首頁持股列表的股數)與「今日已交易」
-// (今天賣掉的)。現有庫存再拆成兩種基準:昨天收盤就持有的(現價−昨收)、今天才買的(現價−買價),
+// 明細分兩區:「現有庫存」(目前還抱著的股數,對應首頁持股列表的股數,價差未實現)與
+// 「今日已實現」(今天賣掉/配息的,已扣手續費、證交稅,是真正入袋的金額)。
+// 現有庫存再拆成兩種基準:昨天收盤就持有的(現價−昨收)、今天才買的(現價−買價),
 // 兩者股數相加=首頁看到的持有股數,使用者才對得上帳。
 const DAY_PART_LABELS = {
   carry: (n) => `昨天就持有 ${formatMoney(n)}股:現價−昨收`,
   boughtToday: (n) => `今日買進 ${formatMoney(n)}股:現價−買價`,
-  soldPrev: (n) => `賣出(昨天就持有)${formatMoney(n)}股:賣價−昨收`,
-  dayTrade: (n) => `當沖 ${formatMoney(n)}股:賣價−買價`,
+  soldPrev: (n) => `賣出(昨天就持有)${formatMoney(n)}股,已實現`,
+  dayTrade: (n) => `當沖 ${formatMoney(n)}股,已實現`,
+  dividend: () => `今日股利,已實現`,
 };
 const HOLD_KINDS = ['carry', 'boughtToday'];
-const TRADED_KINDS = ['soldPrev', 'dayTrade'];
+const TRADED_KINDS = ['soldPrev', 'dayTrade', 'dividend'];
 
 export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onClose }) {
   const list = rows.filter((r) => r.parts && r.parts.length > 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
@@ -1923,7 +1926,7 @@ export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onC
         <div className="text-center mb-3">
           <div className="font-bold">{title}</div>
           <div className={`font-mono font-bold text-xl ${pnlColorClass(total, isLight)}`}>{formatSigned(total)}</div>
-          <div className={`text-[11px] ${muted}`}>價差損益,不含手續費、證交稅與股利(股利算在今日已實現)</div>
+          <div className={`text-[11px] ${muted}`}>現有庫存為未實現價差;今日已實現已扣手續費、證交稅並含股利</div>
         </div>
         {list.length === 0 && <div className={`text-center text-sm py-4 ${muted}`}>今天沒有可計算的持股或交易</div>}
         {list.map((r) => {
@@ -1935,8 +1938,8 @@ export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onC
                 <div className={`font-mono font-bold shrink-0 ${pnlColorClass(r.pnl, isLight)}`}>{formatSigned(r.pnl)}</div>
               </div>
               {[
-                { key: 'hold', kinds: HOLD_KINDS, title: (n) => `現有庫存 ${formatMoney(n)}股` },
-                { key: 'traded', kinds: TRADED_KINDS, title: () => '今日已交易' },
+                { key: 'hold', kinds: HOLD_KINDS, title: (n) => `現有庫存 ${formatMoney(n)}股(未實現)` },
+                { key: 'traded', kinds: TRADED_KINDS, title: () => '今日已實現' },
               ].map((sec) => {
                 const ps = r.parts.filter((pt) => sec.kinds.includes(pt.kind));
                 if (ps.length === 0) return null;
@@ -2185,15 +2188,17 @@ function HoldingsListView({
           </button>
         </div>
       </div>
-      {/* 同樣是版面調整:「今日損益」位置不變,下方括號多加「今日已實現損益」;
-          原本「總損益」的位置、格式不變,改放「未實現損益」。 */}
+      {/* 同樣是版面調整:「今日損益」位置不變,下方括號多加「其中已實現」;
+          原本「總損益」的位置、格式不變,改放「未實現損益」。
+          「今日損益」現在是「現有庫存未實現價差」+「今日已實現(含手續費/稅/股利)」的合計,
+          不再是跟「今日已實現」各算各的兩個數字——下面這行只是標出其中已經入袋的部分。 */}
       <div className="px-4 mt-2 flex gap-2 pb-1">
         <StatCard
           isLight={isLight}
           label="今日損益"
           value={`${formatSigned(totalSummary.todayPnl)}｜${formatPct(totalSummary.todayPnlPct)}`}
           valueClass={pnlColorClass(totalSummary.todayPnl, isLight)}
-          subValue={`今日已實現損益${formatSigned(totalSummary.todayRealizedPnl)}`}
+          subValue={`其中已實現${formatSigned(totalSummary.todayRealizedPnl)}`}
           subValueClass={pnlColorClass(totalSummary.todayRealizedPnl, isLight)}
           sizeClass="flex-1 min-w-0"
           onClick={onOpenTodayPnl}
@@ -2572,6 +2577,13 @@ export function StockDetailView({
   // 標籤卡片展開後的交易可能跨好幾天,才在列裡顯示日期
   // 先進先出配對:買進列旁註記「已在何時賣出」。整份交易一起配對(不受標籤收合影響)
   const fifo = useMemo(() => matchFifo(transactions), [transactions]);
+  // 同一天同時有買有賣視為當沖(稅務上的現股當沖),賣出那幾股在交易紀錄裡標成
+  // 「現沖」而不是「賣出」,使用者才知道這筆的證交稅是減半算的、也跟著合併進
+  // 「今日已實現」而不是放在舊庫存的未實現裡。只有被配到當沖的那幾股才算,部分
+  // 當沖、部分賣舊庫存的這一筆仍標「現沖」(其中有當沖成分),股數不夠當沖的
+  // 賣出維持「賣出」。
+  const dayTradeDt = useMemo(() => allocateDayTrades(transactions).sellDt, [transactions]);
+  const txTypeLabel = (tx) => (tx.type === TX_TYPES.SELL && (dayTradeDt[tx.id] || 0) > 0 ? '現沖' : TX_TYPE_LABELS[tx.type]);
   const sellNote = (tx) => {
     if (tx.type !== TX_TYPES.BUY) return '';
     const ms = fifo.buyMatches[tx.id] || [];
@@ -2613,7 +2625,7 @@ export function StockDetailView({
       )}
       <div className="flex-1 min-w-0">
         <div className={`font-bold text-sm ${typeColor(tx.type)}`}>
-          {TX_TYPE_LABELS[tx.type]}
+          {txTypeLabel(tx)}
           {sellNote(tx) && (
             <span data-testid="sell-note" className={`ml-1 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
               {sellNote(tx)}
