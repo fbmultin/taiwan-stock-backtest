@@ -8,8 +8,8 @@ test('先進先出:賣出先對沖最早買進,記錄賣出日期與剩餘股數
     tx('b2', 'buy', '2026-02-02', 20, 1000),
     tx('s1', 'sell', '2026-03-02', 30, 1500),
   ]);
-  expect(r.buyMatches.b1).toEqual([{ sellId: 's1', date: '2026-03-02', shares: 1000 }]);
-  expect(r.buyMatches.b2).toEqual([{ sellId: 's1', date: '2026-03-02', shares: 500 }]);
+  expect(r.buyMatches.b1).toEqual([{ sellId: 's1', date: '2026-03-02', shares: 1000, price: 30, gain: 20000 }]);
+  expect(r.buyMatches.b2).toEqual([{ sellId: 's1', date: '2026-03-02', shares: 500, price: 30, gain: 5000 }]);
   expect(r.buyRemaining).toEqual({ b1: 0, b2: 500 });
   // 成本 = 1000*10 + 500*20 = 20,000;收入 = 45,000
   expect(r.sellRealized.s1.gain).toBe(25000);
@@ -150,7 +150,7 @@ test('先進先出:同一天的賣出先對沖同一天的買進(當沖),不動�
     tx('b1', 'buy', TODAY, 120, 500),
     tx('s1', 'sell', TODAY, 121, 500),
   ]);
-  expect(r.buyMatches.b1).toEqual([{ sellId: 's1', date: TODAY, shares: 500 }]);
+  expect(r.buyMatches.b1).toEqual([{ sellId: 's1', date: TODAY, shares: 500, price: 121, gain: 500 }]);
   expect(r.buyRemaining.b0).toBe(1000);
   expect(r.sellRealized.s1.gain).toBeCloseTo(500);
 });
@@ -180,4 +180,18 @@ test('今日損益:合併未實現(現有庫存)與今日已實現(含手續費�
   expect(soldPart.pnl).toBeCloseTo(110 * 300 - 50 - 45 - 100 * 300); // 已實現,非價差
   expect(divPart.pnl).toBe(1000);
   expect(s.todayPnlParts.reduce((n, p) => n + p.pnl, 0)).toBeCloseTo(s.todayPnl); // 明細加總要等於合計
+});
+
+test('先進先出:賣出含手續費/證交稅時,分攤到每一批買進的已實現損益相加等於整筆', () => {
+  const r = matchFifo([
+    tx('b1', 'buy', '2026-01-02', 10, 1000),
+    tx('b2', 'buy', '2026-02-02', 20, 500),
+    tx('s1', 'sell', '2026-03-02', 30, 1500, { fee: 50, tax: 45 }),
+  ]);
+  // feeTaxPerShare = 95/1500;b1 分到 1000*(30-95/1500)-1000*10,b2 分到 500*(30-95/1500)-500*20
+  const b1gain = 1000 * (30 - 95 / 1500) - 1000 * 10;
+  const b2gain = 500 * (30 - 95 / 1500) - 500 * 20;
+  expect(r.buyMatches.b1[0].gain).toBeCloseTo(b1gain);
+  expect(r.buyMatches.b2[0].gain).toBeCloseTo(b2gain);
+  expect(r.buyMatches.b1[0].gain + r.buyMatches.b2[0].gain).toBeCloseTo(r.sellRealized.s1.gain);
 });

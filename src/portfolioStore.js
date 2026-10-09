@@ -597,7 +597,8 @@ function annualize(periodReturnPct, years) {
 //   - 配股(股票股利)當成成本 0 的一批,才跟庫存股數對得上
 //   - 買進成本 = 價*股數+手續費,按配對到的股數等比例分攤;賣出淨額 = 價*股數-手續費-稅
 // 回傳:
-//   buyMatches[buyId] = [{ sellId, date, shares }]  這批買進被哪幾筆賣出對沖(依賣出先後)
+//   buyMatches[buyId] = [{ sellId, date, shares, price, gain }]  這批買進被哪幾筆賣出對沖(依賣出先後),
+//     price 是那筆賣出的價格,gain 是這批被對沖的股數分到的已實現損益(已扣該筆賣出分攤到的手續費、證交稅)
 //   buyRemaining[buyId] = 這批還沒賣掉的股數
 //   sellRealized[sellId] = { gain, shares }  這筆賣出的已實現損益(資本利得,FIFO)
 export function matchFifo(transactions) {
@@ -634,6 +635,10 @@ export function matchFifo(transactions) {
       let dtCost = 0;
       let prevShares = 0; // 賣原有庫存部分(對到更早的批次)
       let prevCost = 0;
+      // 手續費、證交稅依股數比例分攤:到各批買進的已實現損益(buyMatches[].gain)、
+      // 到「當沖」與「賣原有庫存」兩邊(dayTradeGain/soldPrevGain),分攤後加總都會
+      // 等於整筆的已實現損益(gain),不會因為拆開而兜不起來。
+      const feeTaxPerShare = sold > 0 ? ((t.fee || 0) + (t.tax || 0)) / sold : 0;
       // 第一輪只拿「同一天買進」的批次(當沖先互相抵銷),第二輪才依先進先出拿最早的
       [(lot) => lot.date === t.date, () => true].forEach((ok, pass) => {
         for (let k = 0; k < lots.length && need > 0; k += 1) {
@@ -651,13 +656,11 @@ export function matchFifo(transactions) {
             prevCost += take * lot.unitCost;
           }
           buyRemaining[lot.id] = lot.remaining;
-          buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take });
+          const gain = take * (t.price - feeTaxPerShare) - take * lot.unitCost;
+          buyMatches[lot.id].push({ sellId: t.id, date: t.date, shares: take, price: t.price, gain });
         }
       });
       const proceeds = t.price * sold - (t.fee || 0) - (t.tax || 0);
-      // 手續費、證交稅依股數比例分攤到「當沖」與「賣原有庫存」兩邊,兩邊已實現損益
-      // 相加會等於整筆的已實現損益(gain),不會因為拆開而兜不起來。
-      const feeTaxPerShare = sold > 0 ? ((t.fee || 0) + (t.tax || 0)) / sold : 0;
       const dayTradeGain = t.price * dtShares - feeTaxPerShare * dtShares - dtCost;
       const soldPrevGain = t.price * prevShares - feeTaxPerShare * prevShares - prevCost;
       sellRealized[t.id] = { gain: proceeds - cost, shares: sold, dayTradeShares: dtShares, dayTradeGain, soldPrevShares: prevShares, soldPrevGain };

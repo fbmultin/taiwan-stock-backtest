@@ -2584,25 +2584,37 @@ export function StockDetailView({
   // 賣出維持「賣出」。
   const dayTradeDt = useMemo(() => allocateDayTrades(transactions).sellDt, [transactions]);
   const txTypeLabel = (tx) => (tx.type === TX_TYPES.SELL && (dayTradeDt[tx.id] || 0) > 0 ? '現沖' : TX_TYPE_LABELS[tx.type]);
+  // 買進列旁的註記不只寫「哪時候賣的」,還要寫「賣多少錢、這批賺賠多少」——使用者
+  // 要的是一眼看出這筆買進最後出場的價位跟損益,不用自己再去對賣出那筆的明細。
   const sellNote = (tx) => {
-    if (tx.type !== TX_TYPES.BUY) return '';
+    if (tx.type !== TX_TYPES.BUY) return null;
     const ms = fifo.buyMatches[tx.id] || [];
-    if (ms.length === 0) return '';
-    // 同一天的多筆賣出合併;整批賣完只寫日期,只賣掉一部分或分多天賣就附上股數
-    const byDate = [];
+    if (ms.length === 0) return null;
+    // 同一天、同一賣價的多筆成交合併成一段;賣價不同或不同天就分開各自列一段
+    const segs = [];
     ms.forEach((m) => {
-      const last = byDate[byDate.length - 1];
-      if (last && last.date === m.date) last.shares += m.shares;
-      else byDate.push({ date: m.date, shares: m.shares });
+      const last = segs[segs.length - 1];
+      if (last && last.date === m.date && last.price === m.price) {
+        last.shares += m.shares;
+        last.gain += m.gain;
+      } else {
+        segs.push({ date: m.date, price: m.price, shares: m.shares, gain: m.gain });
+      }
     });
     const md = (d) => String(d).slice(5).replace('-', '/');
-    const whole = byDate.length === 1 && fifo.buyRemaining[tx.id] === 0 && byDate[0].shares === tx.shares;
-    const text = byDate.map((x) => (whole ? md(x.date) : `${md(x.date)} 賣${formatMoney(x.shares)}`)).join('、');
     const rest = fifo.buyRemaining[tx.id];
-    return `(賣出 ${text}${rest > 0 ? `,餘${formatMoney(rest)}股` : ''})`;
+    // 整批剛好被同一段賣出全部對沖完,才用精簡格式;否則每段都附上股數,分清是哪一段
+    const whole = segs.length === 1 && rest === 0 && segs[0].shares === tx.shares;
+    const text = segs
+      .map((s) => (whole ? `${s.price.toFixed(2)} 賣出 ${md(s.date)}` : `${md(s.date)} ${s.price.toFixed(2)} 賣${formatMoney(s.shares)}股`))
+      .join('、');
+    const gain = segs.reduce((n, s) => n + s.gain, 0);
+    return { text: `(${text}${rest > 0 ? `,餘${formatMoney(rest)}股` : ''})`, gain };
   };
 
-  const renderTxRow = (tx, { showDate = true } = {}) => (
+  const renderTxRow = (tx, { showDate = true } = {}) => {
+    const note = sellNote(tx);
+    return (
     <div
       key={tx.id}
       onClick={() => (selectMode ? onToggleSelectTx(tx.id) : onOpenAction(tx))}
@@ -2626,9 +2638,10 @@ export function StockDetailView({
       <div className="flex-1 min-w-0">
         <div className={`font-bold text-sm ${typeColor(tx.type)}`}>
           {txTypeLabel(tx)}
-          {sellNote(tx) && (
+          {note && (
             <span data-testid="sell-note" className={`ml-1 text-[11px] font-normal ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-              {sellNote(tx)}
+              {note.text}
+              <span className={`ml-1 font-mono ${pnlColorClass(note.gain, isLight)}`}>{formatSigned(note.gain)}</span>
             </span>
           )}
         </div>
@@ -2647,7 +2660,8 @@ export function StockDetailView({
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="pb-24">

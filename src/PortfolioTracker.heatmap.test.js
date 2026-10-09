@@ -133,7 +133,9 @@ test('個股頁交易明細:買進列註記先進先出的賣出時間', async (
   });
   const notes = Array.from(el.querySelectorAll('[data-testid="sell-note"]')).map((n) => n.textContent);
   // 顯示順序是新到舊:b3(沒賣,無註記)、b2(賣一半)、b1(整批賣完)
-  expect(notes).toEqual(['(賣出 03/02 賣500,餘500股)', '(賣出 03/02)']);
+  // b2 賣掉一半 500 股,賣價 30、賺 500*(30-20)=5,000,還餘 500 股;
+  // b1 整批 1000 股剛好被這筆賣出對沖完,賺 1000*(30-10)=20,000
+  expect(notes).toEqual(['(03/02 30.00 賣500股,餘500股)+5,000', '(30.00 賣出 03/02)+20,000']);
   await act(() => root.unmount());
 });
 
