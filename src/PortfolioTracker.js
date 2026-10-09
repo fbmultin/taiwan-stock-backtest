@@ -470,7 +470,7 @@ export function TransactionFormModal({ isLight, data, initial, onClose, onSubmit
         }`}
       >
         <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+          <button onClick={onClose} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
@@ -1096,7 +1096,7 @@ function ImportCsvModal({ isLight, data, onClose, onImport }) {
         }`}
       >
         <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+          <button onClick={onClose} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="font-bold">CSV 匯入交易(試用版)</div>
@@ -1634,7 +1634,7 @@ function GroupEditorModal({ isLight, group, isNew, onClose, onSave, onDelete }) 
         }`}
       >
         <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <button onClick={onClose} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+          <button onClick={onClose} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="font-bold">{isNew ? '新增群組' : '群組設定'}</div>
@@ -2026,7 +2026,7 @@ function HoldingsListView({
       <div className="flex items-center justify-between px-4 pt-4">
         <button
           onClick={() => activeGroup && onOpenSettings(activeGroup.id)}
-          className={`p-2 rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
+          className={`-ml-2 w-14 h-14 flex items-center justify-center rounded-full ${isLight ? 'hover:bg-slate-100' : 'hover:bg-slate-800'}`}
         >
           <Settings className="w-5 h-5 opacity-70" />
         </button>
@@ -2676,7 +2676,7 @@ export function StockDetailView({
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+        <button onClick={onBack} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
@@ -3053,7 +3053,7 @@ function AllSummaryDetailView({ isLight, summary, title, onBack }) {
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+        <button onClick={onBack} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
@@ -3237,7 +3237,7 @@ export function HeatmapView({ isLight, model, onBack }) {
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={handleBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0" aria-label="返回">
+        <button onClick={handleBack} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0" aria-label="返回">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
@@ -3407,7 +3407,7 @@ export function TodayTransactionsView({ isLight, items, stockNames, todayStr, on
   return (
     <div className="pb-24">
       <div className="flex items-center gap-2 px-4 pt-4">
-        <button onClick={onBack} className="w-10 h-10 -ml-2 -my-2 flex items-center justify-center shrink-0">
+        <button onClick={onBack} className="w-14 h-14 -ml-4 -my-4 flex items-center justify-center shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center -ml-7">
