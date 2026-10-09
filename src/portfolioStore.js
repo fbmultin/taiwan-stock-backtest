@@ -749,7 +749,7 @@ export function computeDayPnl(transactions, { currentPrice = 0, prevClose = null
   const boughtShares = pool.reduce((n, b) => n + b.left, 0);
   const boughtPnl = hasPrice ? pool.reduce((n, b) => n + b.left * (currentPrice - b.price), 0) : 0;
   const parts = [];
-  if (prevAvail > 0) parts.push({ kind: 'carry', shares: prevAvail, pnl: carryPnl, lots });
+  if (prevAvail > 0) parts.push({ kind: 'carry', shares: prevAvail, pnl: carryPnl, lots, currentPrice, prevClose });
   if (soldPrevShares > 0) parts.push({ kind: 'soldPrev', shares: soldPrevShares, pnl: soldPrevPnl });
   if (dayTradeShares > 0) parts.push({ kind: 'dayTrade', shares: dayTradeShares, pnl: dayTradePnl });
   if (boughtShares > 0) parts.push({ kind: 'boughtToday', shares: boughtShares, pnl: boughtPnl });

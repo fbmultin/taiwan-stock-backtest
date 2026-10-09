@@ -1901,11 +1901,14 @@ function StatCard({
 // 「今日已實現」(今天賣掉/配息的,已扣手續費、證交稅,是真正入袋的金額)。
 // 現有庫存再拆成兩種基準:昨天收盤就持有的(現價−昨收)、今天才買的(現價−買價),
 // 兩者股數相加=首頁看到的持有股數,使用者才對得上帳。
+// 每個 kind 給的是完整的明細那筆 part({kind,shares,pnl,...}),不是只有股數——
+// 像「昨天就持有」這筆要把現價、昨收的實際數字列出來(32.2-30.1),使用者才看得出
+// 這筆損益是怎麼算出來的,不用自己再回去找現價、昨收各是多少。
 const DAY_PART_LABELS = {
-  carry: (n) => `昨天就持有 ${formatMoney(n)}股:現價−昨收`,
-  boughtToday: (n) => `今日買進 ${formatMoney(n)}股:現價−買價`,
-  soldPrev: (n) => `賣出(昨天就持有)${formatMoney(n)}股,已實現`,
-  dayTrade: (n) => `當沖 ${formatMoney(n)}股,已實現`,
+  carry: (pt) => `昨天就持有 ${formatMoney(pt.shares)}股:現價−昨收(${pt.currentPrice.toFixed(2)}-${pt.prevClose.toFixed(2)})`,
+  boughtToday: (pt) => `今日買進 ${formatMoney(pt.shares)}股:現價−買價`,
+  soldPrev: (pt) => `賣出(昨天就持有)${formatMoney(pt.shares)}股,已實現`,
+  dayTrade: (pt) => `當沖 ${formatMoney(pt.shares)}股,已實現`,
   dividend: () => `今日股利,已實現`,
 };
 const HOLD_KINDS = ['carry', 'boughtToday'];
@@ -1955,15 +1958,10 @@ export function TodayPnlPopup({ isLight, title = '今日損益明細', rows, onC
                     </div>
                     {ps.map((pt) => (
                       <div key={pt.kind} className={`flex justify-between gap-2 text-[11px] pl-3 ${muted}`}>
-                        <span>{DAY_PART_LABELS[pt.kind](pt.shares)}</span>
+                        <span>{DAY_PART_LABELS[pt.kind](pt)}</span>
                         <span className={`font-mono shrink-0 ${pnlColorClass(pt.pnl, isLight)}`}>{formatSigned(pt.pnl)}</span>
                       </div>
                     ))}
-                    {sec.key === 'hold' && (ps.find((pt) => pt.kind === 'carry') || {}).lots && (
-                      <div data-testid="carry-lots" className={`pl-3 text-[11px] ${muted}`}>
-                        昨天庫存來源:{ps.find((pt) => pt.kind === 'carry').lots.map((l) => `${l.date.slice(5)} 買${formatMoney(l.shares)}股`).join('、')}
-                      </div>
-                    )}
                   </div>
                 );
               })}

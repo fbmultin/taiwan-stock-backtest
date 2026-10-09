@@ -171,7 +171,7 @@ test('框選後:選到有標籤的交易才出現「移除標籤」,點了會呼
 
 test('今日損益明細浮動視窗:合計、每檔各部分、依影響大小排序', async () => {
   const rows = [
-    { symbol: '2330', name: '台積電', pnl: 1200, parts: [{ kind: 'carry', shares: 600, pnl: 1200 }] },
+    { symbol: '2330', name: '台積電', pnl: 1200, parts: [{ kind: 'carry', shares: 600, pnl: 1200, currentPrice: 32, prevClose: 30 }] },
     { symbol: '00878', name: '國泰永續高股息', pnl: -3000, parts: [{ kind: 'soldPrev', shares: 1000, pnl: -2000 }, { kind: 'boughtToday', shares: 500, pnl: -1000 }] },
     { symbol: '0050', name: '元大台灣50', pnl: 0, parts: [] },
   ];
@@ -190,13 +190,14 @@ test('今日損益明細浮動視窗:合計、每檔各部分、依影響大小�
   expect(rs[0].textContent).toContain('現有庫存 500股');
   expect(rs[0].textContent).toContain('今日已實現');
   expect(rs[1].textContent).toContain('台積電');
+  expect(rs[1].textContent).toContain('現價−昨收(32.00-30.00)'); // 把現價、昨收的實際數字列出來
   await act(async () => { pop.parentElement.click(); });
   expect(onClose).toHaveBeenCalled();
   await act(() => root.unmount());
 });
 
 test('個股頁:點今日損益卡開明細', async () => {
-  const summary = { shares: 1000, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 30, avgPrice: 20, todayPnl: 2000, todayPnlPct: 7, todayPnlParts: [{ kind: 'carry', shares: 1000, pnl: 2000 }] };
+  const summary = { shares: 1000, marketValue: 1, unrealizedPnl: 0, unrealizedPnlPct: 0, currentPrice: 30, avgPrice: 20, todayPnl: 2000, todayPnlPct: 7, todayPnlParts: [{ kind: 'carry', shares: 1000, pnl: 2000, currentPrice: 30, prevClose: 28 }] };
   const el = document.createElement('div');
   document.body.appendChild(el);
   const root = createRoot(el);

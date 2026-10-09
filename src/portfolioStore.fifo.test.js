@@ -58,7 +58,7 @@ test('當日損益:原有庫存、賣出、今日買進各自用對的基準', (
   const r = computeDayPnl(txs, { currentPrice: 30, prevClose: 28, todayDate: TODAY });
   // 同一天買 200、賣 400:其中 200 股是當沖(賣價-買價),另外 200 股才是賣掉昨天的庫存
   expect(r.parts).toEqual([
-    { kind: 'carry', shares: 800, pnl: 1600, lots: [{ date: '2026-09-01', shares: 800 }] }, // (30-28)*800
+    { kind: 'carry', shares: 800, pnl: 1600, lots: [{ date: '2026-09-01', shares: 800 }], currentPrice: 30, prevClose: 28 }, // (30-28)*800
     { kind: 'soldPrev', shares: 200, pnl: 600 }, // (31-28)*200
     { kind: 'dayTrade', shares: 200, pnl: 800 }, // (31-27)*200
   ]);
